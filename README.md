@@ -136,17 +136,26 @@ Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. T
 | `⌘⇧R` | Export selected as Reels |
 | `⌘⇧C` | (Direct only) Quick-add frontmost video to library |
 
-## Status / known limitations
+## Status
 
-This is a beta scaffold. The structure compiles cleanly and the architecture is correct, but the following are intentional TODOs:
+**Beta v0.1 — both build targets compile, release binary runs, 36 unit tests pass.**
 
-- **No app icon yet** — `Resources/Assets.xcassets/AppIcon.appiconset/` is an empty manifest
-- **No bundled sample clips** — onboarding "ready" step suggests them; they need to be created
-- **No real Sparkle appcast feed** — `SUFeedURL` points to a placeholder domain
-- **Crash reporter not wired up** — KSCrash / Sentry integration deferred to P8 polish
-- **Project CRUD UI is minimal** — projects table exists, creating/editing them needs a sheet
-- **Frame-step uses approximate fps timing** — accurate for constant-frame-rate sources, may drift on VFR (per Apple QA1820, true frame-stepping needs an AVAssetReader keyframe index)
-- **FCPXML format is minimal** — single sequence per export, no audio sub-roles, no markers; works for drag-into-timeline but won't roundtrip rich metadata
+Working:
+- Both `Clipx-Direct` and `Clipx-MAS` build clean (Debug + Release)
+- Release `.app` is 17 MB, launches and runs without crashing
+- Database, indexer, folder watcher, thumbnail engine, marker store, tag store, search engine, FCPXML/Obsidian bridges all unit-tested
+- All UI screens functional: library grid + list, inspector pane, sidebar, settings tabs, command palette, shortcut overlay, export progress, onboarding wizard, New Project / New Collection sheets
+
+What still needs your hands to ship as a real product:
+
+- **Apple Developer enrollment** + Developer ID Application cert + notarization credentials
+- **Real Sparkle appcast feed** — `SUFeedURL` is a placeholder; needs a real hosted XML and Ed25519 keypair
+- **Static ffmpeg binary** — `Scripts/bundle-ffmpeg.sh` exists with the URL stubbed; audit + sign whatever binary you ship
+- **Bundled sample clips** for onboarding's "ready" state
+- **Crash reporter** — choose KSCrash / PLCrashReporter / Sentry and wire it up
+- **Frame-step VFR accuracy** — current implementation uses average fps; for VFR sources a proper keyframe index (via AVAssetReader) would be more accurate
+- **FCPXML richness** — current output is single sequence, no markers, no audio sub-roles. Valid FCPXML 1.13, drops into FCP, but won't roundtrip rich metadata
+- **Premiere XML, Resolve EDL, Notion CSV bridges** — deferred to v0.2
 
 ## License
 
