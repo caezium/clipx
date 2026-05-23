@@ -1,0 +1,50 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+.build/
+
+# CocoaPods (not used but defensive)
+Pods/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDE
+.vscode/
+.idea/
+
+# ffmpeg binary (downloaded by script)
+Helpers/ffmpeg
+Helpers/ffprobe
+
+# App Store / signing
+*.p12
+*.cer
+*.mobileprovision
+ExportOptions.plist
+
+# Local secrets
+.env
+secrets.json
+
+# Build artifacts
+*.dmg
+*.pkg
+*.app
+*.zip
+
+# Sample test data
+TestMedia/
