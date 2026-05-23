@@ -11,6 +11,12 @@ struct Project: Identifiable, Codable, FetchableRecord, MutablePersistableRecord
 
     static let databaseTableName = "projects"
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, status
+        case obsidianNotePath = "obsidian_note_path"
+        case createdAt = "created_at"
+    }
+
     enum Columns: String, ColumnExpression {
         case id, name, status
         case obsidianNotePath = "obsidian_note_path"
@@ -33,6 +39,11 @@ struct ClipProject: Codable, FetchableRecord, PersistableRecord {
     var projectID: Int64
 
     static let databaseTableName = "clip_projects"
+
+    enum CodingKeys: String, CodingKey {
+        case clipID = "clip_id"
+        case projectID = "project_id"
+    }
 
     enum Columns: String, ColumnExpression {
         case clipID = "clip_id"

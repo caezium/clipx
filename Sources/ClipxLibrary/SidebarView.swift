@@ -5,6 +5,8 @@ struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
     @State private var collections: [Collection] = []
     @State private var projects: [Project] = []
+    @State private var showNewProject = false
+    @State private var showNewCollection = false
 
     var body: some View {
         List {
@@ -32,9 +34,7 @@ struct SidebarView: View {
                             appState.selectedCollectionID = collection.id
                         }
                 }
-                Button {
-                    // TODO: new collection sheet
-                } label: {
+                Button { showNewCollection = true } label: {
                     Label("New Collection…", systemImage: "plus.circle")
                 }
                 .buttonStyle(.plain)
@@ -54,9 +54,7 @@ struct SidebarView: View {
                         appState.selectedProjectID = project.id
                     }
                 }
-                Button {
-                    // TODO: new project sheet
-                } label: {
+                Button { showNewProject = true } label: {
                     Label("New Project…", systemImage: "plus.circle")
                 }
                 .buttonStyle(.plain)
@@ -70,11 +68,17 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .onAppear(perform: load)
+        .sheet(isPresented: $showNewProject) {
+            NewProjectSheet { _ in load() }
+        }
+        .sheet(isPresented: $showNewCollection) {
+            NewCollectionSheet { _ in load() }
+        }
     }
 
     private func load() {
+        guard let db = AppEnvironment.shared.database else { return }
         do {
-            let db = AppEnvironment.shared.database!
             collections = try db.read { try Collection.order(Collection.Columns.name).fetchAll($0) }
             projects = try db.read { try Project.order(Project.Columns.name).fetchAll($0) }
         } catch {

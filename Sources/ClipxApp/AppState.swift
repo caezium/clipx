@@ -19,6 +19,8 @@ final class AppState: ObservableObject {
     @Published var searchQuery: String = ""
     @Published var activeFilters = ClipFilters()
     @Published var commandPaletteOpen: Bool = false
+    @Published var shortcutOverlayOpen: Bool = false
+    @Published var exportProgressOpen: Bool = false
 
     // MARK: View modes
     @Published var viewMode: LibraryViewMode = .grid

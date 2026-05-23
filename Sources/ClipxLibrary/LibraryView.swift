@@ -71,12 +71,16 @@ struct LibraryView: View {
     private func reload() {
         loading = true
         Task.detached(priority: .userInitiated) {
-            let env = await AppEnvironment.shared
+            let env = AppEnvironment.shared
+            guard let database = env.database, let search = env.searchEngine else {
+                await MainActor.run { self.loading = false }
+                return
+            }
             do {
-                let fetchedSources: [Source] = try env.database.read { db in
+                let fetchedSources: [Source] = try database.read { db in
                     try Source.order(Source.Columns.importedAt.desc).limit(500).fetchAll(db)
                 }
-                let fetchedClips: [Clip] = try await env.searchEngine.search(
+                let fetchedClips: [Clip] = try search.search(
                     query: AppState.shared.searchQuery,
                     filters: AppState.shared.activeFilters,
                     sort: AppState.shared.sortOption

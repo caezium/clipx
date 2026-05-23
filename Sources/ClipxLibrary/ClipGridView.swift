@@ -22,6 +22,7 @@ struct ClipGridView: View {
                             .onTapGesture {
                                 toggleSelection(clipID: clip.id ?? 0)
                             }
+                            .draggable(ClipTransferable(clipID: clip.id ?? 0, preset: .reels))
                     }
                 } else {
                     ForEach(sources) { source in
@@ -92,12 +93,13 @@ struct ClipCardView: View {
     }
 
     private func loadThumb() {
-        Task.detached(priority: .background) {
-            let env = await AppEnvironment.shared
-            guard let source: Source = try? env.database.read({ db in
+        Task.detached(priority: .background) { [clip] in
+            let env = AppEnvironment.shared
+            guard let database = env.database, let thumbnailEngine = env.thumbnailEngine else { return }
+            guard let source: Source = try? database.read({ db in
                 try Source.fetchOne(db, key: clip.sourceID)
             }) else { return }
-            let url = env.thumbnailEngine.thumbPath(for: source.hash)
+            let url = thumbnailEngine.thumbPath(for: source.hash)
             if FileManager.default.fileExists(atPath: url.path),
                let image = NSImage(contentsOf: url) {
                 await MainActor.run { self.thumbImage = image }
@@ -170,9 +172,10 @@ struct SourceCardView: View {
     }
 
     private func loadThumb() {
-        Task.detached(priority: .background) {
-            let env = await AppEnvironment.shared
-            let url = env.thumbnailEngine.thumbPath(for: source.hash)
+        Task.detached(priority: .background) { [source] in
+            let env = AppEnvironment.shared
+            guard let thumbnailEngine = env.thumbnailEngine else { return }
+            let url = thumbnailEngine.thumbPath(for: source.hash)
             if FileManager.default.fileExists(atPath: url.path),
                let image = NSImage(contentsOf: url) {
                 await MainActor.run { self.thumbImage = image }

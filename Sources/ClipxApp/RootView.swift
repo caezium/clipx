@@ -15,8 +15,18 @@ struct RootView: View {
                 .frame(minWidth: 600)
         } detail: {
             if let sourceID = appState.playerSourceID {
-                PlayerView(sourceID: sourceID)
-                    .frame(minWidth: 480)
+                HStack(spacing: 0) {
+                    PlayerView(sourceID: sourceID)
+                        .frame(minWidth: 480)
+                    if let clipID = appState.selectedClipIDs.first {
+                        Divider()
+                        InspectorView(clipID: clipID)
+                            .frame(width: 340)
+                    }
+                }
+            } else if let clipID = appState.selectedClipIDs.first {
+                InspectorView(clipID: clipID)
+                    .frame(minWidth: 340)
             } else {
                 EmptyDetailView()
             }
@@ -31,6 +41,13 @@ struct RootView: View {
                 CommandPaletteView()
                     .transition(.opacity)
             }
+            if appState.shortcutOverlayOpen {
+                ShortcutOverlay(visible: $appState.shortcutOverlayOpen)
+                    .transition(.opacity)
+            }
+        }
+        .sheet(isPresented: $appState.exportProgressOpen) {
+            ExportProgressView()
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(onComplete: {

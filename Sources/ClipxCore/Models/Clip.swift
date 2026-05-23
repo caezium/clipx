@@ -21,6 +21,23 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
 
     static let databaseTableName = "clips"
 
+    enum CodingKeys: String, CodingKey {
+        case id
+        case sourceID = "source_id"
+        case name
+        case inMs = "in_ms"
+        case outMs = "out_ms"
+        case rating
+        case colorLabel = "color_label"
+        case mood
+        case shotType = "shot_type"
+        case cameraMove = "camera_move"
+        case setting
+        case notes
+        case createdAt = "created_at"
+        case usedCount = "used_count"
+    }
+
     enum Columns: String, ColumnExpression {
         case id
         case sourceID = "source_id"

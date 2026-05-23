@@ -13,6 +13,13 @@ struct FolderRecord: Identifiable, Codable, FetchableRecord, MutablePersistableR
 
     static let databaseTableName = "folders"
 
+    enum CodingKeys: String, CodingKey {
+        case id, path, bookmark
+        case addedAt = "added_at"
+        case lastScanAt = "last_scan_at"
+        case online
+    }
+
     enum Columns: String, ColumnExpression {
         case id, path, bookmark
         case addedAt = "added_at"

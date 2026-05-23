@@ -10,6 +10,11 @@ struct Collection: Identifiable, Codable, FetchableRecord, MutablePersistableRec
 
     static let databaseTableName = "collections"
 
+    enum CodingKeys: String, CodingKey {
+        case id, name, description
+        case createdAt = "created_at"
+    }
+
     enum Columns: String, ColumnExpression {
         case id, name, description
         case createdAt = "created_at"
@@ -25,6 +30,11 @@ struct ClipCollection: Codable, FetchableRecord, PersistableRecord {
     var collectionID: Int64
 
     static let databaseTableName = "clip_collections"
+
+    enum CodingKeys: String, CodingKey {
+        case clipID = "clip_id"
+        case collectionID = "collection_id"
+    }
 
     enum Columns: String, ColumnExpression {
         case clipID = "clip_id"

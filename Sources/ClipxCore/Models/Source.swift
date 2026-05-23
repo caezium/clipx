@@ -24,6 +24,18 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
 
     static let databaseTableName = "sources"
 
+    enum CodingKeys: String, CodingKey {
+        case id, path, bookmark, hash, mtime
+        case durationMs = "duration_ms"
+        case width, height, fps, codec
+        case audioChannels = "audio_channels"
+        case colorSpace = "color_space"
+        case createdAt = "created_at"
+        case importedAt = "imported_at"
+        case thumbPath = "thumb_path"
+        case online, notes
+    }
+
     enum Columns: String, ColumnExpression {
         case id, path, bookmark, hash, mtime
         case durationMs = "duration_ms"

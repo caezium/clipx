@@ -46,19 +46,25 @@ final class ThumbnailEngine {
             completion(target)
             return
         }
-        queue.async { [weak self] in
+        Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { completion(nil); return }
             self.semaphore.wait()
             defer { self.semaphore.signal() }
 
+            let asset = AVURLAsset(url: source.url)
+            let duration: Double
+            do {
+                let cm = try await asset.load(.duration)
+                duration = CMTimeGetSeconds(cm)
+            } catch {
+                await MainActor.run { completion(nil) }
+                return
+            }
             autoreleasepool {
-                let asset = AVURLAsset(url: source.url)
                 let generator = AVAssetImageGenerator(asset: asset)
                 generator.appliesPreferredTrackTransform = true
                 generator.maximumSize = CGSize(width: 480, height: 480)
-                let duration = asset.duration.seconds
                 let seekTime = CMTime(seconds: max(0.5, duration * 0.1), preferredTimescale: 600)
-
                 do {
                     let cgImage = try generator.copyCGImage(at: seekTime, actualTime: nil)
                     let rep = NSBitmapImageRep(cgImage: cgImage)
@@ -79,15 +85,22 @@ final class ThumbnailEngine {
             completion(target)
             return
         }
-        queue.async { [weak self] in
+        Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { completion(nil); return }
             self.semaphore.wait()
             defer { self.semaphore.signal() }
 
+            let asset = AVURLAsset(url: source.url)
+            let duration: Double
+            do {
+                let cm = try await asset.load(.duration)
+                duration = CMTimeGetSeconds(cm)
+            } catch {
+                await MainActor.run { completion(nil) }
+                return
+            }
+            guard duration > 0 else { await MainActor.run { completion(nil) }; return }
             autoreleasepool {
-                let asset = AVURLAsset(url: source.url)
-                let duration = asset.duration.seconds
-                guard duration > 0 else { completion(nil); return }
                 let frameW = 240, frameH = 135
                 let generator = AVAssetImageGenerator(asset: asset)
                 generator.appliesPreferredTrackTransform = true

@@ -38,6 +38,15 @@ struct ClipxCommands: Commands {
             }
             .keyboardShortcut("f", modifiers: [.command])
         }
+        CommandGroup(after: .help) {
+            Button("Keyboard Shortcuts") {
+                appState.shortcutOverlayOpen.toggle()
+            }
+            .keyboardShortcut("?", modifiers: [.shift])
+            Button("Export Progress…") {
+                appState.exportProgressOpen.toggle()
+            }
+        }
         CommandMenu("Export") {
             Button("Reels (9:16 1080p)") { ExportActions.exportSelected(.reels) }
                 .keyboardShortcut("r", modifiers: [.command, .shift])

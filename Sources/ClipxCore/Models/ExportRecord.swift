@@ -14,6 +14,17 @@ struct ExportRecord: Identifiable, Codable, FetchableRecord, MutablePersistableR
 
     static let databaseTableName = "exports"
 
+    enum CodingKeys: String, CodingKey {
+        case id
+        case clipID = "clip_id"
+        case preset
+        case outputPath = "output_path"
+        case bytes
+        case durationMs = "duration_ms"
+        case exportedAt = "exported_at"
+        case status
+    }
+
     enum Columns: String, ColumnExpression {
         case id
         case clipID = "clip_id"

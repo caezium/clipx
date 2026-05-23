@@ -32,6 +32,13 @@ struct PlayerView: View {
         .onKeyPress(.space) { controller.togglePlayPause(); return .handled }
         .onKeyPress(.leftArrow) { controller.stepBackward(); return .handled }
         .onKeyPress(.rightArrow) { controller.stepForward(); return .handled }
+        // Menu commands and command palette post these notifications. We observe
+        // them here so the menu drives whichever player is currently visible.
+        .onReceive(NotificationCenter.default.publisher(for: .markIn)) { _ in markIn() }
+        .onReceive(NotificationCenter.default.publisher(for: .markOut)) { _ in markOut() }
+        .onReceive(NotificationCenter.default.publisher(for: .saveRange)) { _ in saveRange() }
+        .onReceive(NotificationCenter.default.publisher(for: .playerStepBack)) { _ in controller.stepBackward() }
+        .onReceive(NotificationCenter.default.publisher(for: .playerStepForward)) { _ in controller.stepForward() }
     }
 
     private var controlBar: some View {
