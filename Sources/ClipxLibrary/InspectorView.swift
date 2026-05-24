@@ -9,6 +9,8 @@ struct InspectorView: View {
     @State private var tags: [String] = []
     @State private var newTag: String = ""
     @State private var suggestions: [String] = []
+    @State private var allProjects: [Project] = []
+    @State private var assignedProjectIDs: Set<Int64> = []
 
     private let moodOptions = ["calm", "dramatic", "energetic", "melancholic", "hopeful", "tense"]
     private let shotOptions = ["close-up", "medium", "wide", "extreme-wide"]
@@ -21,11 +23,15 @@ struct InspectorView: View {
                 if let clip, let source {
                     header(clip: clip, source: source)
                     Divider()
+                    exportSection(clipID: clip.id ?? -1)
+                    Divider()
                     nameAndRating(clip: clip)
                     Divider()
                     structured(clip: clip)
                     Divider()
                     tagsSection
+                    Divider()
+                    projectsSection
                     Divider()
                     notesSection(clip: clip)
                     Divider()
@@ -35,17 +41,24 @@ struct InspectorView: View {
                 }
             }
             .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minWidth: 320)
+        .scrollIndicators(.automatic)
         .onAppear(perform: load)
         .onChange(of: clipID) { _, _ in load() }
     }
 
     private func header(clip: Clip, source: Source) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(clip.name ?? source.displayName).font(.headline)
+            Text(clip.name ?? source.displayName)
+                .font(.headline)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .fixedSize(horizontal: false, vertical: true)
             Text("Clip #\(clip.id ?? 0) from \(source.displayName)")
                 .font(.caption).foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
             HStack(spacing: 8) {
                 Label(formatDuration(clip.durationMs), systemImage: "clock")
                 Label("\(source.resolutionLabel)", systemImage: "viewfinder")
@@ -54,7 +67,9 @@ struct InspectorView: View {
                 }
             }
             .font(.caption).foregroundStyle(.secondary)
+            .lineLimit(1)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func nameAndRating(clip: Clip) -> some View {
@@ -69,21 +84,30 @@ struct InspectorView: View {
                     }
                 }
             ))
-            HStack {
-                Text("Rating")
-                ForEach(0..<5) { i in
-                    Button {
-                        let newRating = i + 1
-                        self.clip?.rating = newRating
-                        try? AppEnvironment.shared.markerStore.updateRating(clipID, rating: newRating)
-                    } label: {
-                        Image(systemName: i < clip.rating ? "star.fill" : "star")
-                            .foregroundStyle(i < clip.rating ? .yellow : .secondary)
+            .textFieldStyle(.roundedBorder)
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    Text("Rating").font(.caption).foregroundStyle(.secondary).fixedSize()
+                    Spacer()
+                    ForEach(0..<5) { i in
+                        Button {
+                            let newRating = i + 1
+                            self.clip?.rating = newRating
+                            try? AppEnvironment.shared.markerStore.updateRating(clipID, rating: newRating)
+                        } label: {
+                            Image(systemName: i < clip.rating ? "star.fill" : "star")
+                                .foregroundStyle(i < clip.rating ? .yellow : .secondary)
+                                .font(.callout)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
-                Spacer()
-                colorPicker(currentLabel: clip.colorLabel)
+                HStack(spacing: 4) {
+                    Text("Color").font(.caption).foregroundStyle(.secondary).fixedSize()
+                    Spacer()
+                    colorPicker(currentLabel: clip.colorLabel)
+                }
             }
         }
     }
@@ -227,8 +251,120 @@ struct InspectorView: View {
                 self.source = s
             }
             tags = (try? env.tagStore?.tags(forClip: clipID).map(\.name)) ?? []
+            allProjects = (try? database.read { try Project.order(Project.Columns.name).fetchAll($0) }) ?? []
+            let assigned: [Int64] = (try? database.read { db in
+                try Int64.fetchAll(db, sql: "SELECT project_id FROM clip_projects WHERE clip_id = ?", arguments: [clipID])
+            }) ?? []
+            assignedProjectIDs = Set(assigned)
         } catch {
             NSLog("InspectorView.load failed: \(error)")
+        }
+    }
+
+    private func exportSection(clipID: Int64) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Export").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                Menu {
+                    Section("Social") {
+                        Button("Reels (9:16 1080p)") { quickExport(clipID: clipID, preset: .reels) }
+                        Button("TikTok") { quickExport(clipID: clipID, preset: .tiktok) }
+                        Button("YouTube Shorts") { quickExport(clipID: clipID, preset: .youtubeShorts) }
+                        Button("Instagram Feed (4:5)") { quickExport(clipID: clipID, preset: .instagramFeed) }
+                    }
+                    Section("YouTube") {
+                        Button("YouTube 1080p") { quickExport(clipID: clipID, preset: .youtube1080p) }
+                        Button("YouTube 4K") { quickExport(clipID: clipID, preset: .youtube4k) }
+                    }
+                    Section("Bridges") {
+                        Button("FCPXML (Final Cut Pro)…") {
+                            AppState.shared.selectedClipIDs = [clipID]
+                            ExportActions.exportFCPXML()
+                        }
+                        Button("Obsidian Sidecar…") {
+                            AppState.shared.selectedClipIDs = [clipID]
+                            ExportActions.exportObsidian()
+                        }
+                    }
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.regular)
+
+                Button {
+                    quickExport(clipID: clipID, preset: .reels)
+                } label: {
+                    Image(systemName: "bolt.fill")
+                }
+                .buttonStyle(.bordered)
+                .help("Quick export as Reels (⌘⇧R)")
+            }
+        }
+    }
+
+    private func quickExport(clipID: Int64, preset: ExportPreset) {
+        AppState.shared.selectedClipIDs = [clipID]
+        ExportActions.exportSelected(preset)
+    }
+
+    private var projectsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Projects").font(.caption).foregroundStyle(.secondary)
+            if allProjects.isEmpty {
+                Text("No projects yet — create one in the sidebar.")
+                    .font(.caption).foregroundStyle(.tertiary)
+            } else {
+                FlowLayout(spacing: 4) {
+                    ForEach(allProjects) { project in
+                        let pid = project.id ?? -1
+                        let isAssigned = assignedProjectIDs.contains(pid)
+                        Button {
+                            toggleProject(pid, assigned: isAssigned)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: isAssigned ? "checkmark.circle.fill" : "plus.circle")
+                                    .font(.caption2)
+                                Text(project.name).font(.caption)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(isAssigned ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15),
+                                        in: Capsule())
+                            .foregroundStyle(isAssigned ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggleProject(_ projectID: Int64, assigned: Bool) {
+        guard projectID >= 0 else { return }
+        do {
+            try AppEnvironment.shared.database.write { db in
+                if assigned {
+                    try db.execute(
+                        sql: "DELETE FROM clip_projects WHERE clip_id = ? AND project_id = ?",
+                        arguments: [clipID, projectID]
+                    )
+                } else {
+                    try db.execute(
+                        sql: "INSERT OR IGNORE INTO clip_projects (clip_id, project_id) VALUES (?, ?)",
+                        arguments: [clipID, projectID]
+                    )
+                }
+            }
+            if assigned {
+                assignedProjectIDs.remove(projectID)
+            } else {
+                assignedProjectIDs.insert(projectID)
+            }
+            AppState.shared.libraryRevision &+= 1
+        } catch {
+            NSLog("InspectorView.toggleProject failed: \(error)")
         }
     }
 
@@ -308,29 +444,41 @@ struct ChipPicker: View {
     }
 }
 
-/// Simple flow layout for chips that wrap to multiple rows.
+/// Simple flow layout for chips that wrap to multiple rows. Honors the
+/// container's proposed width so chips wrap properly in narrow panels.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 4
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 300
+        let containerWidth = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
         for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x + sz.width > width { x = 0; y += rowH + spacing; rowH = 0 }
-            x += sz.width + spacing
+            // Propose a width-limited size so individual subviews can shrink
+            // if they're too wide (e.g. long mood labels in a narrow column).
+            let sz = s.sizeThatFits(ProposedViewSize(width: containerWidth, height: nil))
+            let w = min(sz.width, containerWidth)
+            if x > 0 && x + w > containerWidth { x = 0; y += rowH + spacing; rowH = 0 }
+            x += w + spacing
             rowH = max(rowH, sz.height)
         }
-        return CGSize(width: width, height: y + rowH)
+        // Return the proposed width (or natural row length if narrower) — never wider.
+        let finalWidth = containerWidth.isFinite ? containerWidth : x
+        return CGSize(width: finalWidth, height: y + rowH)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let containerWidth = bounds.width
         var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, rowH: CGFloat = 0
         for s in subviews {
-            let sz = s.sizeThatFits(.unspecified)
-            if x + sz.width > bounds.maxX { x = bounds.minX; y += rowH + spacing; rowH = 0 }
-            s.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
-            x += sz.width + spacing
+            let sz = s.sizeThatFits(ProposedViewSize(width: containerWidth, height: nil))
+            let w = min(sz.width, containerWidth)
+            if x > bounds.minX && x + w > bounds.maxX {
+                x = bounds.minX
+                y += rowH + spacing
+                rowH = 0
+            }
+            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(width: w, height: sz.height))
+            x += w + spacing
             rowH = max(rowH, sz.height)
         }
     }

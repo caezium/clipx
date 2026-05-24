@@ -9,10 +9,11 @@ struct ClipxApp: App {
         WindowGroup("Clipx") {
             RootView()
                 .environmentObject(appState)
-                .frame(minWidth: 1100, minHeight: 700)
+                .frame(minWidth: 1280, idealWidth: 1320, minHeight: 700, idealHeight: 820)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: true))
+        .defaultSize(width: 1320, height: 820)
         .commands {
             ClipxCommands(appState: appState)
         }

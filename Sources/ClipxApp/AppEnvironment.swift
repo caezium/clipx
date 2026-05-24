@@ -26,6 +26,7 @@ final class AppEnvironment: @unchecked Sendable {
     func bootstrap() {
         guard !didBootstrap else { return }
         didBootstrap = true
+        NSLog("[Clipx] bootstrap: starting")
 
         do {
             database = try Database.open()
@@ -38,13 +39,16 @@ final class AppEnvironment: @unchecked Sendable {
             watcher = FolderWatcher(indexer: indexer, bookmarkStore: bookmarkStore)
             exportPipeline = ExportPipeline(database: database)
 
+            NSLog("[Clipx] bootstrap: DB + services initialized")
+            // Tell the UI it can start querying.
+            AppState.shared.bootstrapped = true
+            AppState.shared.libraryRevision &+= 1
+
             // Restore folder access from security-scoped bookmarks and resume watching
             watcher.resumeAll()
+            NSLog("[Clipx] bootstrap: complete")
         } catch {
-            // Surface bootstrap failure clearly. We don't ship a crash here —
-            // we expose it via a banner so the user can recover by re-picking
-            // their library folder.
-            NSLog("Clipx bootstrap failed: \(error)")
+            NSLog("[Clipx] bootstrap FAILED: \(error)")
         }
     }
 

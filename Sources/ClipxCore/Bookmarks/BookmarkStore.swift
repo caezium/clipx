@@ -14,6 +14,8 @@ final class BookmarkStore {
     }
 
     /// Adds a new library folder by creating a security-scoped bookmark.
+    /// Idempotent: if the folder is already known, refreshes its bookmark
+    /// and `online = true` instead of throwing a UNIQUE-constraint error.
     func addFolder(url: URL) throws {
         #if MAS_BUILD
         let opts: URL.BookmarkCreationOptions = [.withSecurityScope]
@@ -25,16 +27,24 @@ final class BookmarkStore {
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        var record = FolderRecord(
-            id: nil,
-            path: url.path,
-            bookmark: bookmark,
-            addedAt: Int64(Date().timeIntervalSince1970),
-            lastScanAt: nil,
-            online: true
-        )
         try database.write { db in
-            try record.insert(db)
+            if var existing = try FolderRecord
+                .filter(FolderRecord.Columns.path == url.path)
+                .fetchOne(db) {
+                existing.bookmark = bookmark
+                existing.online = true
+                try existing.update(db)
+            } else {
+                var record = FolderRecord(
+                    id: nil,
+                    path: url.path,
+                    bookmark: bookmark,
+                    addedAt: Int64(Date().timeIntervalSince1970),
+                    lastScanAt: nil,
+                    online: true
+                )
+                try record.insert(db)
+            }
         }
     }
 

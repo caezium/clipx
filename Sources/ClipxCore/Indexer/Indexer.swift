@@ -76,11 +76,15 @@ final class Indexer {
             try database.write { db in
                 if source.id == nil { try source.insert(db) } else { try source.update(db) }
             }
+            AppState.shared.libraryRevision &+= 1
 
             // Kick off background thumbnail generation.
             thumbnailEngine.generateThumbnail(source: source) { [weak self] _ in
                 guard let self else { return }
-                Task { await self.updateThumbPath(sourceID: source.id!) }
+                Task { @MainActor in
+                    await self.updateThumbPath(sourceID: source.id!)
+                    AppState.shared.libraryRevision &+= 1
+                }
             }
         } catch {
             NSLog("Indexer.indexFile failed for \(url.path): \(error)")

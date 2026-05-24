@@ -45,15 +45,26 @@ struct NewProjectSheet: View {
     }
 
     private func create() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
         do {
+            // Reject duplicates so users don't accidentally end up with three
+            // "untitled" projects after a stray double-click on Create.
+            let existing: Project? = try AppEnvironment.shared.database.read { db in
+                try Project.fetchOne(db, sql: "SELECT * FROM projects WHERE name = ?", arguments: [trimmed])
+            }
+            if existing != nil {
+                self.error = "A project named \"\(trimmed)\" already exists."
+                return
+            }
             var project = Project(
                 id: nil,
-                name: name.trimmingCharacters(in: .whitespaces),
+                name: trimmed,
                 status: status.rawValue,
                 obsidianNotePath: obsidianNote.isEmpty ? nil : obsidianNote,
                 createdAt: Int64(Date().timeIntervalSince1970)
             )
             try AppEnvironment.shared.database.write { try project.insert($0) }
+            AppState.shared.libraryRevision &+= 1
             onCreated?(project)
             dismiss()
         } catch {
@@ -93,14 +104,23 @@ struct NewCollectionSheet: View {
     }
 
     private func create() {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
         do {
+            let existing: Collection? = try AppEnvironment.shared.database.read { db in
+                try Collection.fetchOne(db, sql: "SELECT * FROM collections WHERE name = ?", arguments: [trimmed])
+            }
+            if existing != nil {
+                self.error = "A collection named \"\(trimmed)\" already exists."
+                return
+            }
             var collection = Collection(
                 id: nil,
-                name: name.trimmingCharacters(in: .whitespaces),
+                name: trimmed,
                 description: description.isEmpty ? nil : description,
                 createdAt: Int64(Date().timeIntervalSince1970)
             )
             try AppEnvironment.shared.database.write { try collection.insert($0) }
+            AppState.shared.libraryRevision &+= 1
             onCreated?(collection)
             dismiss()
         } catch {

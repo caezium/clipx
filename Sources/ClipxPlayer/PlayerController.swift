@@ -87,6 +87,21 @@ final class PlayerController: ObservableObject {
         seek(toMs: prevMs)
     }
 
+    /// Jump forward by N seconds. Caps at duration.
+    func jumpForward(seconds: Double) {
+        guard player != nil else { return }
+        let next = currentMs + Int64(seconds * 1000)
+        let target = durationMs > 0 ? min(next, durationMs) : next
+        seek(toMs: target)
+    }
+
+    /// Jump backward by N seconds. Floors at 0.
+    func jumpBackward(seconds: Double) {
+        guard player != nil else { return }
+        let prev = currentMs - Int64(seconds * 1000)
+        seek(toMs: max(0, prev))
+    }
+
     var currentTimeLabel: String { Self.formatMs(currentMs) }
     var durationLabel: String { Self.formatMs(durationMs) }
 

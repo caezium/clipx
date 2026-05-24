@@ -85,7 +85,8 @@ final class FolderWatcher {
         )
         let flags = UInt32(
             kFSEventStreamCreateFlagFileEvents |
-            kFSEventStreamCreateFlagNoDefer
+            kFSEventStreamCreateFlagNoDefer |
+            kFSEventStreamCreateFlagUseCFTypes
         )
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault,

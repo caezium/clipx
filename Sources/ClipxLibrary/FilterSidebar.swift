@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// Filter section rendered as plain expandable rows. Avoids macOS 26's
+/// DisclosureGroup which has alignment issues in narrow sidebar columns.
 struct FilterSidebar: View {
     @EnvironmentObject private var appState: AppState
 
@@ -8,80 +10,128 @@ struct FilterSidebar: View {
     private let cameraOptions = ["static", "pan", "tilt", "dolly", "handheld", "drone", "gimbal"]
     private let settingOptions = ["indoor", "outdoor", "urban", "nature", "studio"]
 
+    @State private var moodOpen = false
+    @State private var shotOpen = false
+    @State private var cameraOpen = false
+    @State private var settingOpen = false
+    @State private var ratingOpen = false
+
     var body: some View {
-        DisclosureGroup("Mood") {
-            ForEach(moodOptions, id: \.self) { mood in
-                ToggleChip(label: mood, isOn: Binding(
-                    get: { appState.activeFilters.moods.contains(mood) },
-                    set: { isOn in
+        VStack(alignment: .leading, spacing: 4) {
+            disclosure(title: "Mood", isOpen: $moodOpen) {
+                ForEach(moodOptions, id: \.self) { mood in
+                    chipRow(label: mood,
+                            isOn: appState.activeFilters.moods.contains(mood)) { isOn in
                         if isOn { appState.activeFilters.moods.insert(mood) }
                         else { appState.activeFilters.moods.remove(mood) }
                     }
-                ))
+                }
             }
-        }
-        DisclosureGroup("Shot type") {
-            ForEach(shotOptions, id: \.self) { st in
-                ToggleChip(label: st, isOn: Binding(
-                    get: { appState.activeFilters.shotTypes.contains(st) },
-                    set: { isOn in
-                        if isOn { appState.activeFilters.shotTypes.insert(st) }
-                        else { appState.activeFilters.shotTypes.remove(st) }
+            disclosure(title: "Shot type", isOpen: $shotOpen) {
+                ForEach(shotOptions, id: \.self) { s in
+                    chipRow(label: s,
+                            isOn: appState.activeFilters.shotTypes.contains(s)) { isOn in
+                        if isOn { appState.activeFilters.shotTypes.insert(s) }
+                        else { appState.activeFilters.shotTypes.remove(s) }
                     }
-                ))
+                }
             }
-        }
-        DisclosureGroup("Camera") {
-            ForEach(cameraOptions, id: \.self) { c in
-                ToggleChip(label: c, isOn: Binding(
-                    get: { appState.activeFilters.cameraMoves.contains(c) },
-                    set: { isOn in
+            disclosure(title: "Camera", isOpen: $cameraOpen) {
+                ForEach(cameraOptions, id: \.self) { c in
+                    chipRow(label: c,
+                            isOn: appState.activeFilters.cameraMoves.contains(c)) { isOn in
                         if isOn { appState.activeFilters.cameraMoves.insert(c) }
                         else { appState.activeFilters.cameraMoves.remove(c) }
                     }
-                ))
+                }
             }
-        }
-        DisclosureGroup("Setting") {
-            ForEach(settingOptions, id: \.self) { s in
-                ToggleChip(label: s, isOn: Binding(
-                    get: { appState.activeFilters.settings.contains(s) },
-                    set: { isOn in
+            disclosure(title: "Setting", isOpen: $settingOpen) {
+                ForEach(settingOptions, id: \.self) { s in
+                    chipRow(label: s,
+                            isOn: appState.activeFilters.settings.contains(s)) { isOn in
                         if isOn { appState.activeFilters.settings.insert(s) }
                         else { appState.activeFilters.settings.remove(s) }
                     }
-                ))
-            }
-        }
-        DisclosureGroup("Rating") {
-            HStack {
-                Text("Min")
-                Stepper(value: $appState.activeFilters.minRating, in: 0...5) {
-                    Text(String(repeating: "★", count: appState.activeFilters.minRating))
                 }
             }
-        }
-        Toggle("Unused only", isOn: $appState.activeFilters.unusedOnly)
-        if appState.activeFilters.isActive {
-            Button("Clear filters") { appState.activeFilters = ClipFilters() }
-                .buttonStyle(.plain)
-                .foregroundStyle(.red)
-        }
-    }
-}
-
-private struct ToggleChip: View {
-    let label: String
-    @Binding var isOn: Bool
-    var body: some View {
-        Button { isOn.toggle() } label: {
-            HStack {
-                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                Text(label)
+            disclosure(title: "Rating", isOpen: $ratingOpen) {
+                HStack {
+                    Stepper(value: $appState.activeFilters.minRating, in: 0...5) {
+                        Text("Min \(String(repeating: "★", count: appState.activeFilters.minRating))")
+                            .font(.caption)
+                    }
+                }
+                .padding(.horizontal, 6)
+            }
+            HStack(spacing: 6) {
+                Image(systemName: appState.activeFilters.unusedOnly ? "checkmark.square.fill" : "square")
+                    .frame(width: 16)
+                    .foregroundStyle(appState.activeFilters.unusedOnly ? .primary : .secondary)
+                Text("Unused only").font(.caption)
                 Spacer()
             }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture { appState.activeFilters.unusedOnly.toggle() }
+
+            if appState.activeFilters.isActive || appState.selectedProjectID != nil || appState.selectedCollectionID != nil {
+                Button("Clear filters") {
+                    appState.activeFilters = ClipFilters()
+                    appState.selectedProjectID = nil
+                    appState.selectedCollectionID = nil
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+                .font(.caption)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func disclosure<Content: View>(
+        title: String,
+        isOpen: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Image(systemName: isOpen.wrappedValue ? "chevron.down" : "chevron.right")
+                    .font(.caption2)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6).padding(.vertical, 4)
+            .contentShape(Rectangle())
+            .onTapGesture { isOpen.wrappedValue.toggle() }
+            if isOpen.wrappedValue {
+                VStack(alignment: .leading, spacing: 2) {
+                    content()
+                }
+                .padding(.leading, 22)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chipRow(label: String, isOn: Bool, action: @escaping (Bool) -> Void) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                .font(.caption2)
+                .frame(width: 12)
+                .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+            Text(label).font(.caption)
+            Spacer(minLength: 0)
+        }
         .foregroundStyle(isOn ? .primary : .secondary)
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { action(!isOn) }
     }
 }

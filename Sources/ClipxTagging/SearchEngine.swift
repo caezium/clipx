@@ -61,6 +61,16 @@ final class SearchEngine {
             if filters.unusedOnly {
                 wheres.append("c.used_count = 0")
             }
+            if !filters.projectIDs.isEmpty {
+                let placeholders = filters.projectIDs.map { _ in "?" }.joined(separator: ",")
+                wheres.append("c.id IN (SELECT clip_id FROM clip_projects WHERE project_id IN (\(placeholders)))")
+                arguments.append(contentsOf: filters.projectIDs.map { $0 as DatabaseValueConvertible })
+            }
+            if !filters.collectionIDs.isEmpty {
+                let placeholders = filters.collectionIDs.map { _ in "?" }.joined(separator: ",")
+                wheres.append("c.id IN (SELECT clip_id FROM clip_collections WHERE collection_id IN (\(placeholders)))")
+                arguments.append(contentsOf: filters.collectionIDs.map { $0 as DatabaseValueConvertible })
+            }
 
             if !wheres.isEmpty {
                 sql += " WHERE " + wheres.joined(separator: " AND ")
@@ -87,11 +97,13 @@ final class SearchEngine {
 
     private static func orderBy(_ sort: ClipSortOption) -> String {
         switch sort {
-        case .dateImportedDesc: return "c.created_at DESC"
-        case .dateImportedAsc: return "c.created_at ASC"
-        case .ratingDesc: return "c.rating DESC, c.created_at DESC"
+        case .sourceDateDesc, .dateImportedDesc, .importedDesc:
+            return "c.created_at DESC"
+        case .sourceDateAsc, .dateImportedAsc, .importedAsc:
+            return "c.created_at ASC"
+        case .ratingDesc:   return "c.rating DESC, c.created_at DESC"
         case .durationDesc: return "(c.out_ms - c.in_ms) DESC"
-        case .nameAsc: return "c.name ASC"
+        case .nameAsc:      return "c.name ASC"
         }
     }
 }

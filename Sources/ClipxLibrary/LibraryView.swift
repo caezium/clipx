@@ -11,12 +11,17 @@ struct LibraryView: View {
         VStack(spacing: 0) {
             toolbar
             Divider()
+            if let pid = appState.selectedProjectID {
+                ProjectHeaderView(projectID: pid)
+            }
             content
         }
         .onAppear(perform: reload)
         .onChange(of: appState.searchQuery) { _, _ in reload() }
         .onChange(of: appState.activeFilters) { _, _ in reload() }
         .onChange(of: appState.sortOption) { _, _ in reload() }
+        .onChange(of: appState.libraryRevision) { _, _ in reload() }
+        .onChange(of: appState.bootstrapped) { _, ready in if ready { reload() } }
     }
 
     @ViewBuilder
@@ -35,7 +40,7 @@ struct LibraryView: View {
             Spacer()
 
             Picker("", selection: $appState.sortOption) {
-                ForEach(ClipSortOption.allCases, id: \.self) { opt in
+                ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
                     Text(opt.label).tag(opt)
                 }
             }
@@ -45,9 +50,21 @@ struct LibraryView: View {
             Picker("", selection: $appState.viewMode) {
                 Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
                 Image(systemName: "list.bullet").tag(LibraryViewMode.list)
+                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
             }
             .pickerStyle(.segmented)
-            .frame(width: 90)
+            .frame(width: 120)
+            .help("Grid · List · Calendar")
+
+            Button {
+                appState.inspectorVisible.toggle()
+            } label: {
+                Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
+                    .foregroundStyle(appState.inspectorVisible ? Color.accentColor : .secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Toggle Inspector (⌥⌘I)")
+            .keyboardShortcut("i", modifiers: [.command, .option])
         }
         .padding(8)
     }
@@ -64,35 +81,78 @@ struct LibraryView: View {
                 ClipGridView(sources: sources, clips: clips)
             case .list:
                 ClipListView(sources: sources, clips: clips)
+            case .calendar:
+                CalendarBrowseView(sources: sources)
             }
         }
     }
 
     private func reload() {
         loading = true
+        NSLog("[Clipx] LibraryView.reload() called")
         Task.detached(priority: .userInitiated) {
             let env = AppEnvironment.shared
             guard let database = env.database, let search = env.searchEngine else {
+                NSLog("[Clipx] reload: env not ready, bailing")
                 await MainActor.run { self.loading = false }
                 return
             }
+            // Fetch sources and clips independently so a failure in one doesn't
+            // hide the other.
+            var fetchedSources: [Source] = []
+            var fetchedClips: [Clip] = []
             do {
-                let fetchedSources: [Source] = try database.read { db in
-                    try Source.order(Source.Columns.importedAt.desc).limit(500).fetchAll(db)
+                let sortSQL = LibraryView.sourcesOrderBy(AppState.shared.sortOption)
+                fetchedSources = try database.read { db in
+                    try Source.fetchAll(db, sql: "SELECT * FROM sources ORDER BY \(sortSQL) LIMIT 500")
                 }
-                let fetchedClips: [Clip] = try search.search(
+                NSLog("[Clipx] reload: fetched %d sources", fetchedSources.count)
+            } catch {
+                NSLog("[Clipx] reload: sources query failed: %@", String(describing: error))
+            }
+            do {
+                fetchedClips = try search.search(
                     query: AppState.shared.searchQuery,
                     filters: AppState.shared.activeFilters,
                     sort: AppState.shared.sortOption
                 )
-                await MainActor.run {
-                    self.sources = fetchedSources
-                    self.clips = fetchedClips
-                    self.loading = false
-                }
+                NSLog("[Clipx] reload: fetched %d clips", fetchedClips.count)
             } catch {
-                await MainActor.run { self.loading = false }
+                NSLog("[Clipx] reload: clips search failed: %@", String(describing: error))
             }
+            let finalSources = fetchedSources
+            let finalClips = fetchedClips
+            await MainActor.run {
+                self.sources = finalSources
+                self.clips = finalClips
+                self.loading = false
+                NSLog("[Clipx] reload: state updated, sources=%d clips=%d", finalSources.count, finalClips.count)
+            }
+        }
+    }
+
+    /// Maps the user-selected sort option into a SQL ORDER BY clause for the
+    /// sources table. "Newest / Oldest" uses the source's own recording date
+    /// (`created_at`, pulled from file metadata) instead of the import date —
+    /// you want to find the day you shot it, not the day you imported it.
+    /// Imported-at is used as a fallback for sources whose metadata didn't
+    /// produce a creation date.
+    private static func sourcesOrderBy(_ sort: ClipSortOption) -> String {
+        switch sort {
+        case .sourceDateDesc, .dateImportedDesc:
+            return "COALESCE(created_at, imported_at) DESC"
+        case .sourceDateAsc, .dateImportedAsc:
+            return "COALESCE(created_at, imported_at) ASC"
+        case .importedDesc:
+            return "imported_at DESC"
+        case .importedAsc:
+            return "imported_at ASC"
+        case .durationDesc:
+            return "COALESCE(duration_ms, 0) DESC"
+        case .nameAsc:
+            return "LOWER(path) ASC"
+        case .ratingDesc:
+            return "COALESCE(created_at, imported_at) DESC" // sources have no rating
         }
     }
 }

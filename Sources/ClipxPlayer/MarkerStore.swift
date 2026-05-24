@@ -35,6 +35,7 @@ final class MarkerStore {
         try database.write { db in
             try clip.insert(db)
         }
+        Self.bumpRevision()
         return clip
     }
 
@@ -45,6 +46,7 @@ final class MarkerStore {
                 arguments: [max(0, min(5, rating)), clipID]
             )
         }
+        Self.bumpRevision()
     }
 
     func updateColorLabel(_ clipID: Int64, label: Int?) throws {
@@ -54,6 +56,7 @@ final class MarkerStore {
                 arguments: [label, clipID]
             )
         }
+        Self.bumpRevision()
     }
 
     func updateRange(_ clipID: Int64, inMs: Int64, outMs: Int64) throws {
@@ -66,6 +69,15 @@ final class MarkerStore {
                 arguments: [inMs, outMs, clipID]
             )
         }
+        Self.bumpRevision()
+    }
+
+    /// Notify SwiftUI views that the clips table changed. Centralized so every
+    /// mutating call site stays in sync.
+    private static func bumpRevision() {
+        Task { @MainActor in
+            AppState.shared.libraryRevision &+= 1
+        }
     }
 
     func updateMood(_ clipID: Int64, mood: String?) throws {
@@ -75,6 +87,7 @@ final class MarkerStore {
                 arguments: [mood, clipID]
             )
         }
+        Self.bumpRevision()
     }
 
     func updateStructured(
@@ -97,12 +110,14 @@ final class MarkerStore {
                                arguments: [setting, clipID])
             }
         }
+        Self.bumpRevision()
     }
 
     func deleteClip(_ clipID: Int64) throws {
         try database.write { db in
             try db.execute(sql: "DELETE FROM clips WHERE id = ?", arguments: [clipID])
         }
+        Self.bumpRevision()
     }
 
     func fetchClips(forSource sourceID: Int64) throws -> [Clip] {
