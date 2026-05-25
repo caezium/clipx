@@ -47,18 +47,18 @@ struct PlayerView: View {
         .focusable()
         .focusEffectDisabled()
         .focused($keyboardFocused)
-        .onAppear {
+        // .task(id:) waits for the view to be in the hierarchy before running;
+        // setting focus inside this closure is reliable even if a sheet is
+        // racing the same runloop. Re-runs whenever sourceID changes.
+        .task(id: sourceID) {
             load()
             reloadSavedClips()
-            // Defer until the view is in the hierarchy or focus is dropped.
-            DispatchQueue.main.async { keyboardFocused = true }
-        }
-        .onChange(of: sourceID) { _, _ in
-            load()
-            reloadSavedClips()
-            DispatchQueue.main.async { keyboardFocused = true }
+            keyboardFocused = true
         }
         .onChange(of: appState.libraryRevision) { _, _ in reloadSavedClips() }
+        .onReceive(NotificationCenter.default.publisher(for: .systemWillSleep)) { _ in
+            controller.pause()
+        }
         .onDisappear { controller.tearDown() }
         .onKeyPress("i") { markIn(); return .handled }
         .onKeyPress("o") { markOut(); return .handled }
@@ -182,7 +182,9 @@ struct PlayerView: View {
                 }
                 .fixedSize()
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut("s", modifiers: [])
+                // No keyboardShortcut here — menu shortcuts hijack focused
+                // TextFields. The .onKeyPress("s") on the view (line ~65)
+                // handles the keyboard path when the player has focus.
                 .help("Save range as clip (S)")
             }
         }
@@ -191,8 +193,9 @@ struct PlayerView: View {
     }
 
     private func load() {
+        guard let database = AppEnvironment.shared.database else { return }
         do {
-            guard let src: Source = try AppEnvironment.shared.database.read({
+            guard let src: Source = try database.read({
                 try Source.fetchOne($0, key: sourceID)
             }) else { return }
             self.source = src
@@ -201,7 +204,7 @@ struct PlayerView: View {
                 controller.seek(toMs: inMs)
             }
         } catch {
-            NSLog("PlayerView.load failed: \(error)")
+            ClipxLog.player.error("PlayerView.load failed: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -220,8 +223,12 @@ struct PlayerView: View {
             AppState.shared.showToast("Mark in and out points first (I, O)", level: .warning)
             return
         }
+        guard let markerStore = AppEnvironment.shared.markerStore else {
+            AppState.shared.showToast("Library still loading", level: .warning)
+            return
+        }
         do {
-            _ = try AppEnvironment.shared.markerStore.saveRange(
+            _ = try markerStore.saveRange(
                 sourceID: sourceID, inMs: inMs, outMs: outMs
             )
             // Show the running count so the user gets a sense of progress on
@@ -243,8 +250,7 @@ struct PlayerView: View {
 
     private func reloadSavedClips() {
         Task.detached(priority: .userInitiated) { [sourceID] in
-            let env = AppEnvironment.shared
-            guard let store = env.markerStore else { return }
+            guard let store = AppEnvironment.shared.markerStore else { return }
             let clips = (try? store.fetchClips(forSource: sourceID)) ?? []
             await MainActor.run { self.savedClips = clips }
         }
@@ -292,7 +298,12 @@ struct PlayerView: View {
     }
 
     private func savedClipChip(_ clip: Clip) -> some View {
-        let isSelected = appState.selectedClipIDs.contains(clip.id ?? -1)
+        // Don't use -1 as a sentinel — if a row ever has id=-1 it collides.
+        // Optional-map gives a clean "no id → not selected" answer.
+        let isSelected: Bool = {
+            if let id = clip.id { return appState.selectedClipIDs.contains(id) }
+            return false
+        }()
         return Button {
             if let id = clip.id { appState.selectedClipIDs = [id] }
             appState.playerInMs = clip.inMs
@@ -349,8 +360,9 @@ struct PlayerView: View {
     }
 
     private func deleteClip(_ clipID: Int64) {
+        guard let markerStore = AppEnvironment.shared.markerStore else { return }
         do {
-            try AppEnvironment.shared.markerStore.deleteClip(clipID)
+            try markerStore.deleteClip(clipID)
             appState.selectedClipIDs.remove(clipID)
             AppState.shared.showToast("Clip deleted", level: .info)
         } catch {

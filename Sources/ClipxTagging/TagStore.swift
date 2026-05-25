@@ -10,18 +10,26 @@ final class TagStore {
     }
 
     /// Ensures a tag exists; returns its id.
+    ///
+    /// Atomic via `INSERT … ON CONFLICT(name) DO UPDATE … RETURNING id`. The
+    /// previous "SELECT then INSERT" sequence had a tiny race window across
+    /// concurrent writers (GRDB serializes writes but two adjacent
+    /// upsertTag calls would each see "no row" before the other inserted).
     @discardableResult
     func upsertTag(name: String) throws -> Int64 {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !trimmed.isEmpty else { throw TagError.empty }
         return try database.write { db -> Int64 in
-            if let row = try Row.fetchOne(
-                db, sql: "SELECT id FROM tags WHERE name = ?", arguments: [trimmed]
-            ) {
-                return row["id"]
-            }
-            try db.execute(sql: "INSERT INTO tags(name) VALUES (?)", arguments: [trimmed])
-            return db.lastInsertedRowID
+            let row = try Row.fetchOne(
+                db,
+                sql: """
+                    INSERT INTO tags(name) VALUES (?)
+                    ON CONFLICT(name) DO UPDATE SET name = excluded.name
+                    RETURNING id
+                """,
+                arguments: [trimmed]
+            )
+            return row?["id"] ?? db.lastInsertedRowID
         }
     }
 
@@ -63,10 +71,12 @@ final class TagStore {
                 try Tag.order(Tag.Columns.name).limit(limit).fetchAll(db)
             }
         }
+        // Escape `%` / `_` so a tag prefix like "100%" doesn't match arbitrary chars.
+        let escaped = sqlLikeEscape(needle)
         return try database.read { db in
             try Tag.fetchAll(db, sql: """
-                SELECT * FROM tags WHERE name LIKE ? ORDER BY name LIMIT ?
-            """, arguments: ["\(needle)%", limit])
+                SELECT * FROM tags WHERE name LIKE ? ESCAPE '\\' ORDER BY name LIMIT ?
+            """, arguments: ["\(escaped)%", limit])
         }
     }
 }

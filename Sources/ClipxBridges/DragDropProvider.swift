@@ -1,9 +1,10 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// Promised file provider for drag-out: when the user drops a marked clip onto
-/// FCP/Premiere/Slack/Finder, we lazily materialize the export via ffmpeg
-/// at the destination URL.
+/// Promised file provider for drag-out. Currently unused — ClipGridView uses
+/// the Transferable-based `ClipTransferable` instead. Kept for reference; will
+/// be removed once we've validated the Transferable path covers FCP/Premiere
+/// drop targets correctly.
 final class DragDropProvider: NSObject, NSFilePromiseProviderDelegate {
     let clipID: Int64
     let preset: ExportPreset
@@ -23,12 +24,22 @@ final class DragDropProvider: NSObject, NSFilePromiseProviderDelegate {
                              completionHandler: @escaping (Error?) -> Void) {
         Task {
             do {
-                guard let clip: Clip = try AppEnvironment.shared.database.read({ db in
+                guard let database = AppEnvironment.shared.database else {
+                    completionHandler(NSError(
+                        domain: "clipx.dragdrop", code: -2,
+                        userInfo: [NSLocalizedDescriptionKey: "Library not ready"]
+                    ))
+                    return
+                }
+                guard let clip: Clip = try database.read({ db in
                     try Clip.fetchOne(db, key: clipID)
-                }), let source: Source = try AppEnvironment.shared.database.read({ db in
+                }), let source: Source = try database.read({ db in
                     try Source.fetchOne(db, key: clip.sourceID)
                 }) else {
-                    completionHandler(NSError(domain: "clipx.dragdrop", code: -1))
+                    completionHandler(NSError(
+                        domain: "clipx.dragdrop", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Clip not found"]
+                    ))
                     return
                 }
                 #if DIRECT_BUILD
@@ -37,7 +48,7 @@ final class DragDropProvider: NSObject, NSFilePromiseProviderDelegate {
                     inMs: clip.inMs, outMs: clip.outMs,
                     preset: preset, outputPath: url.path
                 )
-                _ = try await FFmpegBackend.run(arguments: args) { _ in }
+                _ = try await FFmpegBackend.run(arguments: args)
                 #else
                 try await AVFoundationBackend.export(
                     sourcePath: source.path,

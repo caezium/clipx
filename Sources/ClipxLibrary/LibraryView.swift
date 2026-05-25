@@ -6,6 +6,15 @@ struct LibraryView: View {
     @State private var sources: [Source] = []
     @State private var clips: [Clip] = []
     @State private var loading = false
+    @State private var hitLimit = false
+    /// Cancellable reload task so a flurry of keystrokes only fires one query.
+    @State private var searchReloadTask: Task<Void, Never>?
+
+    /// Page size for the sources query — surfaced in UI when hit so the user
+    /// knows there's more behind a "Load more" button.
+    private static let sourcesLimit: Int = 500
+    /// Debounce interval (ms) between the last keystroke and search reload.
+    private static let searchDebounceMs: UInt64 = 200_000_000 // 200ms
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +26,8 @@ struct LibraryView: View {
             content
         }
         .onAppear(perform: reload)
-        .onChange(of: appState.searchQuery) { _, _ in reload() }
+        // Search debounced — every other change reloads immediately.
+        .onChange(of: appState.searchQuery) { _, _ in scheduleDebouncedReload() }
         .onChange(of: appState.activeFilters) { _, _ in reload() }
         .onChange(of: appState.sortOption) { _, _ in reload() }
         .onChange(of: appState.libraryRevision) { _, _ in reload() }
@@ -76,39 +86,73 @@ struct LibraryView: View {
         } else if sources.isEmpty && clips.isEmpty {
             EmptyLibraryView()
         } else {
-            switch appState.viewMode {
-            case .grid:
-                ClipGridView(sources: sources, clips: clips)
-            case .list:
-                ClipListView(sources: sources, clips: clips)
-            case .calendar:
-                CalendarBrowseView(sources: sources)
+            VStack(spacing: 0) {
+                switch appState.viewMode {
+                case .grid:
+                    ClipGridView(sources: sources, clips: clips)
+                case .list:
+                    ClipListView(sources: sources, clips: clips)
+                case .calendar:
+                    CalendarBrowseView(sources: sources)
+                }
+                if hitLimit {
+                    pageFooter
+                }
             }
+        }
+    }
+
+    private var pageFooter: some View {
+        HStack {
+            Image(systemName: "ellipsis.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Showing first \(Self.sourcesLimit) sources — refine search or filters to see more.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 6)
+        .background(.bar)
+    }
+
+    private func scheduleDebouncedReload() {
+        searchReloadTask?.cancel()
+        searchReloadTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.searchDebounceMs)
+            guard !Task.isCancelled else { return }
+            reload()
         }
     }
 
     private func reload() {
         loading = true
-        NSLog("[Clipx] LibraryView.reload() called")
+        ClipxLog.library.debug("reload() called")
         Task.detached(priority: .userInitiated) {
-            let env = AppEnvironment.shared
-            guard let database = env.database, let search = env.searchEngine else {
-                NSLog("[Clipx] reload: env not ready, bailing")
+            guard let database = AppEnvironment.shared.database,
+                  let search = AppEnvironment.shared.searchEngine else {
+                ClipxLog.library.debug("reload: env not ready, bailing")
                 await MainActor.run { self.loading = false }
                 return
             }
-            // Fetch sources and clips independently so a failure in one doesn't
-            // hide the other.
             var fetchedSources: [Source] = []
             var fetchedClips: [Clip] = []
+            var truncated = false
             do {
                 let sortSQL = LibraryView.sourcesOrderBy(AppState.shared.sortOption)
                 fetchedSources = try database.read { db in
-                    try Source.fetchAll(db, sql: "SELECT * FROM sources ORDER BY \(sortSQL) LIMIT 500")
+                    try Source.fetchAll(db, sql: "SELECT * FROM sources ORDER BY \(sortSQL) LIMIT ?", arguments: [Self.sourcesLimit])
                 }
-                NSLog("[Clipx] reload: fetched %d sources", fetchedSources.count)
+                // If we hit the limit, surface a footer so the user knows.
+                if fetchedSources.count == Self.sourcesLimit {
+                    let total = (try? database.read { db in
+                        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sources") ?? 0
+                    }) ?? 0
+                    truncated = total > Self.sourcesLimit
+                }
+                ClipxLog.library.debug("reload: fetched \(fetchedSources.count) sources")
             } catch {
-                NSLog("[Clipx] reload: sources query failed: %@", String(describing: error))
+                ClipxLog.library.error("reload: sources query failed: \(String(describing: error), privacy: .public)")
             }
             do {
                 fetchedClips = try search.search(
@@ -116,17 +160,18 @@ struct LibraryView: View {
                     filters: AppState.shared.activeFilters,
                     sort: AppState.shared.sortOption
                 )
-                NSLog("[Clipx] reload: fetched %d clips", fetchedClips.count)
+                ClipxLog.library.debug("reload: fetched \(fetchedClips.count) clips")
             } catch {
-                NSLog("[Clipx] reload: clips search failed: %@", String(describing: error))
+                ClipxLog.library.error("reload: clips search failed: \(String(describing: error), privacy: .public)")
             }
             let finalSources = fetchedSources
             let finalClips = fetchedClips
+            let finalTruncated = truncated
             await MainActor.run {
                 self.sources = finalSources
                 self.clips = finalClips
+                self.hitLimit = finalTruncated
                 self.loading = false
-                NSLog("[Clipx] reload: state updated, sources=%d clips=%d", finalSources.count, finalClips.count)
             }
         }
     }

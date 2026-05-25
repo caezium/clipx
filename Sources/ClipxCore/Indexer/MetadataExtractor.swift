@@ -18,14 +18,19 @@ enum MetadataExtractor {
 
     static func extract(url: URL) async -> VideoMeta {
         var meta = VideoMeta()
+        // Precise timing — without this, durations on VFR / long-GOP sources
+        // were off by seconds, and the clip range UI later trusted that
+        // number for its end-of-source guard.
         let asset = AVURLAsset(url: url, options: [
-            AVURLAssetPreferPreciseDurationAndTimingKey: false
+            AVURLAssetPreferPreciseDurationAndTimingKey: true
         ])
 
         do {
             let duration = try await asset.load(.duration)
             meta.durationMs = Int64(CMTimeGetSeconds(duration) * 1000)
-        } catch { /* swallow */ }
+        } catch {
+            ClipxLog.indexer.debug("duration load failed for \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
+        }
 
         do {
             let tracks = try await asset.loadTracks(withMediaType: .video)
@@ -45,7 +50,9 @@ enum MetadataExtractor {
                     meta.codec = fourCCToString(mediaSubType)
                 }
             }
-        } catch { /* swallow */ }
+        } catch {
+            ClipxLog.indexer.debug("video tracks load failed: \(String(describing: error), privacy: .public)")
+        }
 
         do {
             let audioTracks = try await asset.loadTracks(withMediaType: .audio)
@@ -56,14 +63,19 @@ enum MetadataExtractor {
                     meta.audioChannels = Int(abl.pointee.mChannelsPerFrame)
                 }
             }
-        } catch { /* swallow */ }
+        } catch {
+            ClipxLog.indexer.debug("audio tracks load failed: \(String(describing: error), privacy: .public)")
+        }
 
         if let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey]),
            let date = resourceValues.creationDate {
             meta.createdAt = Int64(date.timeIntervalSince1970)
         }
 
-        meta.colorSpace = "rec709" // Default. ffprobe fallback can refine this.
+        // Leave colorSpace nil rather than fabricating "rec709" — downstream
+        // tooling (color grading, HDR badges) would mislabel Rec.2020 or
+        // P3 footage. ffprobe sidecar can fill this in later when implemented.
+        meta.colorSpace = nil
         return meta
     }
 

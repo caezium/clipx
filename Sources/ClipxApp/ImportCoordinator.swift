@@ -11,7 +11,11 @@ final class ImportCoordinator {
 
     func pickFolder() async {
         guard let url = await FolderPicker.pickFolderURL() else { return }
-        AppEnvironment.shared.watcher?.add(folder: url)
+        guard let watcher = AppEnvironment.shared.watcher else {
+            AppState.shared.showToast("Library still loading — try again in a moment", level: .warning)
+            return
+        }
+        watcher.add(folder: url)
         AppState.shared.showToast("Added \(url.lastPathComponent) to library", level: .success)
     }
 }

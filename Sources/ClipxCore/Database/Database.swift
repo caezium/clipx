@@ -16,6 +16,14 @@ final class Database {
         var config = Configuration()
         config.label = "clipx.db"
         config.foreignKeysEnabled = true
+        // WAL improves concurrent read/write throughput for our mixed
+        // indexer-writes-while-UI-reads workload. Busy timeout avoids
+        // SQLITE_BUSY when the watcher fires while the user is searching.
+        config.busyMode = .timeout(5)
+        config.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA journal_mode = WAL")
+            try db.execute(sql: "PRAGMA synchronous = NORMAL")
+        }
         let queue = try DatabaseQueue(path: url.path, configuration: config)
         try Migrations.register().migrate(queue)
         return Database(queue: queue)
@@ -52,4 +60,24 @@ final class Database {
     func write<T>(_ block: (GRDB.Database) throws -> T) throws -> T {
         try dbQueue.write(block)
     }
+}
+
+/// Escapes `_` and `%` (and the escape char itself) for safe use inside a
+/// SQL `LIKE` pattern. Use with `ESCAPE '\\'` in the query.
+///
+/// Bug: without this, a folder path containing `_` (very common — every
+/// `My_Folder` or `2025_05_24`) matches one extra character per `_`, so
+/// `markFolderOffline("/Users/x/My_Footage")` also flagged neighbours.
+public func sqlLikeEscape(_ s: String) -> String {
+    var out = ""
+    out.reserveCapacity(s.count)
+    for c in s {
+        switch c {
+        case "\\": out.append("\\\\")
+        case "%":  out.append("\\%")
+        case "_":  out.append("\\_")
+        default:   out.append(c)
+        }
+    }
+    return out
 }

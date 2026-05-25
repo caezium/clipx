@@ -15,7 +15,7 @@ final class UpdateManager: NSObject {
         // modal "Unable to Check For Updates" on every launch.
         let key = Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String ?? ""
         guard !key.isEmpty, !key.contains("PLACEHOLDER") else {
-            NSLog("[Clipx] UpdateManager: SUPublicEDKey is a placeholder, Sparkle disabled in this build")
+            ClipxLog.updater.info("SUPublicEDKey is a placeholder, Sparkle disabled in this build")
             return
         }
         updaterController = SPUStandardUpdaterController(

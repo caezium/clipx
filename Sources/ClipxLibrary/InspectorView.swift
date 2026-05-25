@@ -2,15 +2,24 @@ import SwiftUI
 
 /// Right-pane inspector showing all metadata for the selected clip with
 /// inline editing. Backed directly by MarkerStore / TagStore writes.
+///
+/// Text fields debounce — name and notes both used to hammer the DB on every
+/// keystroke. Now `draftName` / `draftNotes` are local @State that commit on
+/// .onSubmit (Enter) or 600ms after the last keystroke for notes (where Enter
+/// is a literal newline).
 struct InspectorView: View {
     let clipID: Int64
     @State private var clip: Clip?
     @State private var source: Source?
     @State private var tags: [String] = []
     @State private var newTag: String = ""
-    @State private var suggestions: [String] = []
     @State private var allProjects: [Project] = []
     @State private var assignedProjectIDs: Set<Int64> = []
+
+    // Draft values for debounced commit.
+    @State private var draftName: String = ""
+    @State private var draftNotes: String = ""
+    @State private var notesCommitTask: Task<Void, Never>?
 
     private let moodOptions = ["calm", "dramatic", "energetic", "melancholic", "hopeful", "tense"]
     private let shotOptions = ["close-up", "medium", "wide", "extreme-wide"]
@@ -33,7 +42,7 @@ struct InspectorView: View {
                     Divider()
                     projectsSection
                     Divider()
-                    notesSection(clip: clip)
+                    notesSection
                     Divider()
                     technical(source: source)
                 } else {
@@ -46,6 +55,7 @@ struct InspectorView: View {
         .scrollIndicators(.automatic)
         .onAppear(perform: load)
         .onChange(of: clipID) { _, _ in load() }
+        .onDisappear { notesCommitTask?.cancel() }
     }
 
     private func header(clip: Clip, source: Source) -> some View {
@@ -74,17 +84,10 @@ struct InspectorView: View {
 
     private func nameAndRating(clip: Clip) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("Name", text: Binding(
-                get: { self.clip?.name ?? "" },
-                set: { newValue in
-                    self.clip?.name = newValue
-                    try? AppEnvironment.shared.database.write { db in
-                        try db.execute(sql: "UPDATE clips SET name = ? WHERE id = ?",
-                                       arguments: [newValue, clipID])
-                    }
-                }
-            ))
-            .textFieldStyle(.roundedBorder)
+            // Local draft committed on Enter/blur, not per keystroke.
+            TextField("Name", text: $draftName)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { commitName() }
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
@@ -93,14 +96,14 @@ struct InspectorView: View {
                     ForEach(0..<5) { i in
                         Button {
                             let newRating = i + 1
-                            self.clip?.rating = newRating
-                            try? AppEnvironment.shared.markerStore.updateRating(clipID, rating: newRating)
+                            applyRating(newRating)
                         } label: {
                             Image(systemName: i < clip.rating ? "star.fill" : "star")
                                 .foregroundStyle(i < clip.rating ? .yellow : .secondary)
                                 .font(.callout)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Rate \(i + 1) star\(i == 0 ? "" : "s")")
                     }
                 }
                 HStack(spacing: 4) {
@@ -112,13 +115,43 @@ struct InspectorView: View {
         }
     }
 
+    private func commitName() {
+        guard let database = AppEnvironment.shared.database else { return }
+        let value = draftName
+        let oldName = clip?.name
+        clip?.name = value
+        do {
+            try database.write { db in
+                try db.execute(
+                    sql: "UPDATE clips SET name = ? WHERE id = ?",
+                    arguments: [value, clipID]
+                )
+            }
+            AppState.shared.libraryRevision &+= 1
+        } catch {
+            // Roll back local state so what you see matches what's persisted.
+            clip?.name = oldName
+            AppState.shared.showToast("Couldn't save name: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    private func applyRating(_ newRating: Int) {
+        guard let markerStore = AppEnvironment.shared.markerStore else { return }
+        let oldRating = clip?.rating
+        clip?.rating = newRating
+        do {
+            try markerStore.updateRating(clipID, rating: newRating)
+        } catch {
+            clip?.rating = oldRating ?? 0
+            AppState.shared.showToast("Couldn't save rating", level: .error)
+        }
+    }
+
     private func colorPicker(currentLabel: Int?) -> some View {
         HStack(spacing: 4) {
             ForEach(ColorLabel.allCases, id: \.self) { label in
                 Button {
-                    let value: Int? = label == .none ? nil : label.rawValue
-                    clip?.colorLabel = value
-                    try? AppEnvironment.shared.markerStore.updateColorLabel(clipID, label: value)
+                    applyColorLabel(label)
                 } label: {
                     Circle()
                         .fill(swiftColor(for: label))
@@ -130,7 +163,21 @@ struct InspectorView: View {
                         }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Color: \(label)")
             }
+        }
+    }
+
+    private func applyColorLabel(_ label: ColorLabel) {
+        guard let markerStore = AppEnvironment.shared.markerStore else { return }
+        let value: Int? = label == .none ? nil : label.rawValue
+        let old = clip?.colorLabel
+        clip?.colorLabel = value
+        do {
+            try markerStore.updateColorLabel(clipID, label: value)
+        } catch {
+            clip?.colorLabel = old
+            AppState.shared.showToast("Couldn't save color label", level: .error)
         }
     }
 
@@ -139,32 +186,51 @@ struct InspectorView: View {
             Text("Attributes").font(.headline)
             ChipPicker(label: "Mood", options: moodOptions, selectedCSV: Binding(
                 get: { self.clip?.mood ?? "" },
-                set: { newValue in
-                    self.clip?.mood = newValue.isEmpty ? nil : newValue
-                    try? AppEnvironment.shared.markerStore.updateMood(clipID, mood: newValue.isEmpty ? nil : newValue)
-                }
+                set: { newValue in applyMood(newValue) }
             ), multiSelect: true)
             ChipPicker(label: "Shot type", options: shotOptions, selectedCSV: Binding(
                 get: { self.clip?.shotType ?? "" },
-                set: { newValue in
-                    self.clip?.shotType = newValue.isEmpty ? nil : newValue
-                    try? AppEnvironment.shared.markerStore.updateStructured(clipID, shotType: newValue.isEmpty ? nil : newValue)
-                }
+                set: { newValue in applyStructured(\.shotType, value: newValue) }
             ), multiSelect: false)
             ChipPicker(label: "Camera", options: cameraOptions, selectedCSV: Binding(
                 get: { self.clip?.cameraMove ?? "" },
-                set: { newValue in
-                    self.clip?.cameraMove = newValue.isEmpty ? nil : newValue
-                    try? AppEnvironment.shared.markerStore.updateStructured(clipID, cameraMove: newValue.isEmpty ? nil : newValue)
-                }
+                set: { newValue in applyStructured(\.cameraMove, value: newValue) }
             ), multiSelect: false)
             ChipPicker(label: "Setting", options: settingOptions, selectedCSV: Binding(
                 get: { self.clip?.setting ?? "" },
-                set: { newValue in
-                    self.clip?.setting = newValue.isEmpty ? nil : newValue
-                    try? AppEnvironment.shared.markerStore.updateStructured(clipID, setting: newValue.isEmpty ? nil : newValue)
-                }
+                set: { newValue in applyStructured(\.setting, value: newValue) }
             ), multiSelect: false)
+        }
+    }
+
+    private func applyMood(_ newValue: String) {
+        guard let markerStore = AppEnvironment.shared.markerStore else { return }
+        let value: String? = newValue.isEmpty ? nil : newValue
+        let old = clip?.mood
+        clip?.mood = value
+        do {
+            try markerStore.updateMood(clipID, mood: value)
+        } catch {
+            clip?.mood = old
+            AppState.shared.showToast("Couldn't save mood", level: .error)
+        }
+    }
+
+    private func applyStructured(_ keyPath: WritableKeyPath<Clip, String?>, value newValue: String) {
+        guard let markerStore = AppEnvironment.shared.markerStore else { return }
+        let value: String? = newValue.isEmpty ? nil : newValue
+        let old = clip?[keyPath: keyPath]
+        clip?[keyPath: keyPath] = value
+        do {
+            switch keyPath {
+            case \Clip.shotType:    try markerStore.updateStructured(clipID, shotType: value)
+            case \Clip.cameraMove:  try markerStore.updateStructured(clipID, cameraMove: value)
+            case \Clip.setting:     try markerStore.updateStructured(clipID, setting: value)
+            default: return
+            }
+        } catch {
+            clip?[keyPath: keyPath] = old
+            AppState.shared.showToast("Couldn't save attribute", level: .error)
         }
     }
 
@@ -172,8 +238,9 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Tags").font(.headline)
             HStack {
-                TextField("Add tag…", text: $newTag, onCommit: addTag)
+                TextField("Add tag…", text: $newTag)
                     .textFieldStyle(.roundedBorder)
+                    .onSubmit(addTag)
                 Button("Add", action: addTag)
                     .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
             }
@@ -186,32 +253,49 @@ struct InspectorView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Remove tag \(tag)")
                     }
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
                 }
             }
         }
-        .onChange(of: newTag) { _, value in
-            suggestions = (try? AppEnvironment.shared.tagStore.suggestions(prefix: value).map(\.name)) ?? []
+    }
+
+    private var notesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Notes").font(.headline)
+            TextEditor(text: $draftNotes)
+                .frame(minHeight: 80)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+                .onChange(of: draftNotes) { _, _ in scheduleNotesCommit() }
         }
     }
 
-    private func notesSection(clip: Clip) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Notes").font(.headline)
-            TextEditor(text: Binding(
-                get: { self.clip?.notes ?? "" },
-                set: { newValue in
-                    self.clip?.notes = newValue
-                    try? AppEnvironment.shared.database.write { db in
-                        try db.execute(sql: "UPDATE clips SET notes = ? WHERE id = ?",
-                                       arguments: [newValue, clipID])
-                    }
-                }
-            ))
-            .frame(minHeight: 80)
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(.separator))
+    private func scheduleNotesCommit() {
+        notesCommitTask?.cancel()
+        notesCommitTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 600_000_000) // 600ms idle window
+            guard !Task.isCancelled else { return }
+            commitNotes()
+        }
+    }
+
+    private func commitNotes() {
+        guard let database = AppEnvironment.shared.database else { return }
+        let value = draftNotes
+        let old = clip?.notes
+        clip?.notes = value
+        do {
+            try database.write { db in
+                try db.execute(
+                    sql: "UPDATE clips SET notes = ? WHERE id = ?",
+                    arguments: [value, clipID]
+                )
+            }
+        } catch {
+            clip?.notes = old
+            AppState.shared.showToast("Couldn't save notes", level: .error)
         }
     }
 
@@ -242,22 +326,24 @@ struct InspectorView: View {
     }
 
     private func load() {
-        let env = AppEnvironment.shared
-        guard let database = env.database else { return }
+        guard let database = AppEnvironment.shared.database else { return }
+        let store = AppEnvironment.shared.tagStore
         do {
             let c: Clip? = try database.read { try Clip.fetchOne($0, key: clipID) }
             self.clip = c
+            draftName = c?.name ?? ""
+            draftNotes = c?.notes ?? ""
             if let c, let s: Source = try database.read({ try Source.fetchOne($0, key: c.sourceID) }) {
                 self.source = s
             }
-            tags = (try? env.tagStore?.tags(forClip: clipID).map(\.name)) ?? []
+            tags = (try? store?.tags(forClip: clipID).map(\.name)) ?? []
             allProjects = (try? database.read { try Project.order(Project.Columns.name).fetchAll($0) }) ?? []
             let assigned: [Int64] = (try? database.read { db in
                 try Int64.fetchAll(db, sql: "SELECT project_id FROM clip_projects WHERE clip_id = ?", arguments: [clipID])
             }) ?? []
             assignedProjectIDs = Set(assigned)
         } catch {
-            NSLog("InspectorView.load failed: \(error)")
+            ClipxLog.library.error("InspectorView.load failed: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -342,9 +428,12 @@ struct InspectorView: View {
     }
 
     private func toggleProject(_ projectID: Int64, assigned: Bool) {
-        guard projectID >= 0 else { return }
+        guard projectID >= 0, let database = AppEnvironment.shared.database else { return }
+        // Optimistic update with rollback so the chip reflects truth.
+        if assigned { assignedProjectIDs.remove(projectID) }
+        else { assignedProjectIDs.insert(projectID) }
         do {
-            try AppEnvironment.shared.database.write { db in
+            try database.write { db in
                 if assigned {
                     try db.execute(
                         sql: "DELETE FROM clip_projects WHERE clip_id = ? AND project_id = ?",
@@ -357,28 +446,27 @@ struct InspectorView: View {
                     )
                 }
             }
-            if assigned {
-                assignedProjectIDs.remove(projectID)
-            } else {
-                assignedProjectIDs.insert(projectID)
-            }
             AppState.shared.libraryRevision &+= 1
         } catch {
-            NSLog("InspectorView.toggleProject failed: \(error)")
+            // Roll back so UI doesn't lie.
+            if assigned { assignedProjectIDs.insert(projectID) }
+            else { assignedProjectIDs.remove(projectID) }
+            AppState.shared.showToast("Couldn't update project assignment", level: .error)
         }
     }
 
     private func addTag() {
         let trimmed = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        try? AppEnvironment.shared.tagStore.addTag(trimmed, toClip: clipID)
+        guard !trimmed.isEmpty, let store = AppEnvironment.shared.tagStore else { return }
+        try? store.addTag(trimmed, toClip: clipID)
         newTag = ""
-        tags = (try? AppEnvironment.shared.tagStore.tags(forClip: clipID).map(\.name)) ?? []
+        tags = (try? store.tags(forClip: clipID).map(\.name)) ?? []
     }
 
     private func remove(tag: String) {
-        try? AppEnvironment.shared.tagStore.removeTag(tag, fromClip: clipID)
-        tags = (try? AppEnvironment.shared.tagStore.tags(forClip: clipID).map(\.name)) ?? []
+        guard let store = AppEnvironment.shared.tagStore else { return }
+        try? store.removeTag(tag, fromClip: clipID)
+        tags = (try? store.tags(forClip: clipID).map(\.name)) ?? []
     }
 
     private func formatDuration(_ ms: Int64) -> String {
@@ -453,15 +541,12 @@ struct FlowLayout: Layout {
         let containerWidth = proposal.width ?? .infinity
         var x: CGFloat = 0, y: CGFloat = 0, rowH: CGFloat = 0
         for s in subviews {
-            // Propose a width-limited size so individual subviews can shrink
-            // if they're too wide (e.g. long mood labels in a narrow column).
             let sz = s.sizeThatFits(ProposedViewSize(width: containerWidth, height: nil))
             let w = min(sz.width, containerWidth)
             if x > 0 && x + w > containerWidth { x = 0; y += rowH + spacing; rowH = 0 }
             x += w + spacing
             rowH = max(rowH, sz.height)
         }
-        // Return the proposed width (or natural row length if narrower) — never wider.
         let finalWidth = containerWidth.isFinite ? containerWidth : x
         return CGSize(width: finalWidth, height: y + rowH)
     }

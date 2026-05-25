@@ -141,6 +141,9 @@ final class MarkerStore {
                 arguments: [clipID]
             )
         }
+        // Was previously the only mutation in this file that didn't bump —
+        // usage badges in the library grid never refreshed after export.
+        Self.bumpRevision()
     }
 }
 

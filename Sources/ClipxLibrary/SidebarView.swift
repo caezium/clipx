@@ -39,22 +39,55 @@ struct SidebarView: View {
     private var librarySection: some View {
         VStack(alignment: .leading, spacing: 2) {
             sectionHeader("Library")
-            sidebarRow(label: "All Clips", icon: "rectangle.stack") {
+            // Note: each row also clears any project/collection scope —
+            // without this, picking "Unused" while in a Project view kept
+            // the project filter, producing confusing empty results.
+            sidebarRow(
+                label: "All Clips",
+                icon: "rectangle.stack",
+                isActive: isAllClipsActive
+            ) {
                 appState.activeFilters = ClipFilters()
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
             }
-            sidebarRow(label: "Recently Imported", icon: "clock.arrow.circlepath") {
+            sidebarRow(
+                label: "Recently Imported",
+                icon: "clock.arrow.circlepath",
+                isActive: isRecentlyImportedActive
+            ) {
                 var f = ClipFilters()
                 f.dateFrom = Calendar.current.date(byAdding: .day, value: -7, to: Date())
                 appState.activeFilters = f
+                appState.selectedProjectID = nil
+                appState.selectedCollectionID = nil
             }
-            sidebarRow(label: "Unused", icon: "sparkles") {
-                var f = appState.activeFilters
+            sidebarRow(
+                label: "Unused",
+                icon: "sparkles",
+                isActive: appState.activeFilters.unusedOnly && appState.selectedProjectID == nil
+            ) {
+                var f = ClipFilters()
                 f.unusedOnly = true
                 appState.activeFilters = f
+                appState.selectedProjectID = nil
+                appState.selectedCollectionID = nil
             }
         }
+    }
+
+    private var isAllClipsActive: Bool {
+        !appState.activeFilters.isActive
+            && appState.selectedProjectID == nil
+            && appState.selectedCollectionID == nil
+    }
+
+    private var isRecentlyImportedActive: Bool {
+        appState.selectedProjectID == nil
+            && appState.activeFilters.dateFrom != nil
+            && !appState.activeFilters.unusedOnly
+            && appState.activeFilters.moods.isEmpty
+            && appState.activeFilters.shotTypes.isEmpty
     }
 
     private var collectionsSection: some View {
@@ -137,12 +170,14 @@ struct SidebarView: View {
         .padding(.horizontal, 6).padding(.top, 6).padding(.bottom, 2)
     }
 
-    private func sidebarRow(label: String, icon: String, muted: Bool = false, action: @escaping () -> Void) -> some View {
+    /// `isActive=true` paints the row with the selection tint so the user can
+    /// see at a glance which scope they're in (All / Recent / Unused).
+    private func sidebarRow(label: String, icon: String, muted: Bool = false, isActive: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
                     .frame(width: 16)
-                    .foregroundStyle(muted ? .tertiary : .secondary)
+                    .foregroundStyle(muted ? .tertiary : (isActive ? .primary : .secondary))
                 Text(label)
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -151,6 +186,10 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 6).padding(.vertical, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(isActive ? Color.accentColor.opacity(0.22) : .clear)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -162,7 +201,7 @@ struct SidebarView: View {
             collections = try db.read { try Collection.order(Collection.Columns.name).fetchAll($0) }
             projects = try db.read { try Project.order(Project.Columns.name).fetchAll($0) }
         } catch {
-            NSLog("SidebarView.load failed: \(error)")
+            ClipxLog.library.error("SidebarView.load failed: \(String(describing: error), privacy: .public)")
         }
     }
 }

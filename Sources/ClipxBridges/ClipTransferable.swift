@@ -26,17 +26,22 @@ struct ClipTransferable: Transferable {
 
     /// Performs the export and returns the resulting file URL in a temp dir.
     func materialize() async throws -> URL {
-        guard let clip: Clip = try AppEnvironment.shared.database.read({ db in
+        guard let database = AppEnvironment.shared.database else {
+            throw NSError(domain: "clipx.transferable", code: -2,
+                          userInfo: [NSLocalizedDescriptionKey: "Library is not loaded yet"])
+        }
+        guard let clip: Clip = try database.read({ db in
             try Clip.fetchOne(db, key: clipID)
-        }), let source: Source = try AppEnvironment.shared.database.read({ db in
+        }), let source: Source = try database.read({ db in
             try Source.fetchOne(db, key: clip.sourceID)
         }) else {
             throw NSError(domain: "clipx.transferable", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Clip not found"])
         }
+        // Per-drag UUID — two concurrent drags of the same clip+preset used
+        // to collide and silently overwrite each other.
         let temp = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("clipx-drag-\(clipID)-\(preset.id).\(preset.containerExt)")
-        try? FileManager.default.removeItem(at: temp)
+            .appendingPathComponent("clipx-drag-\(clipID)-\(preset.id)-\(UUID().uuidString).\(preset.containerExt)")
 
         #if DIRECT_BUILD
         let args = FFmpegBackend.buildArguments(
@@ -44,7 +49,7 @@ struct ClipTransferable: Transferable {
             inMs: clip.inMs, outMs: clip.outMs,
             preset: preset, outputPath: temp.path
         )
-        let code = try await FFmpegBackend.run(arguments: args) { _ in }
+        let code = try await FFmpegBackend.run(arguments: args)
         if code != 0 {
             throw NSError(domain: "clipx.transferable", code: Int(code),
                           userInfo: [NSLocalizedDescriptionKey: "ffmpeg exited \(code)"])

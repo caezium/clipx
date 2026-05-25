@@ -3,14 +3,20 @@ import GRDB
 
 /// Walks a folder, extracts metadata for each video file, and writes Source
 /// records. Idempotent: re-indexing the same file updates rather than dupes.
-@MainActor
-final class Indexer {
-    private let database: Database
-    private let thumbnailEngine: ThumbnailEngine
-    private let videoExtensions: Set<String> = [
+///
+/// Modeled as an `actor` (not `@MainActor`) so DB writes run off the main
+/// thread — previously every file's `database.write` blocked the UI. Library
+/// refresh notifications are debounced through a single trailing-edge bump
+/// instead of one per file (5k files used to fire 5k SwiftUI re-renders).
+actor Indexer {
+    static let videoExtensions: Set<String> = [
         "mp4", "mov", "m4v", "mkv", "avi", "mts", "m2ts",
         "webm", "wmv", "flv", "hevc", "prores"
     ]
+
+    private let database: Database
+    private let thumbnailEngine: ThumbnailEngine
+    private var pendingRevisionBump: Task<Void, Never>?
 
     init(database: Database, thumbnailEngine: ThumbnailEngine) {
         self.database = database
@@ -34,60 +40,77 @@ final class Indexer {
         do {
             let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
             let mtime = Int64(((attrs[.modificationDate] as? Date) ?? Date()).timeIntervalSince1970)
-            let hash = try FileHasher.quickHash(url: url)
+            let size = (attrs[.size] as? Int64) ?? 0
 
-            // Idempotent insert/update.
+            // Skip unchanged: both mtime AND size must match. Catches the
+            // `cp -p` case where mtime is preserved but bytes differ.
             let existing: Source? = try database.read { db in
                 try Source.filter(Source.Columns.path == url.path).fetchOne(db)
             }
-            if let existing, existing.mtime == mtime { return } // unchanged
-
-            let meta = await MetadataExtractor.extract(url: url)
-            var source = existing ?? Source(
-                id: nil,
-                path: url.path,
-                bookmark: nil,
-                hash: hash,
-                mtime: mtime,
-                durationMs: meta.durationMs,
-                width: meta.width,
-                height: meta.height,
-                fps: meta.fps,
-                codec: meta.codec,
-                audioChannels: meta.audioChannels,
-                colorSpace: meta.colorSpace,
-                createdAt: meta.createdAt,
-                importedAt: Int64(Date().timeIntervalSince1970),
-                thumbPath: nil,
-                online: true,
-                notes: nil
-            )
-            source.mtime = mtime
-            source.hash = hash
-            source.durationMs = meta.durationMs
-            source.width = meta.width
-            source.height = meta.height
-            source.fps = meta.fps
-            source.codec = meta.codec
-            source.audioChannels = meta.audioChannels
-            source.colorSpace = meta.colorSpace
-            source.online = true
-
-            try database.write { db in
-                if source.id == nil { try source.insert(db) } else { try source.update(db) }
+            if let existing,
+               existing.mtime == mtime,
+               existing.size == size,
+               existing.size != nil {
+                return
             }
-            AppState.shared.libraryRevision &+= 1
 
-            // Kick off background thumbnail generation.
-            thumbnailEngine.generateThumbnail(source: source) { [weak self] _ in
-                guard let self else { return }
-                Task { @MainActor in
-                    await self.updateThumbPath(sourceID: source.id!)
-                    AppState.shared.libraryRevision &+= 1
+            let hash = try FileHasher.quickHash(url: url)
+            let meta = await MetadataExtractor.extract(url: url)
+            let importedAt = existing?.importedAt ?? Int64(Date().timeIntervalSince1970)
+
+            // Atomic upsert. Without ON CONFLICT, a concurrent FSEvents fire
+            // for the same path could trip `path UNIQUE` and the swallowed
+            // catch above would silently drop a real file.
+            let insertedID: Int64 = try database.write { db in
+                try db.execute(sql: """
+                    INSERT INTO sources
+                        (path, bookmark, hash, mtime, size,
+                         duration_ms, width, height, fps, codec,
+                         audio_channels, color_space, created_at, imported_at,
+                         thumb_path, online, notes)
+                    VALUES (?, NULL, ?, ?, ?,
+                            ?, ?, ?, ?, ?,
+                            ?, ?, ?, ?,
+                            NULL, 1, NULL)
+                    ON CONFLICT(path) DO UPDATE SET
+                        hash = excluded.hash,
+                        mtime = excluded.mtime,
+                        size = excluded.size,
+                        duration_ms = excluded.duration_ms,
+                        width = excluded.width,
+                        height = excluded.height,
+                        fps = excluded.fps,
+                        codec = excluded.codec,
+                        audio_channels = excluded.audio_channels,
+                        color_space = excluded.color_space,
+                        created_at = COALESCE(sources.created_at, excluded.created_at),
+                        online = 1
+                """, arguments: [
+                    url.path, hash, mtime, size,
+                    meta.durationMs, meta.width, meta.height, meta.fps, meta.codec,
+                    meta.audioChannels, meta.colorSpace, meta.createdAt, importedAt
+                ])
+                return try Int64.fetchOne(
+                    db,
+                    sql: "SELECT id FROM sources WHERE path = ?",
+                    arguments: [url.path]
+                ) ?? 0
+            }
+
+            // Kick off background thumbnail generation. Re-fetch the row so
+            // the engine sees the latest hash without us juggling Source state.
+            if let source: Source = try? database.read({ db in
+                try Source.fetchOne(db, key: insertedID)
+            }) {
+                thumbnailEngine.generateThumbnail(source: source) { [weak self] _ in
+                    guard let self else { return }
+                    Task { await self.updateThumbPath(sourceID: insertedID) }
                 }
             }
+
+            scheduleRevisionBump()
         } catch {
-            NSLog("Indexer.indexFile failed for \(url.path): \(error)")
+            ClipxLog.indexer.error("indexFile failed for \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -104,12 +127,31 @@ final class Indexer {
                     arguments: [thumbURL.path, sourceID]
                 )
             }
+            scheduleRevisionBump()
         } catch {
-            NSLog("Indexer.updateThumbPath failed: \(error)")
+            ClipxLog.indexer.error("updateThumbPath failed: \(String(describing: error), privacy: .public)")
         }
     }
 
-    private func collectVideoFiles(at root: URL) -> [URL] {
+    /// Coalesces many per-file revisions into one MainActor bump per ~250ms.
+    /// Without this, indexing a 5k folder fired 5k SwiftUI re-renders.
+    private func scheduleRevisionBump() {
+        pendingRevisionBump?.cancel()
+        pendingRevisionBump = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                AppState.shared.libraryRevision &+= 1
+            }
+            await self?.clearPendingBump()
+        }
+    }
+
+    private func clearPendingBump() {
+        pendingRevisionBump = nil
+    }
+
+    nonisolated private func collectVideoFiles(at root: URL) -> [URL] {
         var result: [URL] = []
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
@@ -118,7 +160,7 @@ final class Indexer {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return [] }
         for case let url as URL in enumerator {
-            guard videoExtensions.contains(url.pathExtension.lowercased()) else { continue }
+            guard Indexer.videoExtensions.contains(url.pathExtension.lowercased()) else { continue }
             guard let isFile = try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile,
                   isFile else { continue }
             result.append(url)
@@ -127,21 +169,26 @@ final class Indexer {
     }
 
     /// Marks all sources under the given folder as offline (drive unplugged).
+    /// Escapes `_`/`%` so a folder like `My_Footage` doesn't match neighbours.
     func markFolderOffline(_ path: String) {
+        let escaped = sqlLikeEscape(path)
         try? database.write { db in
             try db.execute(
-                sql: "UPDATE sources SET online = 0 WHERE path LIKE ?",
-                arguments: ["\(path)/%"]
+                sql: "UPDATE sources SET online = 0 WHERE path LIKE ? ESCAPE '\\'",
+                arguments: ["\(escaped)/%"]
             )
         }
+        scheduleRevisionBump()
     }
 
     func markFolderOnline(_ path: String) {
+        let escaped = sqlLikeEscape(path)
         try? database.write { db in
             try db.execute(
-                sql: "UPDATE sources SET online = 1 WHERE path LIKE ?",
-                arguments: ["\(path)/%"]
+                sql: "UPDATE sources SET online = 1 WHERE path LIKE ? ESCAPE '\\'",
+                arguments: ["\(escaped)/%"]
             )
         }
+        scheduleRevisionBump()
     }
 }

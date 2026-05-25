@@ -3,13 +3,13 @@ import GRDB
 
 /// Versioned schema migrations. Add new migrations at the bottom; never edit
 /// or remove existing ones — GRDB tracks applied versions per migration name.
+///
+/// Note: `eraseDatabaseOnSchemaChange` was deliberately removed. It nukes the
+/// user's library if a dev edits an existing migration — too dangerous to leave
+/// on, even in DEBUG. To reset locally, delete `~/Library/Application Support/Clipx`.
 enum Migrations {
     static func register() -> DatabaseMigrator {
         var migrator = DatabaseMigrator()
-
-        #if DEBUG
-        migrator.eraseDatabaseOnSchemaChange = true
-        #endif
 
         migrator.registerMigration("v1_initial") { db in
             try db.create(table: "sources") { t in
@@ -136,6 +136,52 @@ enum Migrations {
                     VALUES (new.id, new.name, new.notes, new.mood, new.shot_type);
                 END;
             """)
+        }
+
+        // v2: add `size` column for change-detection, plus indexes on hot
+        // sort/filter columns the review flagged. SQLite doesn't allow
+        // ALTER TABLE ADD CHECK — status validation lives in app code.
+        migrator.registerMigration("v2_indexes_and_size") { db in
+            try db.alter(table: "sources") { t in
+                t.add(column: "size", .integer)
+            }
+
+            try db.create(
+                index: "idx_sources_created_at",
+                on: "sources",
+                columns: ["created_at"],
+                ifNotExists: true
+            )
+            try db.create(
+                index: "idx_sources_online",
+                on: "sources",
+                columns: ["online"],
+                ifNotExists: true
+            )
+            try db.create(
+                index: "idx_clips_created_at",
+                on: "clips",
+                columns: ["created_at"],
+                ifNotExists: true
+            )
+            try db.create(
+                index: "idx_clips_used_count",
+                on: "clips",
+                columns: ["used_count"],
+                ifNotExists: true
+            )
+            try db.create(
+                index: "idx_exports_clip",
+                on: "exports",
+                columns: ["clip_id"],
+                ifNotExists: true
+            )
+            try db.create(
+                index: "idx_exports_exported_at",
+                on: "exports",
+                columns: ["exported_at"],
+                ifNotExists: true
+            )
         }
 
         return migrator

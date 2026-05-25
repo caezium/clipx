@@ -53,6 +53,20 @@ struct RootView: View {
                 showOnboarding = false
             })
         }
+        // Surface bootstrap failure so the user isn't stuck on an empty splash.
+        .alert(
+            "Clipx failed to start",
+            isPresented: Binding(
+                get: { appState.bootstrapError != nil },
+                set: { if !$0 { appState.bootstrapError = nil } }
+            ),
+            presenting: appState.bootstrapError
+        ) { _ in
+            Button("Quit", role: .destructive) { NSApp.terminate(nil) }
+            Button("Continue Anyway", role: .cancel) {}
+        } message: { error in
+            Text(error)
+        }
     }
 }
 

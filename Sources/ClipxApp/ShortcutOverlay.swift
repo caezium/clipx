@@ -1,6 +1,8 @@
 import SwiftUI
 
-/// Press ? anywhere in the app to bring up this overlay. Anything dismisses it.
+/// Press ⌘? anywhere in the app to bring up this overlay. Tap outside or press
+/// Esc to dismiss. Other modifier-key presses are forwarded back to the app so
+/// shortcuts like ⌘Q still work while the overlay is visible.
 struct ShortcutOverlay: View {
     @Binding var visible: Bool
 
@@ -9,18 +11,21 @@ struct ShortcutOverlay: View {
             ("I", "Mark in point"),
             ("O", "Mark out point"),
             ("S", "Save range as clip"),
-            ("1–5", "Rate selected clip(s)")
+            ("3 / 4 / 5", "Rate selected clip(s) (menu only)")
         ]),
         ("Playback", [
-            ("␣", "Play / pause"),
-            ("←", "Step one frame back"),
-            ("→", "Step one frame forward")
+            ("␣ or K", "Play / pause"),
+            ("←  / →", "Step one frame"),
+            ("⇧← / ⇧→", "Jump ±5 seconds"),
+            ("J / L", "Jump ±5 seconds (industry-standard transport)")
         ]),
         ("Navigation", [
             ("⌘K", "Command palette"),
             ("⌘F", "Focus search"),
             ("⌘O", "Add folder"),
-            ("?", "This help overlay")
+            ("⌥⌘I", "Toggle Inspector"),
+            ("Esc", "Back to Library (from Player)"),
+            ("⌘?", "This help overlay")
         ]),
         ("Export", [
             ("⇧⌘R", "Export selected as Reels"),
@@ -52,7 +57,7 @@ struct ShortcutOverlay: View {
                                     .font(.system(.body, design: .monospaced))
                                     .padding(.horizontal, 8).padding(.vertical, 2)
                                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
-                                    .frame(minWidth: 80, alignment: .leading)
+                                    .frame(minWidth: 100, alignment: .leading)
                                 Text(item.1).foregroundStyle(.primary)
                                 Spacer()
                             }
@@ -60,17 +65,26 @@ struct ShortcutOverlay: View {
                     }
                 }
                 Spacer()
-                Text("Press anywhere to dismiss")
+                Text("Esc to dismiss")
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(28)
-            .frame(width: 540, height: 540)
+            .frame(width: 580, height: 600)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             .shadow(radius: 30)
         }
-        .onKeyPress { _ in
+        // Only consume non-modified keys; let ⌘Q etc. through so the user can
+        // always quit / switch even while the overlay is up.
+        .onKeyPress(.escape) {
             visible = false
             return .handled
+        }
+        .onKeyPress(phases: .down) { press in
+            if press.modifiers.isEmpty {
+                visible = false
+                return .handled
+            }
+            return .ignored
         }
     }
 }

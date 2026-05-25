@@ -19,10 +19,12 @@ enum ExportActions {
             }
             #endif
             guard let outputDir = await pickOutputDirectory() else { return }
+            guard let pipeline = AppEnvironment.shared.exportPipeline else {
+                AppState.shared.showToast("Export pipeline isn't ready yet", level: .warning)
+                return
+            }
             for id in ids {
-                AppEnvironment.shared.exportPipeline.enqueue(
-                    clipID: id, preset: preset, outputDir: outputDir
-                )
+                pipeline.enqueue(clipID: id, preset: preset, outputDir: outputDir)
             }
             AppState.shared.showToast(
                 "Queued \(ids.count) clip(s) as \(preset.displayName)",

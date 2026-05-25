@@ -7,52 +7,74 @@ import AppKit
 /// Carbon-based because NSEvent's local monitor doesn't work app-wide.
 /// MAS build sandbox blocks Carbon hotkey APIs entirely — this file is
 /// excluded from that target.
+///
+/// `register()` is idempotent (unregisters first if already bound) and checks
+/// every Carbon status code. AppDelegate is responsible for calling
+/// `unregister()` on willTerminate.
 final class GlobalHotkey {
     static let shared = GlobalHotkey()
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
-    private init() {}
+    private init() {
+        // Auto-unregister on app quit so we don't leak the Carbon refs.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleTerminate),
+            name: NSApplication.willTerminateNotification, object: nil
+        )
+    }
+
+    @objc private func handleTerminate() {
+        unregister()
+    }
 
     func register() {
+        // Idempotent — drop any previous registration before re-binding.
+        // Previously, a double-call leaked both `hotKeyRef` and `handlerRef`.
+        unregister()
+
         let signature: OSType = OSType(0x434C5058) // 'CLPX'
         var hotKeyID = EventHotKeyID(signature: signature, id: 1)
 
-        // Cmd+Shift+C = key code 8 with cmdKey + shiftKey
+        // Cmd+Shift+C = kVK_ANSI_C with cmdKey + shiftKey
         let modifiers: UInt32 = UInt32(cmdKey | shiftKey)
-        let keyCode: UInt32 = 8 // C
+        let keyCode: UInt32 = UInt32(kVK_ANSI_C)
 
-        let status = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
-                                          GetApplicationEventTarget(), 0, &hotKeyRef)
-        guard status == noErr else {
-            NSLog("GlobalHotkey.register failed: \(status)")
+        let registerStatus = RegisterEventHotKey(keyCode, modifiers, hotKeyID,
+                                                 GetApplicationEventTarget(), 0, &hotKeyRef)
+        guard registerStatus == noErr else {
+            ClipxLog.app.error("GlobalHotkey.register failed: \(registerStatus)")
             return
         }
 
         var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                       eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetApplicationEventTarget(),
-                             { (_, eventRef, _) -> OSStatus in
-                                 GlobalHotkey.shared.handleHotkey()
-                                 return noErr
-                             },
-                             1, &eventSpec, nil, &handlerRef)
+        let handlerStatus = InstallEventHandler(GetApplicationEventTarget(),
+                                                { (_, _, _) -> OSStatus in
+                                                    GlobalHotkey.shared.handleHotkey()
+                                                    return noErr
+                                                },
+                                                1, &eventSpec, nil, &handlerRef)
+        if handlerStatus != noErr {
+            ClipxLog.app.error("GlobalHotkey: InstallEventHandler failed: \(handlerStatus)")
+            // Roll back the registered hotkey so we don't leak it.
+            if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
+        }
     }
 
     func unregister() {
-        if let hotKeyRef = hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
+        if let ref = hotKeyRef {
+            UnregisterEventHotKey(ref)
+            hotKeyRef = nil
         }
-        if let handlerRef = handlerRef {
-            RemoveEventHandler(handlerRef)
+        if let ref = handlerRef {
+            RemoveEventHandler(ref)
+            handlerRef = nil
         }
-        hotKeyRef = nil
-        handlerRef = nil
     }
 
     private func handleHotkey() {
         // Pull the frontmost file URL from the frontmost app's selection.
-        // For QuickTime / Finder we can use AppleScript via NSAppleScript.
         Task { @MainActor in
             let script = """
             tell application "System Events"
@@ -81,8 +103,13 @@ final class GlobalHotkey {
             if let appleScript = NSAppleScript(source: script),
                let result = appleScript.executeAndReturnError(&error).stringValue,
                !result.isEmpty {
+                guard let indexer = AppEnvironment.shared.indexer else {
+                    AppState.shared.showToast("Library still loading — try again", level: .warning)
+                    return
+                }
                 let url = URL(fileURLWithPath: result)
-                await AppEnvironment.shared.indexer.indexFile(url)
+                // Index off the main actor so the hotkey doesn't stall UI.
+                Task.detached { await indexer.indexFile(url) }
                 AppState.shared.showToast(
                     "Added \(url.lastPathComponent) via quick-add",
                     level: .success

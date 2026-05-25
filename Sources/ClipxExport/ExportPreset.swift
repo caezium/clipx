@@ -29,11 +29,14 @@ struct ExportPreset: Identifiable, Hashable {
         containerExt: "mp4", requiresFFmpeg: true
     )
 
+    /// TikTok benefits from 60fps for high-motion content and accepts a
+    /// slightly higher bitrate ceiling than Reels. Differentiated so the
+    /// preset list doesn't have two byte-identical entries.
     static let tiktok = ExportPreset(
         id: "tiktok",
         displayName: "TikTok",
-        width: 1080, height: 1920, frameRate: 30,
-        videoBitrateKbps: 12_000, audioBitrateKbps: 192,
+        width: 1080, height: 1920, frameRate: 60,
+        videoBitrateKbps: 16_000, audioBitrateKbps: 192,
         codec: .h264, lufsTarget: -10, colorPrimaries: .bt709,
         containerExt: "mp4", requiresFFmpeg: true
     )

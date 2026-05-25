@@ -3,12 +3,24 @@ import Foundation
 /// FSEvents-backed folder watcher. When a file is added or modified in a
 /// watched root, the corresponding source is (re-)indexed. Multiple roots
 /// share a single FSEvents stream.
+///
+/// The C callback runs on the main queue (we set it via
+/// `FSEventStreamSetDispatchQueue`), so it can access `lastSeenEventId` and
+/// `indexer` safely. The actual indexing hops to the `Indexer` actor's
+/// executor so the main thread doesn't block.
 @MainActor
 final class FolderWatcher {
-    private let indexer: Indexer
+    /// Indexer is an actor — calls hop off the main queue automatically.
+    /// Exposed as `nonisolated` so the C callback can reach it without an
+    /// await round-trip.
+    nonisolated let indexer: Indexer
     private let bookmarkStore: BookmarkStore
     private var stream: FSEventStreamRef?
     private var paths: [String] = []
+    /// Last event id observed by the callback. Used so a stream
+    /// restart (add/remove folder) doesn't drop events that arrived in the
+    /// gap — without this, every restart used `kFSEventStreamEventIdSinceNow`.
+    private var lastSeenEventId: FSEventStreamEventId = FSEventStreamEventId(kFSEventStreamEventIdSinceNow)
 
     init(indexer: Indexer, bookmarkStore: BookmarkStore) {
         self.indexer = indexer
@@ -19,25 +31,31 @@ final class FolderWatcher {
     /// covering them. Called at app launch from `AppEnvironment.bootstrap()`.
     func resumeAll() {
         let urls = bookmarkStore.resumeAccess()
-        paths = urls.map(\.path)
+        paths = uniquePaths(from: urls.map(\.path))
         guard !paths.isEmpty else { return }
-        startStream(paths: paths)
+        startStream(paths: paths, sinceEventId: lastSeenEventId)
 
-        // Kick off a one-shot rescan so new files added while the app was
-        // closed get picked up immediately.
+        // One-shot rescan so new files added while the app was closed get
+        // picked up. Cheap per-file now that `Indexer.indexFile` skips on
+        // unchanged mtime+size.
         for url in urls {
-            Task { await indexer.index(folder: url) }
+            let idx = indexer
+            Task.detached { await idx.index(folder: url) }
         }
     }
 
     func add(folder url: URL) {
         do {
             try bookmarkStore.addFolder(url: url)
-            paths.append(url.path)
+            // Dedupe — the bookmark store is already idempotent, but `paths`
+            // backs FSEvents and a duplicate entry there would deliver every
+            // event twice.
+            if !paths.contains(url.path) { paths.append(url.path) }
             restartStream()
-            Task { await indexer.index(folder: url) }
+            let idx = indexer
+            Task.detached { await idx.index(folder: url) }
         } catch {
-            NSLog("FolderWatcher.add failed: \(error)")
+            ClipxLog.watcher.error("add failed: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -50,7 +68,8 @@ final class FolderWatcher {
     func rescanAll() {
         for path in paths {
             let url = URL(fileURLWithPath: path)
-            Task { await indexer.index(folder: url) }
+            let idx = indexer
+            Task.detached { await idx.index(folder: url) }
         }
     }
 
@@ -72,15 +91,23 @@ final class FolderWatcher {
             self.stream = nil
         }
         guard !paths.isEmpty else { return }
-        startStream(paths: paths)
+        startStream(paths: paths, sinceEventId: lastSeenEventId)
     }
 
-    private func startStream(paths: [String]) {
+    private func startStream(paths: [String], sinceEventId: FSEventStreamEventId) {
+        // `passRetained` + a matching `release` callback so the watcher can't
+        // be deallocated while a queued FSEvents callback is still in flight.
+        // Previous version used `passUnretained` with `retain: nil` — UAF
+        // window during shutdown.
+        let info = Unmanaged.passRetained(self).toOpaque()
         var context = FSEventStreamContext(
             version: 0,
-            info: Unmanaged.passUnretained(self).toOpaque(),
+            info: info,
             retain: nil,
-            release: nil,
+            release: { rawInfo in
+                guard let rawInfo else { return }
+                Unmanaged<FolderWatcher>.fromOpaque(rawInfo).release()
+            },
             copyDescription: nil
         )
         let flags = UInt32(
@@ -93,21 +120,38 @@ final class FolderWatcher {
             FolderWatcher.callback,
             &context,
             paths as CFArray,
-            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            sinceEventId,
             1.0, // 1s debounce
             flags
-        ) else { return }
+        ) else {
+            // FSEventStreamCreate failed; release the retain we did above so
+            // we don't leak self.
+            Unmanaged<FolderWatcher>.fromOpaque(info).release()
+            return
+        }
         FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
         FSEventStreamStart(stream)
         self.stream = stream
     }
 
+    private nonisolated func uniquePaths(from input: [String]) -> [String] {
+        var seen = Set<String>()
+        return input.filter { seen.insert($0).inserted }
+    }
+
+    /// Receives FSEvents on the main queue (configured via
+    /// SetDispatchQueue). Filters to video files and dispatches indexing
+    /// to the `Indexer` actor.
     nonisolated private static let callback: FSEventStreamCallback = {
-        (_, info, count, evPathsRaw, evFlags, _) in
+        (_, info, count, evPathsRaw, evFlags, evIds) in
         guard let info = info else { return }
+        // Unretained — release happens in the context's release callback.
         let watcher = Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue()
         let paths = unsafeBitCast(evPathsRaw, to: NSArray.self) as? [String] ?? []
+        var maxId: FSEventStreamEventId = 0
         for i in 0..<count {
+            let id = evIds[i]
+            if id > maxId { maxId = id }
             let flags = evFlags[i]
             let path = paths[i]
             let isFile = (flags & UInt32(kFSEventStreamEventFlagItemIsFile)) != 0
@@ -115,9 +159,17 @@ final class FolderWatcher {
             guard isFile, !removed else { continue }
             let url = URL(fileURLWithPath: path)
             let ext = url.pathExtension.lowercased()
-            guard ["mp4","mov","m4v","mkv","avi","mts","m2ts","webm","wmv","flv","hevc","prores"].contains(ext) else { continue }
+            guard Indexer.videoExtensions.contains(ext) else { continue }
+            let idx = watcher.indexer
+            Task.detached { await idx.indexFile(url) }
+        }
+        if maxId > 0 {
+            // Update on the main actor — callback already runs on the main
+            // queue but Swift's isolation doesn't know that, so hop.
             Task { @MainActor in
-                await watcher.indexer.indexFile(url)
+                if maxId > watcher.lastSeenEventId {
+                    watcher.lastSeenEventId = maxId
+                }
             }
         }
     }

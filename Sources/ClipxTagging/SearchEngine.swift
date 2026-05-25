@@ -11,6 +11,10 @@ final class SearchEngine {
 
     /// Returns clip IDs matching the free-text query (FTS5) intersected with
     /// the given filters. Sorted by the provided sort option.
+    ///
+    /// Query syntax: leading `:` enables raw FTS5 (quoted phrases,
+    /// AND/OR/NOT operators) so power users aren't trapped by the default
+    /// prefix-token mode. Plain queries get every token prefix-matched.
     func search(
         query: String,
         filters: ClipFilters,
@@ -26,7 +30,7 @@ final class SearchEngine {
             if !trimmedQuery.isEmpty {
                 sql += " JOIN clips_fts ON clips_fts.rowid = c.id"
                 wheres.append("clips_fts MATCH ?")
-                arguments.append(SearchEngine.escapeFTS(trimmedQuery))
+                arguments.append(SearchEngine.compileFTS(trimmedQuery))
             }
 
             if filters.minRating > 0 {
@@ -54,9 +58,11 @@ final class SearchEngine {
                 arguments.append(contentsOf: filters.settings.map { $0 as DatabaseValueConvertible })
             }
             if !filters.moods.isEmpty {
-                let likes = filters.moods.map { _ in "c.mood LIKE ?" }.joined(separator: " OR ")
+                // ESCAPE clause — user-typed moods could contain `%`/`_`
+                // which previously matched arbitrary text.
+                let likes = filters.moods.map { _ in "c.mood LIKE ? ESCAPE '\\'" }.joined(separator: " OR ")
                 wheres.append("(\(likes))")
-                arguments.append(contentsOf: filters.moods.map { "%\($0)%" as DatabaseValueConvertible })
+                arguments.append(contentsOf: filters.moods.map { "%\(sqlLikeEscape($0))%" as DatabaseValueConvertible })
             }
             if filters.unusedOnly {
                 wheres.append("c.used_count = 0")
@@ -82,8 +88,19 @@ final class SearchEngine {
         }
     }
 
-    /// Escapes user input for FTS5 — wraps tokens to avoid syntax errors on
-    /// stray quotes/operators while still supporting prefix matching.
+    /// Compiles user input into an FTS5 MATCH expression. If the user starts
+    /// with `:` the rest is treated as raw FTS5 (so they can write
+    /// `"exact phrase"` or `wide AND outdoor`). Otherwise we tokenize and
+    /// prefix-match each token.
+    static func compileFTS(_ raw: String) -> String {
+        if raw.hasPrefix(":") {
+            return String(raw.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return escapeFTS(raw)
+    }
+
+    /// Legacy public escape entrypoint (kept for tests). Same behavior as
+    /// the non-raw path in `compileFTS`.
     static func escapeFTS(_ raw: String) -> String {
         let tokens = raw
             .components(separatedBy: .whitespaces)

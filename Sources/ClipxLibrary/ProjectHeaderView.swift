@@ -21,17 +21,33 @@ struct ProjectHeaderView: View {
                     .font(.title2)
                     .foregroundStyle(Color.accentColor)
                 if renaming {
-                    TextField("Project name", text: $editedName, onCommit: commitRename)
+                    TextField("Project name", text: $editedName)
                         .textFieldStyle(.roundedBorder)
                         .font(.title2.weight(.semibold))
                         .frame(maxWidth: 320)
+                        .onSubmit(commitRename)
+                        .onExitCommand { renaming = false }
                 } else {
-                    Text(project?.name ?? "Project")
-                        .font(.title2.weight(.semibold))
-                        .onTapGesture(count: 2) {
+                    HStack(spacing: 6) {
+                        Text(project?.name ?? "Project")
+                            .font(.title2.weight(.semibold))
+                            .onTapGesture(count: 2) {
+                                editedName = project?.name ?? ""
+                                renaming = true
+                            }
+                        // Visible pencil affordance — double-click on text
+                        // alone has zero discoverability.
+                        Button {
                             editedName = project?.name ?? ""
                             renaming = true
+                        } label: {
+                            Image(systemName: "pencil")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
+                        .buttonStyle(.plain)
+                        .help("Rename project")
+                    }
                 }
                 statusPill
                 Spacer()
@@ -158,26 +174,43 @@ struct ProjectHeaderView: View {
     }
 
     private func exportAll(_ preset: ExportPreset) {
-        selectAllProjectClips()
-        ExportActions.exportSelected(preset)
+        // Selection + export must happen after the DB read returns, so wrap
+        // the chain in a Task. Without this, large project selects stalled
+        // the main thread.
+        Task { @MainActor in
+            await selectAllProjectClipsAsync()
+            ExportActions.exportSelected(preset)
+        }
     }
 
+    /// Synchronous form for the "Select all" button. Kept for the FCPXML /
+    /// Obsidian sub-menu items where the next call needs the selection ready.
     private func selectAllProjectClips() {
+        Task { @MainActor in
+            await selectAllProjectClipsAsync()
+        }
+    }
+
+    private func selectAllProjectClipsAsync() async {
         guard let db = AppEnvironment.shared.database else { return }
-        let ids: [Int64] = (try? db.read { db in
-            try Int64.fetchAll(
-                db,
-                sql: "SELECT clip_id FROM clip_projects WHERE project_id = ?",
-                arguments: [projectID]
-            )
-        }) ?? []
+        let pid = projectID
+        let ids: [Int64] = await Task.detached(priority: .userInitiated) {
+            (try? db.read { db in
+                try Int64.fetchAll(
+                    db,
+                    sql: "SELECT clip_id FROM clip_projects WHERE project_id = ?",
+                    arguments: [pid]
+                )
+            }) ?? []
+        }.value
         appState.selectedClipIDs = Set(ids)
     }
 
     private func setStatus(_ s: ProjectStatus) {
-        guard project?.status != s.rawValue else { return }
+        guard project?.status != s.rawValue,
+              let database = AppEnvironment.shared.database else { return }
         do {
-            try AppEnvironment.shared.database.write { db in
+            try database.write { db in
                 try db.execute(
                     sql: "UPDATE projects SET status = ? WHERE id = ?",
                     arguments: [s.rawValue, projectID]
@@ -192,12 +225,13 @@ struct ProjectHeaderView: View {
 
     private func commitRename() {
         let trimmed = editedName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed != project?.name else {
+        guard !trimmed.isEmpty, trimmed != project?.name,
+              let database = AppEnvironment.shared.database else {
             renaming = false
             return
         }
         do {
-            try AppEnvironment.shared.database.write { db in
+            try database.write { db in
                 try db.execute(
                     sql: "UPDATE projects SET name = ? WHERE id = ?",
                     arguments: [trimmed, projectID]

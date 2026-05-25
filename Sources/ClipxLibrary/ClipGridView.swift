@@ -14,23 +14,18 @@ struct ClipGridView: View {
                     sectionHeader(title: "Clips", count: clips.count)
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(clips) { clip in
-                            ClipCardView(clip: clip)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(appState.selectedClipIDs.contains(clip.id ?? -1) ? Color.accentColor : .clear, lineWidth: 2)
-                                )
-                                .onTapGesture(count: 2) {
-                                    let id = clip.id ?? -1
-                                    appState.selectedClipIDs = [id]
-                                    appState.playerSourceID = clip.sourceID
-                                    appState.playerInMs = clip.inMs
-                                    appState.playerOutMs = clip.outMs
-                                }
-                                .onTapGesture {
-                                    toggleSelection(clipID: clip.id ?? 0)
-                                }
-                                .draggable(ClipTransferable(clipID: clip.id ?? 0, preset: .reels))
-                                .contextMenu { clipContextMenu(clip: clip) }
+                            ClipCardView(
+                                clip: clip,
+                                isSelected: clip.id.map { appState.selectedClipIDs.contains($0) } ?? false,
+                                onSelect: { toggleSelection(clipID: clip.id ?? 0) },
+                                onOpenInPlayer: { openInPlayer(clip: clip) }
+                            )
+                            // Drag-out exports at source quality (1080p, no
+                            // aspect crop) so dropping into Finder gives a
+                            // useful file. Was hardcoded to Reels which
+                            // crops 9:16 destructively.
+                            .draggable(ClipTransferable(clipID: clip.id ?? 0, preset: .youtube1080p))
+                            .contextMenu { clipContextMenu(clip: clip) }
                         }
                     }
                 }
@@ -43,7 +38,7 @@ struct ClipGridView: View {
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(sources) { source in
                             SourceCardView(source: source)
-                                .onTapGesture(count: 2) {
+                                .onTapGesture {
                                     appState.selectedClipIDs = []
                                     appState.playerSourceID = source.id
                                     appState.playerInMs = nil
@@ -83,14 +78,16 @@ struct ClipGridView: View {
         }
     }
 
+    private func openInPlayer(clip: Clip) {
+        if let id = clip.id { appState.selectedClipIDs = [id] }
+        appState.playerSourceID = clip.sourceID
+        appState.playerInMs = clip.inMs
+        appState.playerOutMs = clip.outMs
+    }
+
     @ViewBuilder
     private func clipContextMenu(clip: Clip) -> some View {
-        Button("Open in Player") {
-            if let id = clip.id { appState.selectedClipIDs = [id] }
-            appState.playerSourceID = clip.sourceID
-            appState.playerInMs = clip.inMs
-            appState.playerOutMs = clip.outMs
-        }
+        Button("Open in Player") { openInPlayer(clip: clip) }
         Button("Show Inspector") {
             if let id = clip.id { appState.selectedClipIDs = [id] }
             appState.inspectorVisible = true
@@ -120,9 +117,9 @@ struct ClipGridView: View {
         }
         Divider()
         Button("Delete clip", role: .destructive) {
-            guard let id = clip.id else { return }
+            guard let id = clip.id, let markerStore = AppEnvironment.shared.markerStore else { return }
             do {
-                try AppEnvironment.shared.markerStore.deleteClip(id)
+                try markerStore.deleteClip(id)
                 appState.selectedClipIDs.remove(id)
                 AppState.shared.showToast("Clip deleted", level: .info)
             } catch {
@@ -137,10 +134,18 @@ struct ClipGridView: View {
     }
 }
 
+/// Single-tap toggles selection (no double-tap delay). The "open in player"
+/// action is exposed via a hover-revealed play button on the thumbnail so it
+/// remains one click away, plus the right-click menu.
 struct ClipCardView: View {
     let clip: Clip
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onOpenInPlayer: () -> Void
+
     @State private var thumbImage: NSImage?
     @State private var sourceName: String = ""
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -157,6 +162,21 @@ struct ClipCardView: View {
                         }
                     }
                 )
+                .overlay(alignment: .center) {
+                    // Hover-revealed play button. Provides a discoverable
+                    // single-click affordance for "open in player" without
+                    // forcing a double-click on the card body.
+                    if hovering {
+                        Button(action: onOpenInPlayer) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 40, weight: .light))
+                                .foregroundStyle(.white)
+                                .shadow(radius: 4)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open in player")
+                    }
+                }
                 .overlay(alignment: .bottom) {
                     HStack(spacing: 4) {
                         Image(systemName: "scissors").font(.caption2)
@@ -170,13 +190,13 @@ struct ClipCardView: View {
                 }
                 .clipped()
                 .overlay(alignment: .topTrailing) {
-                Text(formatDuration(clip.durationMs))
-                    .font(.caption2.monospacedDigit())
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(.black.opacity(0.7), in: Capsule())
-                    .foregroundStyle(.white)
-                    .padding(6)
-            }
+                    Text(formatDuration(clip.durationMs))
+                        .font(.caption2.monospacedDigit())
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.black.opacity(0.7), in: Capsule())
+                        .foregroundStyle(.white)
+                        .padding(6)
+                }
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
@@ -204,7 +224,21 @@ struct ClipCardView: View {
             .padding(.horizontal, 6).padding(.bottom, 6)
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8).stroke(.separator)
+                .opacity(isSelected ? 0 : 1)
+        )
+        .contentShape(Rectangle())
+        // Single-tap selects. The hover play button handles "open in player".
+        .onTapGesture(perform: onSelect)
+        .onHover { hovering = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(clip.name ?? defaultName))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
         .onAppear { loadThumb() }
     }
 
@@ -214,8 +248,8 @@ struct ClipCardView: View {
 
     private func loadThumb() {
         Task.detached(priority: .background) { [clip] in
-            let env = AppEnvironment.shared
-            guard let database = env.database, let thumbnailEngine = env.thumbnailEngine else { return }
+            guard let database = AppEnvironment.shared.database,
+                  let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
             guard let source: Source = try? database.read({ db in
                 try Source.fetchOne(db, key: clip.sourceID)
             }) else { return }
@@ -317,13 +351,14 @@ struct SourceCardView: View {
         }
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(source.displayName))
         .onAppear { loadThumb() }
     }
 
     private func loadThumb() {
         Task.detached(priority: .background) { [source] in
-            let env = AppEnvironment.shared
-            guard let thumbnailEngine = env.thumbnailEngine else { return }
+            guard let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
             let url = thumbnailEngine.thumbPath(for: source.hash)
             if FileManager.default.fileExists(atPath: url.path),
                let image = NSImage(contentsOf: url) {

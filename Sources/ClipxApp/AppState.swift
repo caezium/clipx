@@ -44,17 +44,39 @@ final class AppState: ObservableObject {
     /// race the bootstrap on first launch.
     @Published var bootstrapped: Bool = false
 
+    /// Set when `AppEnvironment.bootstrap()` throws. RootView observes this and
+    /// surfaces a blocking alert with the message + quit option, so the user
+    /// isn't stuck staring at an empty splash with no explanation.
+    @Published var bootstrapError: String?
+
     private init() {}
+
+    /// Per-toast dismissal task. Cancelled if the toast is removed early (e.g.
+    /// user explicitly dismisses) so we don't leak suspended sleeps.
+    private var dismissTasks: [UUID: Task<Void, Never>] = [:]
 
     func showToast(_ message: String, level: ToastLevel = .info) {
         let toast = Toast(message: message, level: level)
         toasts.append(toast)
-        Task {
+        // Cap visible toast count so a save-storm doesn't bury the UI.
+        if toasts.count > 5 {
+            let removed = toasts.removeFirst()
+            dismissTasks.removeValue(forKey: removed.id)?.cancel()
+        }
+        let id = toast.id
+        dismissTasks[id] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
             await MainActor.run {
-                toasts.removeAll { $0.id == toast.id }
+                self?.toasts.removeAll { $0.id == id }
+                self?.dismissTasks.removeValue(forKey: id)
             }
         }
+    }
+
+    func dismissToast(_ id: UUID) {
+        toasts.removeAll { $0.id == id }
+        dismissTasks.removeValue(forKey: id)?.cancel()
     }
 }
 

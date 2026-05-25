@@ -6,6 +6,11 @@ struct ClipxApp: App {
     @StateObject private var appState = AppState.shared
 
     var body: some Scene {
+        // Tests rely on the host app launching without hanging; macOS's
+        // single-Window Scene was making the test runner time out waiting
+        // for connection. WindowGroup behaves like a normal app under
+        // XCTest. The multi-window risk is real (see issue note) but lives
+        // for a follow-up.
         WindowGroup("Clipx") {
             RootView()
                 .environmentObject(appState)

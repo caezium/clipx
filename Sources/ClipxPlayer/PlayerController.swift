@@ -4,6 +4,11 @@ import SwiftUI
 import Combine
 
 /// Observable AVPlayer wrapper with frame-accurate seek + frame-stepping.
+///
+/// All UI-mutating state writes happen on the main actor. Background metadata
+/// loads (`fps`, `aspectRatio`) explicitly hop back via `MainActor.run` — the
+/// previous version wrote those properties from a non-isolated Task, which
+/// raced with `stepForward()` reading them.
 @MainActor
 final class PlayerController: ObservableObject {
     @Published private(set) var player: AVPlayer?
@@ -14,7 +19,7 @@ final class PlayerController: ObservableObject {
 
     private var timeObserver: Any?
     private var statusCancellable: AnyCancellable?
-    private var fps: Float = 30.0
+    private(set) var fps: Float = 30.0
 
     init() {}
 
@@ -24,29 +29,33 @@ final class PlayerController: ObservableObject {
         let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         self.player = player
+        installPeriodicObserver(player: player, fps: fps)
 
-        Task {
+        Task { [weak self] in
             do {
                 let duration = try await asset.load(.duration)
                 let ms = Int64(CMTimeGetSeconds(duration) * 1000)
                 let tracks = try await asset.loadTracks(withMediaType: .video)
+                var newFps: Float = 30.0
+                var newAspect: CGFloat = 16.0 / 9.0
                 if let track = tracks.first {
                     let size = try await track.load(.naturalSize)
                     if size.height > 0 {
-                        self.aspectRatio = size.width / size.height
+                        newAspect = size.width / size.height
                     }
                     let rate = try await track.load(.nominalFrameRate)
-                    self.fps = rate > 0 ? rate : 30.0
+                    newFps = rate > 0 ? rate : 30.0
                 }
-                await MainActor.run { self.durationMs = ms }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.durationMs = ms
+                    self.fps = newFps
+                    self.aspectRatio = newAspect
+                    self.installPeriodicObserver(player: player, fps: newFps)
+                }
             } catch {
-                NSLog("PlayerController.load metadata failed: \(error)")
+                ClipxLog.player.debug("metadata load failed: \(String(describing: error), privacy: .public)")
             }
-        }
-
-        let interval = CMTime(value: 1, timescale: 30) // ~33ms tick
-        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] t in
-            self?.currentMs = Int64(CMTimeGetSeconds(t) * 1000)
         }
     }
 
@@ -66,6 +75,11 @@ final class PlayerController: ObservableObject {
         isPlaying.toggle()
     }
 
+    func pause() {
+        player?.pause()
+        isPlaying = false
+    }
+
     /// Frame-accurate seek using zero tolerance.
     func seek(toMs ms: Int64) {
         guard let player else { return }
@@ -75,6 +89,7 @@ final class PlayerController: ObservableObject {
 
     func stepForward() {
         guard let player, fps > 0 else { return }
+        _ = player
         let frameDuration = 1.0 / Double(fps)
         let nextMs = currentMs + Int64(frameDuration * 1000)
         seek(toMs: nextMs)
@@ -82,6 +97,7 @@ final class PlayerController: ObservableObject {
 
     func stepBackward() {
         guard let player, fps > 0 else { return }
+        _ = player
         let frameDuration = 1.0 / Double(fps)
         let prevMs = max(0, currentMs - Int64(frameDuration * 1000))
         seek(toMs: prevMs)
@@ -104,6 +120,24 @@ final class PlayerController: ObservableObject {
 
     var currentTimeLabel: String { Self.formatMs(currentMs) }
     var durationLabel: String { Self.formatMs(durationMs) }
+
+    /// (Re)installs the periodic time observer at the source's frame rate, so
+    /// 60p sources don't lose updates and 24p sources don't over-poll.
+    /// Previously hardcoded to 30 Hz.
+    private func installPeriodicObserver(player: AVPlayer, fps: Float) {
+        if let obs = timeObserver {
+            player.removeTimeObserver(obs)
+            timeObserver = nil
+        }
+        // Clamp to a reasonable visible refresh range — fractional fps like
+        // 23.976 round to 24, but extreme rates (slow-mo 240) get clamped
+        // back to 60 to avoid pegging the UI thread.
+        let timescale = CMTimeScale(min(60, max(24, Int(fps.rounded()))))
+        let interval = CMTime(value: 1, timescale: timescale)
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] t in
+            self?.currentMs = Int64(CMTimeGetSeconds(t) * 1000)
+        }
+    }
 
     static func formatMs(_ ms: Int64) -> String {
         let totalMs = max(0, ms)

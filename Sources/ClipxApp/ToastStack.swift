@@ -16,6 +16,12 @@ struct ToastStack: View {
                 .overlay(Capsule().stroke(color(for: toast.level).opacity(0.4)))
                 .foregroundStyle(color(for: toast.level))
                 .transition(.move(edge: .top).combined(with: .opacity))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text("\(accessibilityPrefix(for: toast.level)): \(toast.message)"))
+                .accessibilityAddTraits(.isStaticText)
+                // Tap to dismiss; cancels the auto-dismiss task in AppState
+                // so we don't leak a pending sleep.
+                .onTapGesture { AppState.shared.dismissToast(toast.id) }
             }
         }
         .animation(.easeInOut(duration: 0.2), value: toasts)
@@ -36,6 +42,15 @@ struct ToastStack: View {
         case .success: return .green
         case .warning: return .orange
         case .error: return .red
+        }
+    }
+
+    private func accessibilityPrefix(for level: ToastLevel) -> String {
+        switch level {
+        case .info: return "Info"
+        case .success: return "Success"
+        case .warning: return "Warning"
+        case .error: return "Error"
         }
     }
 }

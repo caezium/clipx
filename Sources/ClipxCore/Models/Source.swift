@@ -9,6 +9,10 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
     var bookmark: Data?
     var hash: String
     var mtime: Int64
+    /// File size in bytes. Used alongside `mtime` to skip re-indexing
+    /// unchanged files; a file copied with `cp -p` keeps the same mtime
+    /// even when bytes shift, so size catches the rest.
+    var size: Int64?
     var durationMs: Int64?
     var width: Int?
     var height: Int?
@@ -25,7 +29,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
     static let databaseTableName = "sources"
 
     enum CodingKeys: String, CodingKey {
-        case id, path, bookmark, hash, mtime
+        case id, path, bookmark, hash, mtime, size
         case durationMs = "duration_ms"
         case width, height, fps, codec
         case audioChannels = "audio_channels"
@@ -37,7 +41,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
     }
 
     enum Columns: String, ColumnExpression {
-        case id, path, bookmark, hash, mtime
+        case id, path, bookmark, hash, mtime, size
         case durationMs = "duration_ms"
         case width, height, fps, codec
         case audioChannels = "audio_channels"

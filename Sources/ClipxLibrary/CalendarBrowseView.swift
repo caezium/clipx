@@ -8,19 +8,36 @@ struct CalendarBrowseView: View {
     let sources: [Source]
     @EnvironmentObject private var appState: AppState
     @State private var collapsedMonths: Set<String> = []
+    /// Memoized group buckets. The computation is O(N log N) over the sources
+    /// array, and was previously re-run on every body invalidation. Now it
+    /// runs only when `sources` actually changes.
+    @State private var groups: [MonthGroup] = []
 
-    private let columns = [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 10)]
-    private let monthFormatter: DateFormatter = {
+    // DateFormatter is expensive to allocate; keep one static.
+    private static let monthFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MMMM yyyy"; return f
     }()
-    private let dayFormatter: DateFormatter = {
+    private static let dayFormatter: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "EEE, MMM d"; return f
     }()
 
-    /// Groups (monthKey, monthDate, [(dayKey, dayDate, [Source])]) in
-    /// chronological-descending order.
-    private var grouped: [(monthKey: String, monthDate: Date, days: [(dayKey: String, dayDate: Date, sources: [Source])])] {
-        // Sources without a created_at fall under "Unknown date" at the end.
+    private let columns = [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 10)]
+
+    struct DayGroup: Identifiable {
+        let id: String
+        let date: Date
+        let sources: [Source]
+    }
+    struct MonthGroup: Identifiable {
+        let id: String
+        let date: Date
+        let days: [DayGroup]
+        var totalCount: Int { days.reduce(0) { $0 + $1.sources.count } }
+    }
+
+    /// Groups by month-day in chronological-descending order. Sources without
+    /// a `created_at` fall under "No recording date" at the end.
+    private static func computeGroups(_ sources: [Source]) -> [MonthGroup] {
         let withDate = sources.compactMap { src -> (Source, Date)? in
             guard let cs = src.createdAt, cs > 0 else { return nil }
             return (src, Date(timeIntervalSince1970: TimeInterval(cs)))
@@ -37,7 +54,7 @@ struct CalendarBrowseView: View {
             if let monthStart = cal.date(from: comps) { monthDates[key] = monthStart }
         }
 
-        var result: [(String, Date, [(String, Date, [Source])])] = []
+        var result: [MonthGroup] = []
         for key in monthBuckets.keys.sorted(by: >) {
             let items = monthBuckets[key] ?? []
             var dayBuckets: [String: [Source]] = [:]
@@ -49,12 +66,18 @@ struct CalendarBrowseView: View {
                 if let dayStart = cal.date(from: comps) { dayDates[dKey] = dayStart }
             }
             let days = dayBuckets.keys.sorted(by: >).map { dk in
-                (dk, dayDates[dk] ?? Date.distantPast, dayBuckets[dk] ?? [])
+                DayGroup(id: dk, date: dayDates[dk] ?? Date.distantPast, sources: dayBuckets[dk] ?? [])
             }
-            result.append((key, monthDates[key] ?? Date.distantPast, days))
+            result.append(MonthGroup(id: key, date: monthDates[key] ?? Date.distantPast, days: days))
         }
         if !undated.isEmpty {
-            result.append(("unknown", Date.distantPast, [("unknown", Date.distantPast, undated)]))
+            result.append(
+                MonthGroup(
+                    id: "unknown",
+                    date: Date.distantPast,
+                    days: [DayGroup(id: "unknown", date: Date.distantPast, sources: undated)]
+                )
+            )
         }
         return result
     }
@@ -67,11 +90,11 @@ struct CalendarBrowseView: View {
                         .foregroundStyle(.secondary)
                         .padding(20)
                 }
-                ForEach(grouped, id: \.monthKey) { month in
+                ForEach(groups) { month in
                     Section(header: monthHeader(month: month)) {
-                        if !collapsedMonths.contains(month.monthKey) {
-                            ForEach(month.days, id: \.dayKey) { day in
-                                daySection(day: day, monthKey: month.monthKey)
+                        if !collapsedMonths.contains(month.id) {
+                            ForEach(month.days) { day in
+                                daySection(day: day, monthKey: month.id)
                             }
                         }
                     }
@@ -79,22 +102,26 @@ struct CalendarBrowseView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
         }
+        .onAppear { groups = Self.computeGroups(sources) }
+        // Re-group only when the source set actually changes — count is a
+        // cheap-but-not-perfect proxy; combined with libraryRevision via
+        // LibraryView's reload this catches add/remove flows.
+        .onChange(of: sources.count) { _, _ in groups = Self.computeGroups(sources) }
     }
 
     @ViewBuilder
-    private func monthHeader(month: (monthKey: String, monthDate: Date, days: [(dayKey: String, dayDate: Date, sources: [Source])])) -> some View {
-        let isCollapsed = collapsedMonths.contains(month.monthKey)
-        let totalSources = month.days.reduce(0) { $0 + $1.sources.count }
+    private func monthHeader(month: MonthGroup) -> some View {
+        let isCollapsed = collapsedMonths.contains(month.id)
         Button {
-            if isCollapsed { collapsedMonths.remove(month.monthKey) }
-            else { collapsedMonths.insert(month.monthKey) }
+            if isCollapsed { collapsedMonths.remove(month.id) }
+            else { collapsedMonths.insert(month.id) }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                     .font(.caption)
-                Text(month.monthKey == "unknown" ? "No recording date" : monthFormatter.string(from: month.monthDate))
+                Text(month.id == "unknown" ? "No recording date" : Self.monthFormatter.string(from: month.date))
                     .font(.title3.weight(.semibold))
-                Text("\(totalSources)")
+                Text("\(month.totalCount)")
                     .font(.caption.monospacedDigit())
                     .padding(.horizontal, 6).padding(.vertical, 1)
                     .background(.quaternary, in: Capsule())
@@ -109,17 +136,16 @@ struct CalendarBrowseView: View {
     }
 
     @ViewBuilder
-    private func daySection(day: (dayKey: String, dayDate: Date, sources: [Source]), monthKey: String) -> some View {
+    private func daySection(day: DayGroup, monthKey: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
-                Text(day.dayKey == "unknown" ? "Unknown day" : dayFormatter.string(from: day.dayDate))
+                Text(day.id == "unknown" ? "Unknown day" : Self.dayFormatter.string(from: day.date))
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(.secondary)
                 Text("\(day.sources.count)")
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
                 Spacer()
-                // Duration total for the day
                 let totalMs = day.sources.reduce(Int64(0)) { $0 + ($1.durationMs ?? 0) }
                 if totalMs > 0 {
                     Text(formatTotal(totalMs))

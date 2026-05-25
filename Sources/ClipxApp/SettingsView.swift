@@ -31,9 +31,21 @@ struct GeneralSettingsView: View {
                 Text("Light").tag("light")
                 Text("Dark").tag("dark")
             }
+            .onChange(of: appearance) { _, new in applyAppearance(new) }
             Toggle("Open clips in built-in player", isOn: $openInBuiltInPlayer)
         }
         .padding()
+        .onAppear { applyAppearance(appearance) }
+    }
+
+    /// Pushes the user's appearance choice into NSApp so the whole window
+    /// re-themes immediately. Without this the picker is a cosmetic no-op.
+    private func applyAppearance(_ value: String) {
+        switch value {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:      NSApp.appearance = nil // follow system
+        }
     }
 }
 
@@ -118,38 +130,46 @@ struct BridgesSettingsView: View {
 }
 
 struct HotkeySettingsView: View {
-    @AppStorage("hotkey.markIn") private var markIn = "I"
-    @AppStorage("hotkey.markOut") private var markOut = "O"
-    @AppStorage("hotkey.saveRange") private var saveRange = "S"
-    @AppStorage("hotkey.globalQuickAdd") private var quickAdd = "Cmd+Shift+C"
-
     var body: some View {
         Form {
-            HotkeyRow(label: "Mark In", binding: $markIn)
-            HotkeyRow(label: "Mark Out", binding: $markOut)
-            HotkeyRow(label: "Save Range as Clip", binding: $saveRange)
+            Section("Player shortcuts") {
+                ShortcutLabel(key: "I", label: "Mark In")
+                ShortcutLabel(key: "O", label: "Mark Out")
+                ShortcutLabel(key: "S", label: "Save Range as Clip")
+                ShortcutLabel(key: "Space / K", label: "Play / Pause")
+                ShortcutLabel(key: "← / →", label: "Step one frame")
+                ShortcutLabel(key: "⇧← / ⇧→ or J / L", label: "Jump ±5s")
+            }
             #if DIRECT_BUILD
-            Divider()
-            HotkeyRow(label: "Global Quick-Add", binding: $quickAdd)
+            Section("Global") {
+                ShortcutLabel(key: "⇧⌃⌘C", label: "Quick add to library (global hotkey)")
+                Text("Rebinding is on the roadmap — defaults are locked for now.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             #else
-            Divider()
-            Label("Global hotkeys are unavailable in the Mac App Store build.",
-                  systemImage: "lock")
-                .foregroundStyle(.secondary)
+            Section {
+                Label("Global hotkeys are unavailable in the Mac App Store build.",
+                      systemImage: "lock")
+                    .foregroundStyle(.secondary)
+            }
             #endif
         }
         .padding()
     }
 }
 
-private struct HotkeyRow: View {
+/// Read-only shortcut row. Bookmark for when key-capture lands.
+private struct ShortcutLabel: View {
+    let key: String
     let label: String
-    @Binding var binding: String
     var body: some View {
         HStack {
             Text(label)
             Spacer()
-            TextField("", text: $binding).frame(width: 120).textFieldStyle(.roundedBorder)
+            Text(key)
+                .font(.system(.body, design: .monospaced))
+                .padding(.horizontal, 8).padding(.vertical, 2)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
         }
     }
 }
