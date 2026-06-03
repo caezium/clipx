@@ -29,6 +29,7 @@ struct RemoteSettingsView: View {
     @AppStorage("webServerEnabled") private var enabled: Bool = false
     @AppStorage("webServerPort") private var port: Int = 7878
     @State private var displayURL: String = ""
+    @State private var pin: String = ""
 
     var body: some View {
         Form {
@@ -36,8 +37,12 @@ struct RemoteSettingsView: View {
                 Toggle("Serve Clipx web UI on this network", isOn: $enabled)
                     .onChange(of: enabled) { _, newValue in
                         Task { @MainActor in
-                            if newValue { AppEnvironment.shared.startWebServer() }
-                            else { AppEnvironment.shared.stopWebServer() }
+                            if newValue {
+                                AppEnvironment.shared.startWebServer()
+                                pin = PairingStore.shared.pin
+                            } else {
+                                AppEnvironment.shared.stopWebServer()
+                            }
                             refreshURL()
                         }
                     }
@@ -50,21 +55,40 @@ struct RemoteSettingsView: View {
                         .disabled(enabled)
                 }
                 if enabled, !displayURL.isEmpty {
-                    HStack {
-                        Image(systemName: "link")
-                        Text(displayURL)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                        Spacer()
-                        Button("Copy") {
-                            let pb = NSPasteboard.general
-                            pb.clearContents()
-                            pb.setString(displayURL, forType: .string)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Image(systemName: "link")
+                            Text(displayURL)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                            Spacer()
+                            Button("Copy") {
+                                let pb = NSPasteboard.general
+                                pb.clearContents()
+                                pb.setString(displayURL, forType: .string)
+                            }
+                        }
+                        .padding(8)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+
+                        HStack(spacing: 8) {
+                            Image(systemName: "key.fill")
+                            Text("Pairing PIN")
+                            Spacer()
+                            Text(pin)
+                                .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                                .tracking(4)
+                                .padding(.horizontal, 10).padding(.vertical, 4)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                                .textSelection(.enabled)
+                            Button("New PIN") {
+                                PairingStore.shared.rotate()
+                                pin = PairingStore.shared.pin
+                            }
+                            .help("Invalidates every paired device and generates a fresh code.")
                         }
                     }
-                    .padding(8)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-                    Text("Open this URL on your phone or laptop browser while on the same Wi-Fi network.")
+                    Text("Open the URL on your phone/laptop, type the PIN once. Tokens persist in browser storage; New PIN forces everyone to re-pair.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else if enabled {
@@ -72,14 +96,14 @@ struct RemoteSettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 } else {
-                    Text("When enabled, your phone or laptop can browse sources and clips, and rate clips.")
+                    Text("When enabled, your phone or laptop can browse sources, watch clips, and mark new clips remotely.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             Section {
                 Label(
-                    "No authentication yet. Don't enable on untrusted Wi-Fi (coffee shops, hotels).",
+                    "PIN auth is rate-limited only by network — don't use on coffee-shop Wi-Fi. Treat the URL like a password.",
                     systemImage: "exclamationmark.triangle"
                 )
                 .foregroundStyle(.orange)
@@ -87,7 +111,10 @@ struct RemoteSettingsView: View {
             }
         }
         .padding()
-        .onAppear { refreshURL() }
+        .onAppear {
+            refreshURL()
+            if enabled { pin = PairingStore.shared.pin }
+        }
     }
 
     private func refreshURL() {
