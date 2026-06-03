@@ -254,12 +254,23 @@ struct ClipCardView: View {
                 try Source.fetchOne(db, key: clip.sourceID)
             }) else { return }
             let url = thumbnailEngine.thumbPath(for: source.hash)
-            let img: NSImage? = (FileManager.default.fileExists(atPath: url.path)
-                ? NSImage(contentsOf: url) : nil)
             let name = source.displayName
-            await MainActor.run {
-                if let img { self.thumbImage = img }
-                self.sourceName = name
+            if FileManager.default.fileExists(atPath: url.path),
+               let img = NSImage(contentsOf: url) {
+                await MainActor.run {
+                    self.thumbImage = img
+                    self.sourceName = name
+                }
+                return
+            }
+            // Thumb file missing (likely cache purged by macOS) — regenerate
+            // on demand. ThumbnailEngine de-dupes via internal semaphore so
+            // a flurry of card-loads won't pile up redundant work.
+            await MainActor.run { self.sourceName = name }
+            thumbnailEngine.generateThumbnail(source: source) { resultURL in
+                guard let resultURL,
+                      let img = NSImage(contentsOf: resultURL) else { return }
+                DispatchQueue.main.async { self.thumbImage = img }
             }
         }
     }
@@ -363,6 +374,14 @@ struct SourceCardView: View {
             if FileManager.default.fileExists(atPath: url.path),
                let image = NSImage(contentsOf: url) {
                 await MainActor.run { self.thumbImage = image }
+                return
+            }
+            // Cache miss — request regeneration. Engine internally limits
+            // concurrency via a semaphore.
+            thumbnailEngine.generateThumbnail(source: source) { resultURL in
+                guard let resultURL,
+                      let img = NSImage(contentsOf: resultURL) else { return }
+                DispatchQueue.main.async { self.thumbImage = img }
             }
         }
     }

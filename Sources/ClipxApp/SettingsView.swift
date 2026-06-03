@@ -11,12 +11,88 @@ struct SettingsView: View {
                 .tabItem { Label("Export", systemImage: "square.and.arrow.up") }
             BridgesSettingsView()
                 .tabItem { Label("Bridges", systemImage: "link") }
+            RemoteSettingsView()
+                .tabItem { Label("Remote", systemImage: "iphone.gen3") }
             HotkeySettingsView()
                 .tabItem { Label("Hotkeys", systemImage: "command") }
             UpdatesSettingsView()
                 .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }
-        .frame(width: 620, height: 460)
+        .frame(width: 620, height: 500)
+    }
+}
+
+/// Controls the embedded web server that powers the phone / laptop browser
+/// frontend. Off by default — turning it on exposes a tiny HTTP server on
+/// the local network bound to a high port.
+struct RemoteSettingsView: View {
+    @AppStorage("webServerEnabled") private var enabled: Bool = false
+    @AppStorage("webServerPort") private var port: Int = 7878
+    @State private var displayURL: String = ""
+
+    var body: some View {
+        Form {
+            Section("Web UI") {
+                Toggle("Serve Clipx web UI on this network", isOn: $enabled)
+                    .onChange(of: enabled) { _, newValue in
+                        Task { @MainActor in
+                            if newValue { AppEnvironment.shared.startWebServer() }
+                            else { AppEnvironment.shared.stopWebServer() }
+                            refreshURL()
+                        }
+                    }
+                HStack {
+                    Text("Port")
+                    Spacer()
+                    TextField("", value: $port, format: .number.grouping(.never))
+                        .frame(width: 80)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(enabled)
+                }
+                if enabled, !displayURL.isEmpty {
+                    HStack {
+                        Image(systemName: "link")
+                        Text(displayURL)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("Copy") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(displayURL, forType: .string)
+                        }
+                    }
+                    .padding(8)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                    Text("Open this URL on your phone or laptop browser while on the same Wi-Fi network.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if enabled {
+                    Text("Couldn't determine your Mac's local IP — make sure Wi-Fi or Ethernet is connected.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("When enabled, your phone or laptop can browse sources and clips, and rate clips.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Section {
+                Label(
+                    "No authentication yet. Don't enable on untrusted Wi-Fi (coffee shops, hotels).",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .foregroundStyle(.orange)
+                .font(.caption)
+            }
+        }
+        .padding()
+        .onAppear { refreshURL() }
+    }
+
+    private func refreshURL() {
+        let ip = AppEnvironment.preferredLocalAddress()
+        displayURL = ip.map { "http://\($0):\(port)" } ?? ""
     }
 }
 

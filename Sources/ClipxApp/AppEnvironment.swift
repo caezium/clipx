@@ -21,6 +21,9 @@ final class AppEnvironment: @unchecked Sendable {
     private(set) var tagStore: TagStore?
     private(set) var bookmarkStore: BookmarkStore?
     private(set) var searchEngine: SearchEngine?
+    /// Embedded HTTP server that powers the phone/laptop web UI on the
+    /// local network. Optional — disabled by user setting kills the listener.
+    private(set) var httpServer: HTTPServer?
 
     private var didBootstrap = false
 
@@ -59,6 +62,14 @@ final class AppEnvironment: @unchecked Sendable {
             AppState.shared.libraryRevision &+= 1
 
             watch.resumeAll()
+
+            // Start the embedded HTTP server (phone/laptop web UI) if the
+            // user has it enabled. Default is OFF — turning it on is a
+            // deliberate user choice in Settings.
+            if UserDefaults.standard.bool(forKey: "webServerEnabled") {
+                startWebServer()
+            }
+
             ClipxLog.app.info("bootstrap: complete")
         } catch {
             // Roll back so half-initialized state can't be observed.
@@ -81,5 +92,67 @@ final class AppEnvironment: @unchecked Sendable {
     func shutdown() {
         watcher?.stopAll()
         exportPipeline?.cancelAll()
+        httpServer?.stop()
+        httpServer = nil
+    }
+
+    /// Spins up the embedded web server. Called at bootstrap (when the
+    /// `webServerEnabled` default is true) and from Settings when the user
+    /// flips the toggle.
+    @MainActor
+    func startWebServer() {
+        guard httpServer == nil else { return }
+        let port = UInt16(UserDefaults.standard.integer(forKey: "webServerPort"))
+        let server = HTTPServer(port: port == 0 ? 7878 : port)
+        do {
+            try server.start { request in
+                await ClipxRoutes.handle(request)
+            }
+            httpServer = server
+            ClipxLog.app.info("web server started on port \(server.port)")
+            AppState.shared.showToast(
+                "Web UI live at http://\(Self.preferredLocalAddress() ?? "<this mac>"):\(server.port)",
+                level: .info
+            )
+        } catch {
+            ClipxLog.app.error("web server failed to start: \(String(describing: error), privacy: .public)")
+            AppState.shared.showToast("Web server failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    @MainActor
+    func stopWebServer() {
+        httpServer?.stop()
+        httpServer = nil
+    }
+
+    /// Best-effort: returns the first non-loopback IPv4 address the Mac is
+    /// reachable on. Used to show the user a "http://192.168.1.x:7878" URL
+    /// in Settings. Returns nil if we can't enumerate (no network).
+    static func preferredLocalAddress() -> String? {
+        var addr = ifaddrs()
+        var ifaddrPtr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddrPtr) == 0, let first = ifaddrPtr else { return nil }
+        defer { freeifaddrs(ifaddrPtr) }
+        var ptr: UnsafeMutablePointer<ifaddrs>? = first
+        while let cur = ptr {
+            addr = cur.pointee
+            if let sa = addr.ifa_addr, sa.pointee.sa_family == sa_family_t(AF_INET) {
+                let name = String(cString: addr.ifa_name)
+                // Prefer en0/en1 (typical Wi-Fi / Ethernet) over utun, lo0,
+                // awdl, llw — pickier than "first non-loopback" to avoid
+                // returning unreachable VPN addresses.
+                if name.hasPrefix("en") {
+                    var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    if getnameinfo(sa, socklen_t(sa.pointee.sa_len), &host,
+                                   socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                        let result = String(cString: host)
+                        if !result.hasPrefix("127.") { return result }
+                    }
+                }
+            }
+            ptr = addr.ifa_next
+        }
+        return nil
     }
 }
