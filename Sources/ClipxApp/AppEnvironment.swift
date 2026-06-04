@@ -63,6 +63,12 @@ final class AppEnvironment: @unchecked Sendable {
 
             watch.resumeAll()
 
+            // Background-prime thumbnails for any source missing one. Without
+            // this, blank cards stay blank until the user scrolls them into
+            // view (LazyVGrid's onAppear is the only trigger). Runs at low
+            // priority so it doesn't fight UI work.
+            thumbs.primeMissingThumbnails()
+
             // Start the embedded HTTP server (phone/laptop web UI) if the
             // user has it enabled. Default is OFF — turning it on is a
             // deliberate user choice in Settings.

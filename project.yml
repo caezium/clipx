@@ -43,6 +43,11 @@ targets:
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
         NSAppleEventsUsageDescription: Clipx uses Apple Events to capture the frontmost video clip when the global hotkey is pressed.
+        NSDesktopFolderUsageDescription: Clipx needs to read video files stored on your Desktop to index and generate thumbnails for your library.
+        NSDocumentsFolderUsageDescription: Clipx needs to read video files stored in Documents to index and generate thumbnails for your library.
+        NSDownloadsFolderUsageDescription: Clipx needs to read video files stored in Downloads to index and generate thumbnails for your library.
+        NSRemovableVolumesUsageDescription: Clipx reads video files from removable drives so you can clip footage stored on external media.
+        NSNetworkVolumesUsageDescription: Clipx reads video files from network volumes so you can clip footage stored on NAS or shared drives.
         SUFeedURL: https://updates.clipx.app/appcast.xml
         SUPublicEDKey: PLACEHOLDER_REPLACE_WITH_GENERATED_KEY
     entitlements:
