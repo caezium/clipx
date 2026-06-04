@@ -42,16 +42,32 @@ actor Indexer {
             let mtime = Int64(((attrs[.modificationDate] as? Date) ?? Date()).timeIntervalSince1970)
             let size = (attrs[.size] as? Int64) ?? 0
 
-            // Skip unchanged: both mtime AND size must match. Catches the
-            // `cp -p` case where mtime is preserved but bytes differ.
+            // Skip unchanged. Two paths:
+            //  * post-v2 rows with a stored size: require BOTH mtime AND size
+            //    to match (catches `cp -p` where mtime is preserved but
+            //    bytes differ).
+            //  * pre-v2 rows where size is nil: trust mtime alone. Without
+            //    this, every existing row gets re-indexed on first launch
+            //    after the v2 migration, which queues ~100 thumbnail
+            //    completions on the main thread and looks like a freeze.
+            //    Size gets populated the next time the file legitimately
+            //    changes.
             let existing: Source? = try database.read { db in
                 try Source.filter(Source.Columns.path == url.path).fetchOne(db)
             }
-            if let existing,
-               existing.mtime == mtime,
-               existing.size == size,
-               existing.size != nil {
-                return
+            if let existing, existing.mtime == mtime {
+                if existing.size == nil || existing.size == size {
+                    // Backfill size for pre-v2 rows so we converge.
+                    if existing.size == nil, let existingID = existing.id {
+                        try? database.write { db in
+                            try db.execute(
+                                sql: "UPDATE sources SET size = ? WHERE id = ?",
+                                arguments: [size, existingID]
+                            )
+                        }
+                    }
+                    return
+                }
             }
 
             let hash = try FileHasher.quickHash(url: url)

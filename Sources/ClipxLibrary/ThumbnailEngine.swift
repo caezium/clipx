@@ -6,6 +6,12 @@ import CryptoKit
 /// Generates and caches thumbnails (single frame + hover sprite strip) for sources.
 /// Uses AVAssetImageGenerator under a serial dispatch queue, semaphore-limited
 /// to 4 concurrent requests so the UI thread stays responsive.
+///
+/// In-flight dedup: when a card view requests a thumbnail that's already being
+/// generated, we just register the new completion callback against the
+/// existing request instead of dispatching a duplicate Task. Without this,
+/// scrolling a long list could queue hundreds of redundant generations and
+/// flood main with completion handlers.
 final class ThumbnailEngine {
     private let database: Database
     private let cacheDir: URL
@@ -15,6 +21,9 @@ final class ThumbnailEngine {
         attributes: .concurrent
     )
     private let semaphore = DispatchSemaphore(value: 4)
+    /// Hash → pending completion handlers. Protected by `inFlightLock`.
+    private var inFlight: [String: [(URL?) -> Void]] = [:]
+    private let inFlightLock = NSLock()
 
     init(database: Database) {
         self.database = database
@@ -39,15 +48,39 @@ final class ThumbnailEngine {
     }
 
     /// Generates a single representative thumbnail at ~10% into the source.
-    /// Returns the cache file URL or nil if generation failed.
+    /// Returns the cache file URL or nil if generation failed. De-dupes
+    /// concurrent requests for the same hash.
     func generateThumbnail(source: Source, completion: @escaping (URL?) -> Void) {
         let target = thumbPath(for: source.hash)
         if FileManager.default.fileExists(atPath: target.path) {
             completion(target)
             return
         }
+        let hash = source.hash
+
+        // Dedup: if a generation for this hash is already in flight, just
+        // register our completion and return.
+        inFlightLock.lock()
+        if inFlight[hash] != nil {
+            inFlight[hash]?.append(completion)
+            inFlightLock.unlock()
+            return
+        }
+        inFlight[hash] = [completion]
+        inFlightLock.unlock()
+
+        let fanout: (URL?) -> Void = { [weak self] result in
+            guard let self else { return }
+            self.inFlightLock.lock()
+            let completions = self.inFlight.removeValue(forKey: hash) ?? []
+            self.inFlightLock.unlock()
+            DispatchQueue.main.async {
+                for cb in completions { cb(result) }
+            }
+        }
+
         Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { completion(nil); return }
+            guard let self else { fanout(nil); return }
             self.semaphore.wait()
             defer { self.semaphore.signal() }
 
@@ -57,7 +90,7 @@ final class ThumbnailEngine {
                 let cm = try await asset.load(.duration)
                 duration = CMTimeGetSeconds(cm)
             } catch {
-                await MainActor.run { completion(nil) }
+                fanout(nil)
                 return
             }
             autoreleasepool {
@@ -70,9 +103,9 @@ final class ThumbnailEngine {
                     let rep = NSBitmapImageRep(cgImage: cgImage)
                     let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85])
                     try data?.write(to: target)
-                    DispatchQueue.main.async { completion(target) }
+                    fanout(target)
                 } catch {
-                    DispatchQueue.main.async { completion(nil) }
+                    fanout(nil)
                 }
             }
         }
