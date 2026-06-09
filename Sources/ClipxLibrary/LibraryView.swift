@@ -7,6 +7,14 @@ struct LibraryView: View {
     @State private var clips: [Clip] = []
     @State private var loading = false
     @State private var hitLimit = false
+    /// Keyboard focus for the search field so ⌘F can move focus to it. (#27)
+    @FocusState private var searchFocused: Bool
+
+    /// True when a query or filter is narrowing the library — distinguishes a
+    /// "no results" state from a genuinely empty library. (#38)
+    private var isFiltering: Bool {
+        !appState.searchQuery.trimmingCharacters(in: .whitespaces).isEmpty || appState.activeFilters.isActive
+    }
     /// Cancellable reload task so a flurry of keystrokes only fires one query.
     @State private var searchReloadTask: Task<Void, Never>?
 
@@ -27,6 +35,10 @@ struct LibraryView: View {
         }
         .background(Theme.bg)
         .onAppear(perform: reload)
+        // ⌘F / menu "Search Clips" focuses the field. (#27)
+        .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
+            searchFocused = true
+        }
         // Search debounced — every other change reloads immediately.
         .onChange(of: appState.searchQuery) { _, _ in scheduleDebouncedReload() }
         .onChange(of: appState.activeFilters) { _, _ in reload() }
@@ -45,6 +57,8 @@ struct LibraryView: View {
                 TextField("Search clips, tags, notes…", text: $appState.searchQuery)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
+                    .focused($searchFocused)
+                    .onExitCommand { appState.searchQuery = "" }   // Esc clears (#38)
                 if !appState.searchQuery.isEmpty {
                     Button { appState.searchQuery = "" } label: {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 12))
@@ -58,6 +72,30 @@ struct LibraryView: View {
             .background(Theme.surface, in: Capsule())
             .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
             .frame(maxWidth: 380)
+
+            // Multi-selection actions — batch export is reachable here. (#29)
+            if appState.selectedClipIDs.count > 1 {
+                HStack(spacing: 8) {
+                    Text("\(appState.selectedClipIDs.count) selected")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                    Menu {
+                        Button("Export as Reels") { ExportActions.exportSelected(.reels) }
+                        Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
+                        Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
+                    } label: {
+                        Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    Button { appState.selectedClipIDs = [] } label: {
+                        Text("Clear").font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.textTertiary)
+                }
+                .padding(.leading, 4)
+            }
 
             Spacer()
 
@@ -99,7 +137,14 @@ struct LibraryView: View {
         if loading {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if sources.isEmpty && clips.isEmpty {
-            EmptyLibraryView()
+            if isFiltering {
+                NoResultsView {                    // per-query no-results (#38)
+                    appState.searchQuery = ""
+                    appState.activeFilters = ClipFilters()
+                }
+            } else {
+                EmptyLibraryView()
+            }
         } else {
             VStack(spacing: 0) {
                 switch appState.viewMode {
@@ -155,8 +200,20 @@ struct LibraryView: View {
             var truncated = false
             do {
                 let sortSQL = LibraryView.sourcesOrderBy(AppState.shared.sortOption)
+                // Narrow the sources by the same query/filters as the clips —
+                // previously every source stayed on screen regardless. (#28)
+                let (whereSQL, whereArgs) = LibraryView.sourcesWhere(
+                    query: AppState.shared.searchQuery,
+                    filters: AppState.shared.activeFilters
+                )
+                var args = whereArgs
+                args.append(Int64(Self.sourcesLimit))
                 fetchedSources = try database.read { db in
-                    try Source.fetchAll(db, sql: "SELECT * FROM sources ORDER BY \(sortSQL) LIMIT ?", arguments: [Self.sourcesLimit])
+                    try Source.fetchAll(
+                        db,
+                        sql: "SELECT * FROM sources \(whereSQL) ORDER BY \(sortSQL) LIMIT ?",
+                        arguments: StatementArguments(args)
+                    )
                 }
                 // If we hit the limit, surface a footer so the user knows.
                 if fetchedSources.count == Self.sourcesLimit {
@@ -191,6 +248,36 @@ struct LibraryView: View {
         }
     }
 
+    /// Builds the WHERE clause that narrows the sources grid by the active query
+    /// and filters, matching how clips are filtered. (#28)
+    private static func sourcesWhere(query: String, filters: ClipFilters) -> (String, [DatabaseValueConvertible]) {
+        var clauses: [String] = []
+        var args: [DatabaseValueConvertible] = []
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !q.isEmpty {
+            clauses.append("LOWER(path) LIKE ? ESCAPE '\\'")
+            args.append("%\(sqlLikeEscape(q.lowercased()))%")
+        }
+        if let from = filters.dateFrom {
+            clauses.append("COALESCE(created_at, imported_at) >= ?")
+            args.append(Int64(from.timeIntervalSince1970))
+        }
+        if let to = filters.dateTo {
+            clauses.append("COALESCE(created_at, imported_at) <= ?")
+            args.append(Int64(to.timeIntervalSince1970))
+        }
+        if filters.onlineOnly { clauses.append("online = 1") }
+        // Clip-attribute filters can't match whole sources; when one is active
+        // hide sources so the view focuses on the matching clips.
+        let clipOnly = !filters.moods.isEmpty || !filters.shotTypes.isEmpty
+            || !filters.cameraMoves.isEmpty || !filters.settings.isEmpty
+            || !filters.colorLabels.isEmpty || filters.minRating > 0 || filters.unusedOnly
+            || !filters.projectIDs.isEmpty || !filters.collectionIDs.isEmpty
+        if clipOnly { clauses.append("1 = 0") }
+        let sql = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+        return (sql, args)
+    }
+
     /// Maps the user-selected sort option into a SQL ORDER BY clause for the
     /// sources table. "Newest / Oldest" uses the source's own recording date
     /// (`created_at`, pulled from file metadata) instead of the import date —
@@ -214,6 +301,29 @@ struct LibraryView: View {
         case .ratingDesc:
             return "COALESCE(created_at, imported_at) DESC" // sources have no rating
         }
+    }
+}
+
+/// Shown when a query/filter matches nothing in a non-empty library. (#38)
+private struct NoResultsView: View {
+    let onClear: () -> Void
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 44, weight: .ultraLight))
+                .foregroundStyle(Theme.textTertiary)
+            Text("No matches")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text("Nothing matches your search and filters.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
+            Button("Clear search & filters", action: onClear)
+                .buttonStyle(PillButtonStyle(kind: .ghost))
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
     }
 }
 

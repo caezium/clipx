@@ -9,6 +9,13 @@ struct ToastStack: View {
                 HStack(spacing: 8) {
                     Image(systemName: icon(for: toast.level))
                     Text(toast.message)
+                    if let label = toast.actionLabel {
+                        Button(label) { AppState.shared.runToastAction(toast.id) }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                            .padding(.leading, 2)
+                    }
                 }
                 .font(.system(size: 12, weight: .medium))
                 .padding(.horizontal, 14)

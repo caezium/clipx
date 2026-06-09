@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct ClipGridView: View {
     let sources: [Source]
@@ -17,7 +18,8 @@ struct ClipGridView: View {
                             ClipCardView(
                                 clip: clip,
                                 isSelected: clip.id.map { appState.selectedClipIDs.contains($0) } ?? false,
-                                onSelect: { toggleSelection(clipID: clip.id ?? 0) },
+                                onSelect: { selectSingle(clip.id ?? 0) },
+                                onToggle: { toggleAdditive(clip.id ?? 0) },
                                 onOpenInPlayer: { openInPlayer(clip: clip) }
                             )
                             // Drag-out exports at source quality (1080p, no
@@ -66,17 +68,20 @@ struct ClipGridView: View {
         }
     }
 
-    private func toggleSelection(clipID: Int64) {
+    /// Plain click → single selection. (#29)
+    private func selectSingle(_ clipID: Int64) {
+        appState.selectedClipIDs = [clipID]
+        if !appState.inspectorVisible { appState.inspectorVisible = true }
+    }
+
+    /// ⌘-click → additive toggle, building a multi-selection without clearing
+    /// the rest (so batch export becomes reachable). (#29)
+    private func toggleAdditive(_ clipID: Int64) {
         if appState.selectedClipIDs.contains(clipID) {
             appState.selectedClipIDs.remove(clipID)
         } else {
-            appState.selectedClipIDs = [clipID]
-            // Surface the Inspector automatically the first time the user
-            // selects a clip — otherwise the tag / project / notes panes
-            // aren't discoverable.
-            if !appState.inspectorVisible {
-                appState.inspectorVisible = true
-            }
+            appState.selectedClipIDs.insert(clipID)
+            if !appState.inspectorVisible { appState.inspectorVisible = true }
         }
     }
 
@@ -118,16 +123,58 @@ struct ClipGridView: View {
             }
         }
         Divider()
-        Button("Delete clip", role: .destructive) {
-            guard let id = clip.id, let markerStore = AppEnvironment.shared.markerStore else { return }
-            do {
-                try markerStore.deleteClip(id)
-                appState.selectedClipIDs.remove(id)
-                AppState.shared.showToast("Clip deleted", level: .info)
-            } catch {
-                AppState.shared.showToast("Delete failed: \(error.localizedDescription)", level: .error)
+        Button("Delete clip", role: .destructive) { deleteWithUndo(clip: clip) }
+    }
+
+    /// Delete a clip but capture its full state first and offer an Undo on the
+    /// toast — marks, tags, rating, notes, and project assignments are all
+    /// restored if the user undoes. (#30)
+    private func deleteWithUndo(clip: Clip) {
+        guard let id = clip.id,
+              let markerStore = AppEnvironment.shared.markerStore,
+              let database = AppEnvironment.shared.database else { return }
+        let tagStore = AppEnvironment.shared.tagStore
+        let snapshot = clip
+        let tags = (try? tagStore?.tags(forClip: id).map(\.name)) ?? []
+        let projectIDs: [Int64] = (try? database.read { db in
+            try Int64.fetchAll(db, sql: "SELECT project_id FROM clip_projects WHERE clip_id = ?", arguments: [id])
+        }) ?? []
+        do {
+            try markerStore.deleteClip(id)
+            appState.selectedClipIDs.remove(id)
+            AppState.shared.showToast(
+                "Deleted “\(snapshot.name ?? "clip")”",
+                level: .info,
+                actionLabel: "Undo"
+            ) {
+                restore(snapshot: snapshot, tags: tags, projectIDs: projectIDs)
+            }
+        } catch {
+            AppState.shared.showToast("Delete failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    private func restore(snapshot: Clip, tags: [String], projectIDs: [Int64]) {
+        guard let markerStore = AppEnvironment.shared.markerStore,
+              let database = AppEnvironment.shared.database,
+              let clip = try? markerStore.saveRange(
+                sourceID: snapshot.sourceID, inMs: snapshot.inMs, outMs: snapshot.outMs,
+                name: snapshot.name
+              ),
+              let newID = clip.id else { return }
+        try? database.write { db in
+            try db.execute(
+                sql: "UPDATE clips SET rating=?, color_label=?, mood=?, shot_type=?, camera_move=?, setting=?, notes=? WHERE id=?",
+                arguments: [snapshot.rating, snapshot.colorLabel, snapshot.mood, snapshot.shotType,
+                            snapshot.cameraMove, snapshot.setting, snapshot.notes, newID]
+            )
+            for pid in projectIDs {
+                try db.execute(sql: "INSERT OR IGNORE INTO clip_projects(clip_id, project_id) VALUES(?,?)",
+                               arguments: [newID, pid])
             }
         }
+        for t in tags { try? AppEnvironment.shared.tagStore?.addTag(t, toClip: newID) }
+        AppState.shared.libraryRevision &+= 1
     }
 
     private func quickExport(clip: Clip, preset: ExportPreset) {
@@ -143,6 +190,7 @@ struct ClipCardView: View {
     let clip: Clip
     let isSelected: Bool
     let onSelect: () -> Void
+    var onToggle: () -> Void = {}
     let onOpenInPlayer: () -> Void
 
     @State private var thumbImage: NSImage?
@@ -230,8 +278,12 @@ struct ClipCardView: View {
         .scaleEffect(hovering ? 1.012 : 1)
         .animation(.easeOut(duration: 0.12), value: hovering)
         .contentShape(Rectangle())
-        // Single-tap selects. The hover play button handles "open in player".
-        .onTapGesture(perform: onSelect)
+        // Consistent gesture model: double-click opens, ⌘-click extends the
+        // selection, plain click selects. (#36, #29)
+        .onTapGesture(count: 2) { onOpenInPlayer() }
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.command) { onToggle() } else { onSelect() }
+        }
         .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(clip.name ?? defaultName))

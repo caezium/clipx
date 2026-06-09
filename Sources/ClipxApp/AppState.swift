@@ -57,17 +57,37 @@ final class AppState: ObservableObject {
     /// user explicitly dismisses) so we don't leak suspended sleeps.
     private var dismissTasks: [UUID: Task<Void, Never>] = [:]
 
-    func showToast(_ message: String, level: ToastLevel = .info) {
-        let toast = Toast(message: message, level: level)
+    /// Action handlers for toasts that offer an affordance (e.g. "Undo"). Kept
+    /// out of `Toast` so it stays `Equatable`. (#30)
+    private var toastActions: [UUID: () -> Void] = [:]
+
+    /// Run (and consume) a toast's action, then dismiss it.
+    func runToastAction(_ id: UUID) {
+        let action = toastActions[id]
+        dismissToast(id)
+        action?()
+    }
+
+    func showToast(
+        _ message: String,
+        level: ToastLevel = .info,
+        actionLabel: String? = nil,
+        action: (() -> Void)? = nil
+    ) {
+        let toast = Toast(message: message, level: level, actionLabel: actionLabel)
+        if let action { toastActions[toast.id] = action }
         toasts.append(toast)
         // Cap visible toast count so a save-storm doesn't bury the UI.
         if toasts.count > 5 {
             let removed = toasts.removeFirst()
             dismissTasks.removeValue(forKey: removed.id)?.cancel()
+            toastActions.removeValue(forKey: removed.id)
         }
         let id = toast.id
+        // Toasts that offer an action (e.g. Undo) linger longer. (#30)
+        let ttl: UInt64 = actionLabel != nil ? 6_000_000_000 : 3_000_000_000
         dismissTasks[id] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            try? await Task.sleep(nanoseconds: ttl)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 self?.toasts.removeAll { $0.id == id }
@@ -79,6 +99,7 @@ final class AppState: ObservableObject {
     func dismissToast(_ id: UUID) {
         toasts.removeAll { $0.id == id }
         dismissTasks.removeValue(forKey: id)?.cancel()
+        toastActions.removeValue(forKey: id)
     }
 }
 
@@ -152,6 +173,7 @@ struct Toast: Identifiable, Equatable {
     let id = UUID()
     let message: String
     let level: ToastLevel
+    var actionLabel: String? = nil
 }
 
 enum ToastLevel { case info, success, warning, error }
