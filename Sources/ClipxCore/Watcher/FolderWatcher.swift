@@ -21,10 +21,16 @@ final class FolderWatcher {
     /// restart (add/remove folder) doesn't drop events that arrived in the
     /// gap — without this, every restart used `kFSEventStreamEventIdSinceNow`.
     private var lastSeenEventId: FSEventStreamEventId = FSEventStreamEventId(kFSEventStreamEventIdSinceNow)
+    /// Persisted so the stream resumes from where it left off across launches,
+    /// replaying changes (incl. deletions) that happened while closed. (#26)
+    private static let eventIdKey = "folderWatcherLastEventIdV1"
 
     init(indexer: Indexer, bookmarkStore: BookmarkStore) {
         self.indexer = indexer
         self.bookmarkStore = bookmarkStore
+        if let saved = UserDefaults.standard.string(forKey: Self.eventIdKey), let v = UInt64(saved) {
+            self.lastSeenEventId = FSEventStreamEventId(v)
+        }
     }
 
     /// Restores access to all stored library folders and starts a watcher
@@ -182,12 +188,22 @@ final class FolderWatcher {
             let path = paths[i]
             let isFile = (flags & UInt32(kFSEventStreamEventFlagItemIsFile)) != 0
             let removed = (flags & UInt32(kFSEventStreamEventFlagItemRemoved)) != 0
-            guard isFile, !removed else { continue }
+            guard isFile else { continue }
             let url = URL(fileURLWithPath: path)
             let ext = url.pathExtension.lowercased()
             guard Indexer.videoExtensions.contains(ext) else { continue }
             let idx = watcher.indexer
-            Task.detached { await idx.indexFile(url) }
+            if removed {
+                // Deleted file — drop it from "online". (#21)
+                let removedPath = path
+                Task.detached { await idx.markPathOffline(removedPath) }
+            } else {
+                // Let an in-progress copy settle before indexing. (#20)
+                Task.detached {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    await idx.indexFile(url)
+                }
+            }
         }
         if maxId > 0 {
             // Update on the main actor — callback already runs on the main
@@ -195,6 +211,8 @@ final class FolderWatcher {
             Task { @MainActor in
                 if maxId > watcher.lastSeenEventId {
                     watcher.lastSeenEventId = maxId
+                    // Persist so a relaunch resumes from here. (#26)
+                    UserDefaults.standard.set(String(maxId), forKey: FolderWatcher.eventIdKey)
                 }
             }
         }

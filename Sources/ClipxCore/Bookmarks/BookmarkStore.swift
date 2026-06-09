@@ -73,6 +73,14 @@ final class BookmarkStore {
 
                 if url.startAccessingSecurityScopedResource() {
                     lock.lock()
+                    // Stop any scope already started for this path before
+                    // replacing it. resume isn't guaranteed to be paired with a
+                    // stop (dark wake, power nap, a missed will-sleep), so
+                    // without this each cycle leaks a kernel sandbox reference
+                    // until access eventually fails. (#18)
+                    if let prev = startedAccess[url.path] {
+                        prev.stopAccessingSecurityScopedResource()
+                    }
                     startedAccess[url.path] = url
                     lock.unlock()
                     urls.append(url)

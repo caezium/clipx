@@ -9,6 +9,34 @@ final class SearchEngine {
         self.database = database
     }
 
+    /// Rebuilds the external-content FTS index from the clips table — recovers
+    /// from any desync (interrupted migration, out-of-band mutation). (#25)
+    func rebuildIndex() throws {
+        try database.write { db in
+            try db.execute(sql: "INSERT INTO clips_fts(clips_fts) VALUES('rebuild')")
+        }
+    }
+
+    /// Runs the FTS5 integrity check; false if the index is desynced. (#25)
+    func isIndexHealthy() -> Bool {
+        do {
+            try database.write { db in
+                try db.execute(sql: "INSERT INTO clips_fts(clips_fts) VALUES('integrity-check')")
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// Launch-time maintenance: verify the index and rebuild it if it fails. (#25)
+    func verifyAndRepairIndex() {
+        if !isIndexHealthy() {
+            ClipxLog.library.error("FTS index failed integrity check — rebuilding")
+            try? rebuildIndex()
+        }
+    }
+
     /// Returns clip IDs matching the free-text query (FTS5) intersected with
     /// the given filters. Sorted by the provided sort option.
     ///

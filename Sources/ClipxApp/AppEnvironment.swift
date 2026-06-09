@@ -71,6 +71,13 @@ final class AppEnvironment: @unchecked Sendable {
             // record is stuck "in progress" forever. (#17)
             ExportPipeline.reconcileInterruptedExports(database: db)
 
+            // Offline any sources whose files vanished while closed, and repair
+            // the search index if it desynced. (#21, #25)
+            Task.detached {
+                _ = await idx.reconcileMissingSources()
+                search.verifyAndRepairIndex()
+            }
+
             // One-time: derive recording dates from filenames for footage that
             // indexed without a usable created_at (DJI / action-cam files whose
             // filesystem date is the copy date, not the shoot date). Fixes the

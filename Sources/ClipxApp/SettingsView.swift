@@ -166,6 +166,16 @@ struct LibrarySettingsView: View {
                     AppEnvironment.shared.watcher?.rescanAll()
                 } label: { Label("Rescan All", systemImage: "arrow.clockwise") }
                     .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                Button {
+                    // Repair a desynced full-text search index. (#25)
+                    do {
+                        try AppEnvironment.shared.searchEngine?.rebuildIndex()
+                        AppState.shared.showToast("Search index rebuilt", level: .success)
+                    } catch {
+                        AppState.shared.showToast("Rebuild failed: \(error.localizedDescription)", level: .error)
+                    }
+                } label: { Label("Rebuild Search Index", systemImage: "magnifyingglass") }
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                 Spacer()
                 Text("\(folders.count) folder\(folders.count == 1 ? "" : "s")")
                     .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)

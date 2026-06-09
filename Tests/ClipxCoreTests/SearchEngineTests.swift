@@ -95,4 +95,17 @@ final class SearchEngineTests: XCTestCase {
         XCTAssertEqual(newest.map(\.name), ["fromB", "fromA"],
                        "filmed-desc follows source date (B=2000 before A=1000), not marker time")
     }
+
+    // #25 — a rebuild restores correct search results after the FTS index desyncs.
+    func test_ftsRebuild_restoresSearchAfterDesync() throws {
+        XCTAssertEqual(try sut.search(query: "walk", filters: ClipFilters(), sort: .nameAsc).count, 1)
+        // Wipe the external-content index out-of-band to simulate a desync.
+        try db.write { c in try c.execute(sql: "INSERT INTO clips_fts(clips_fts) VALUES('delete-all')") }
+        XCTAssertEqual(try sut.search(query: "walk", filters: ClipFilters(), sort: .nameAsc).count, 0,
+                       "desynced index returns nothing")
+        try sut.rebuildIndex()
+        XCTAssertEqual(try sut.search(query: "walk", filters: ClipFilters(), sort: .nameAsc).count, 1,
+                       "rebuild restores results")
+        XCTAssertTrue(sut.isIndexHealthy())
+    }
 }

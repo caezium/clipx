@@ -50,6 +50,13 @@ actor Indexer {
             let mtime = Int64(((attrs[.modificationDate] as? Date) ?? Date()).timeIntervalSince1970)
             let size = (attrs[.size] as? Int64) ?? 0
 
+            // Don't index a file that's still being copied — its hash/duration
+            // would be captured from truncated bytes and never corrected. (#20)
+            let now = Int64(Date().timeIntervalSince1970)
+            guard FileStability.isStable(mtimeEpoch: mtime, now: now) else {
+                return false
+            }
+
             // Skip unchanged. Two paths:
             //  * post-v2 rows with a stored size: require BOTH mtime AND size
             //    to match (catches `cp -p` where mtime is preserved but
@@ -223,6 +230,35 @@ actor Indexer {
         }
         if updated > 0 { scheduleRevisionBump() }
         return updated
+    }
+
+    /// Marks every online source whose backing file no longer exists as
+    /// offline, so renamed / moved / deleted files stop showing as available.
+    /// Returns the number of rows changed. (#21)
+    @discardableResult
+    func reconcileMissingSources() -> Int {
+        let sources: [Source] = (try? database.read { db in
+            try Source.fetchAll(db, sql: "SELECT * FROM sources WHERE online = 1")
+        }) ?? []
+        var changed = 0
+        for src in sources where !FileManager.default.fileExists(atPath: src.path) {
+            guard let id = src.id else { continue }
+            try? database.write { db in
+                try db.execute(sql: "UPDATE sources SET online = 0 WHERE id = ?", arguments: [id])
+            }
+            changed += 1
+        }
+        if changed > 0 { scheduleRevisionBump() }
+        return changed
+    }
+
+    /// Marks a single source offline by path — used when the watcher sees a
+    /// remove event for a known file. (#21)
+    func markPathOffline(_ path: String) {
+        try? database.write { db in
+            try db.execute(sql: "UPDATE sources SET online = 0 WHERE path = ?", arguments: [path])
+        }
+        scheduleRevisionBump()
     }
 
     /// Marks all sources under the given folder as offline (drive unplugged).

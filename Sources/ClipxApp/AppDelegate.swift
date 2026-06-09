@@ -22,6 +22,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ws = NSWorkspace.shared.notificationCenter
         ws.addObserver(self, selector: #selector(handleWillSleep), name: NSWorkspace.willSleepNotification, object: nil)
         ws.addObserver(self, selector: #selector(handleDidWake), name: NSWorkspace.didWakeNotification, object: nil)
+        // Track external-drive mount/unmount so a source's online state reflects
+        // whether its backing volume is actually present. (#19)
+        ws.addObserver(self, selector: #selector(handleVolumeUnmount(_:)), name: NSWorkspace.didUnmountNotification, object: nil)
+        ws.addObserver(self, selector: #selector(handleVolumeMount(_:)), name: NSWorkspace.didMountNotification, object: nil)
 
         #if DIRECT_BUILD
         GlobalHotkey.shared.register()
@@ -53,6 +57,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             AppEnvironment.shared.watcher?.resumeAll()
             NotificationCenter.default.post(name: .systemDidWake, object: nil)
+        }
+    }
+
+    @objc private func handleVolumeUnmount(_ note: Notification) {
+        guard let vol = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+        reconcileVolume(vol, online: false)
+    }
+
+    @objc private func handleVolumeMount(_ note: Notification) {
+        guard let vol = note.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+        reconcileVolume(vol, online: true)
+    }
+
+    /// Flip the online flag for every library folder living on `vol`. (#19)
+    private func reconcileVolume(_ vol: URL, online: Bool) {
+        let volPath = vol.path
+        Task { @MainActor in
+            guard let folders = AppEnvironment.shared.bookmarkStore?.allFolders(),
+                  let idx = AppEnvironment.shared.indexer else { return }
+            for f in folders where f.path == volPath || f.path.hasPrefix(volPath + "/") {
+                if online { await idx.markFolderOnline(f.path) }
+                else { await idx.markFolderOffline(f.path) }
+            }
         }
     }
 
