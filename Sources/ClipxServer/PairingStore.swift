@@ -40,7 +40,7 @@ final class PairingStore {
     /// Validates a candidate PIN and, if correct, mints a session token the
     /// client can present in subsequent requests.
     func authenticate(pin candidate: String) -> String? {
-        guard candidate == pin else { return nil }
+        guard constantTimeEquals(candidate, pin) else { return nil }
         // Token is high-entropy random; we don't need crypto-strong, just
         // unguessable.
         let token = (0..<32).map { _ in
@@ -57,9 +57,13 @@ final class PairingStore {
     }
 
     /// True if the candidate token was minted by a successful authenticate().
+    /// Compares every stored token in constant time (no early exit) so token
+    /// validation isn't a timing oracle either. (#2)
     func isValid(token: String) -> Bool {
         guard !token.isEmpty else { return false }
         let tokens = UserDefaults.standard.stringArray(forKey: Self.tokensKey) ?? []
-        return tokens.contains(token)
+        var ok = false
+        for t in tokens where constantTimeEquals(token, t) { ok = true }
+        return ok
     }
 }

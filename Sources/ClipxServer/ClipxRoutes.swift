@@ -8,6 +8,16 @@ import GRDB
 @MainActor
 enum ClipxRoutes {
     static func handle(_ request: HTTPRequest) async -> HTTPResponse {
+        // DNS-rebinding defense: only serve requests whose Host header targets
+        // this machine (localhost / LAN IP / *.local). An attacker page on
+        // evil.com pointed at our IP still carries Host: evil.com. (#4)
+        guard isAllowedHost(request.headers["host"]) else {
+            return HTTPResponse(
+                status: 403,
+                headers: ["Content-Type": "text/plain; charset=utf-8"],
+                body: Data("Forbidden host".utf8)
+            )
+        }
         // CORS preflight always succeeds.
         if request.method == "OPTIONS" {
             return HTTPResponse(status: 204)
@@ -170,7 +180,7 @@ enum ClipxRoutes {
         guard let database = AppEnvironment.shared.database else {
             return .serverError("Library not ready")
         }
-        let limit = Int(request.query["limit"] ?? "300") ?? 300
+        let limit = clampLimit(request.query["limit"])
         do {
             let rows: [Source] = try database.read { db in
                 try Source.fetchAll(
@@ -181,7 +191,7 @@ enum ClipxRoutes {
             }
             return .json(rows.map(Self.makeSourceDTO))
         } catch {
-            return .serverError("DB error: \(error.localizedDescription)")
+            return internalError(error, "db")
         }
     }
 
@@ -189,12 +199,12 @@ enum ClipxRoutes {
         guard let database = AppEnvironment.shared.database else {
             return .serverError("Library not ready")
         }
-        let limit = Int(request.query["limit"] ?? "300") ?? 300
+        let limit = clampLimit(request.query["limit"])
         do {
             let dtos = try fetchClipDTOs(database: database, limit: limit, where: nil, args: [])
             return .json(dtos)
         } catch {
-            return .serverError("DB error: \(error.localizedDescription)")
+            return internalError(error, "db")
         }
     }
 
@@ -236,7 +246,7 @@ enum ClipxRoutes {
                 clips: clipDTOs
             ))
         } catch {
-            return .serverError("Search error: \(error.localizedDescription)")
+            return internalError(error, "search")
         }
     }
 
@@ -252,7 +262,7 @@ enum ClipxRoutes {
             let dtos = clips.map { Self.makeClipDTO(clip: $0, source: source) }
             return .json(dtos)
         } catch {
-            return .serverError("DB error: \(error.localizedDescription)")
+            return internalError(error, "db")
         }
     }
 
@@ -366,7 +376,7 @@ enum ClipxRoutes {
                 body: data
             )
         } catch {
-            return .serverError("File error: \(error.localizedDescription)")
+            return internalError(error, "file")
         }
     }
 
@@ -385,7 +395,7 @@ enum ClipxRoutes {
             try markerStore.updateRating(clipID, rating: body.rating)
             return .json(["ok": true])
         } catch {
-            return .serverError("Update failed: \(error.localizedDescription)")
+            return internalError(error, "update")
         }
     }
 
@@ -488,6 +498,14 @@ enum ClipxRoutes {
                 return makeClipDTO(clip: clip, source: source)
             }
         }
+    }
+
+    /// Logs the real error server-side and returns a generic message to the
+    /// client. Raw `error.localizedDescription` can expose SQL, file paths, and
+    /// schema details to anyone on the network. (#9)
+    private static func internalError(_ error: Error, _ context: String) -> HTTPResponse {
+        ClipxLog.app.error("web route \(context, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+        return .serverError("Internal server error")
     }
 
     private static func mimeType(for ext: String) -> String {

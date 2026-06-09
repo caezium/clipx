@@ -68,12 +68,10 @@ struct HTTPResponse {
         var mergedHeaders = headers
         mergedHeaders["Content-Length"] = "\(body.count)"
         mergedHeaders["Connection"] = "close"
-        // Permit access from the web frontend regardless of origin — the
-        // server is bound to the local network only, so this isn't a
-        // cross-origin risk in practice.
-        mergedHeaders["Access-Control-Allow-Origin"] = "*"
-        mergedHeaders["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        mergedHeaders["Access-Control-Allow-Headers"] = "Content-Type"
+        // The web frontend is served from this same origin, so it needs no CORS
+        // grant. A wildcard `Access-Control-Allow-Origin: *` would instead let
+        // *any* website read these responses (with DNS-rebinding, even reach
+        // the LAN), so we deliberately emit no permissive CORS header. (#4)
         for (name, value) in mergedHeaders {
             head += "\(name): \(value)\r\n"
         }
