@@ -226,6 +226,14 @@ struct LibrarySettingsView: View {
                 .buttonStyle(.plain)
                 .clipxIconButton(size: 26)
                 .help("Reveal in Finder")
+            Button {
+                // Stop watching + drop the folder record (sources stay indexed). (#35)
+                AppEnvironment.shared.watcher?.remove(folderPath: folder.path)
+                reload()
+            } label: { Image(systemName: "trash") }
+                .buttonStyle(.plain)
+                .clipxIconButton(size: 26)
+                .help("Remove from library")
         }
     }
 
@@ -237,8 +245,26 @@ struct LibrarySettingsView: View {
 // MARK: - Export
 
 struct ExportSettingsView: View {
+    @AppStorage("exportDefaultFolder") private var exportFolder: String = ""
+
     var body: some View {
         SettingsScaffold {
+            SettingsCard("Default destination") {
+                HStack(spacing: 8) {
+                    SettingsField(placeholder: "Ask every time…", text: $exportFolder)
+                    Button("Choose…") {
+                        Task { @MainActor in
+                            if let path = await FolderPicker.pickFolder() { exportFolder = path }
+                        }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                    if !exportFolder.isEmpty {
+                        Button("Clear") { exportFolder = "" }
+                            .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                    }
+                }
+                SettingsDesc("When set, exports write here without prompting. Leave empty to be asked each time. (#33)")
+            }
             SettingsCard("Export") {
                 SettingsDesc("Export presets are chosen per clip from the Export menu, the clip's right-click menu, or ⌘K → Export. Reels, TikTok, YouTube Shorts, Instagram Feed, YouTube 1080p/4K are built in.")
             }

@@ -10,6 +10,19 @@ struct SidebarView: View {
     @State private var showNewProject = false
     @State private var showNewCollection = false
     @State private var filtersExpanded = false
+    @State private var renameTarget: RenameTarget?
+    @State private var deleteTarget: RenameTarget?
+
+    /// Identifies a project/collection for rename or delete. (#35)
+    struct RenameTarget: Identifiable {
+        let id: Int64
+        let kind: Kind
+        let currentName: String
+        enum Kind { case project, collection
+            var table: String { self == .project ? "projects" : "collections" }
+            var noun: String { self == .project ? "project" : "collection" }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -38,6 +51,48 @@ struct SidebarView: View {
         .sheet(isPresented: $showNewCollection) {
             NewCollectionSheet { _ in load() }
         }
+        .sheet(item: $renameTarget) { target in
+            RenameSheet(target: target) { newName in applyRename(target, to: newName) }
+        }
+        .confirmationDialog(
+            "Delete “\(deleteTarget?.currentName ?? "")”?",
+            isPresented: Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } }),
+            titleVisibility: .visible,
+            presenting: deleteTarget
+        ) { target in
+            Button("Delete \(target.kind.noun)", role: .destructive) { applyDelete(target) }
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+        } message: { target in
+            Text("Clips are not deleted — only the \(target.kind.noun) grouping.")
+        }
+    }
+
+    private func applyRename(_ target: RenameTarget, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let db = AppEnvironment.shared.database else { return }
+        try? db.write { dbc in
+            try dbc.execute(sql: "UPDATE \(target.kind.table) SET name = ? WHERE id = ?", arguments: [trimmed, target.id])
+        }
+        load()
+        appState.libraryRevision &+= 1
+    }
+
+    private func applyDelete(_ target: RenameTarget) {
+        guard let db = AppEnvironment.shared.database else { return }
+        try? db.write { dbc in
+            try dbc.execute(sql: "DELETE FROM \(target.kind.table) WHERE id = ?", arguments: [target.id])
+        }
+        if target.kind == .project, appState.selectedProjectID == target.id {
+            appState.selectedProjectID = nil
+            appState.activeFilters.projectIDs.remove(target.id)
+        }
+        if target.kind == .collection, appState.selectedCollectionID == target.id {
+            appState.selectedCollectionID = nil
+            appState.activeFilters.collectionIDs.remove(target.id)
+        }
+        deleteTarget = nil
+        load()
+        appState.libraryRevision &+= 1
     }
 
     // MARK: - Brand + create menu
@@ -115,7 +170,20 @@ struct SidebarView: View {
             ForEach(collections) { collection in
                 SidebarRow(label: collection.name, icon: "tray.full",
                            isActive: appState.selectedCollectionID == collection.id) {
-                    appState.selectedCollectionID = collection.id
+                    // Actually filter the library by the collection. (#31)
+                    guard let id = collection.id else { return }
+                    appState.selectedCollectionID = id
+                    appState.selectedProjectID = nil
+                    appState.activeFilters.projectIDs = []
+                    appState.activeFilters.collectionIDs = [id]
+                }
+                .contextMenu {
+                    Button("Rename…") {
+                        if let id = collection.id { renameTarget = RenameTarget(id: id, kind: .collection, currentName: collection.name) }
+                    }
+                    Button("Delete", role: .destructive) {
+                        if let id = collection.id { deleteTarget = RenameTarget(id: id, kind: .collection, currentName: collection.name) }
+                    }
                 }
             }
         }
@@ -134,6 +202,14 @@ struct SidebarView: View {
                     } else if let id = project.id {
                         appState.selectedProjectID = id
                         appState.activeFilters.projectIDs = [id]
+                    }
+                }
+                .contextMenu {
+                    Button("Rename…") {
+                        if let id = project.id { renameTarget = RenameTarget(id: id, kind: .project, currentName: project.name) }
+                    }
+                    Button("Delete", role: .destructive) {
+                        if let id = project.id { deleteTarget = RenameTarget(id: id, kind: .project, currentName: project.name) }
                     }
                 }
             }
@@ -231,4 +307,33 @@ private struct SidebarRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
     }
+}
+
+/// Simple rename sheet for a project/collection. (#35)
+private struct RenameSheet: View {
+    let target: SidebarView.RenameTarget
+    let onSave: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Rename \(target.kind.noun)").font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(save)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("Save") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+        .onAppear { name = target.currentName }
+    }
+
+    private func save() { onSave(name); dismiss() }
 }

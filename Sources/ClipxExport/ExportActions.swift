@@ -18,7 +18,15 @@ enum ExportActions {
                 )
             }
             #endif
-            guard let outputDir = await pickOutputDirectory() else { return }
+            // Use the remembered default folder if set, else prompt. (#33)
+            let outputDir: URL
+            if let remembered = rememberedExportDir() {
+                outputDir = remembered
+            } else if let picked = await pickOutputDirectory() {
+                outputDir = picked
+            } else {
+                return
+            }
             guard let pipeline = AppEnvironment.shared.exportPipeline else {
                 AppState.shared.showToast("Export pipeline isn't ready yet", level: .warning)
                 return
@@ -72,6 +80,15 @@ enum ExportActions {
                 AppState.shared.showToast("Obsidian write failed: \(error.localizedDescription)", level: .error)
             }
         }
+    }
+
+    /// The persisted default export destination, if set and still a folder.
+    /// When present, exports skip the picker. (#33)
+    static func rememberedExportDir() -> URL? {
+        guard let path = UserDefaults.standard.string(forKey: "exportDefaultFolder"), !path.isEmpty else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
+        return URL(fileURLWithPath: path)
     }
 
     @MainActor

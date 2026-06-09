@@ -15,6 +15,8 @@ struct InspectorView: View {
     @State private var newTag: String = ""
     @State private var allProjects: [Project] = []
     @State private var assignedProjectIDs: Set<Int64> = []
+    @State private var allCollections: [Collection] = []
+    @State private var assignedCollectionIDs: Set<Int64> = []
 
     // Draft values for debounced commit.
     @State private var draftName: String = ""
@@ -41,6 +43,8 @@ struct InspectorView: View {
                     tagsSection
                     Divider()
                     projectsSection
+                    Divider()
+                    collectionsSection
                     Divider()
                     notesSection
                     Divider()
@@ -341,6 +345,11 @@ struct InspectorView: View {
                 try Int64.fetchAll(db, sql: "SELECT project_id FROM clip_projects WHERE clip_id = ?", arguments: [clipID])
             }) ?? []
             assignedProjectIDs = Set(assigned)
+            allCollections = (try? database.read { try Collection.order(Collection.Columns.name).fetchAll($0) }) ?? []
+            let assignedC: [Int64] = (try? database.read { db in
+                try Int64.fetchAll(db, sql: "SELECT collection_id FROM clip_collections WHERE clip_id = ?", arguments: [clipID])
+            }) ?? []
+            assignedCollectionIDs = Set(assignedC)
         } catch {
             ClipxLog.library.error("InspectorView.load failed: \(String(describing: error), privacy: .public)")
         }
@@ -451,6 +460,51 @@ struct InspectorView: View {
             if assigned { assignedProjectIDs.insert(projectID) }
             else { assignedProjectIDs.remove(projectID) }
             AppState.shared.showToast("Couldn't update project assignment", level: .error)
+        }
+    }
+
+    private var collectionsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Collections").font(.caption).foregroundStyle(Theme.textSecondary)
+            if allCollections.isEmpty {
+                Text("No collections yet — create one in the sidebar.")
+                    .font(.caption).foregroundStyle(Theme.textTertiary)
+            } else {
+                FlowLayout(spacing: 4) {
+                    ForEach(allCollections) { collection in
+                        let cid = collection.id ?? -1
+                        let isAssigned = assignedCollectionIDs.contains(cid)
+                        Button {
+                            toggleCollection(cid, assigned: isAssigned)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: isAssigned ? "checkmark.circle.fill" : "plus.circle").font(.caption2)
+                                Text(collection.name)
+                            }
+                            .clipxChip(selected: isAssigned)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggleCollection(_ collectionID: Int64, assigned: Bool) {
+        guard collectionID >= 0, let database = AppEnvironment.shared.database else { return }
+        if assigned { assignedCollectionIDs.remove(collectionID) } else { assignedCollectionIDs.insert(collectionID) }
+        do {
+            try database.write { db in
+                if assigned {
+                    try db.execute(sql: "DELETE FROM clip_collections WHERE clip_id = ? AND collection_id = ?", arguments: [clipID, collectionID])
+                } else {
+                    try db.execute(sql: "INSERT OR IGNORE INTO clip_collections (clip_id, collection_id) VALUES (?, ?)", arguments: [clipID, collectionID])
+                }
+            }
+            AppState.shared.libraryRevision &+= 1
+        } catch {
+            if assigned { assignedCollectionIDs.insert(collectionID) } else { assignedCollectionIDs.remove(collectionID) }
+            AppState.shared.showToast("Couldn't update collection", level: .error)
         }
     }
 

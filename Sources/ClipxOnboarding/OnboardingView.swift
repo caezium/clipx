@@ -80,18 +80,27 @@ struct OnboardingView: View {
 
     private var ready: some View {
         VStack(spacing: 16) {
-            Image(systemName: "checkmark.circle.fill").font(.system(size: 64)).foregroundStyle(.green)
+            Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(.green)
             Text("You're ready to go").font(.title.bold())
-            VStack(alignment: .leading, spacing: 8) {
-                Label("I / O — Mark in / out", systemImage: "command")
-                Label("S — Save range as clip", systemImage: "command")
+            // The marking keys only fire when a video is open in the player —
+            // say so, or a new user lands on an empty library and nothing
+            // works. (#34)
+            Text("Open a video from the calendar to start clipping. The marking keys work **inside the player**, once a video is open.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("In the player").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Label("I / O — Mark in / out point", systemImage: "i.square")
+                Label("S — Save the marked range as a clip", systemImage: "checkmark.square")
+                Label("Space — Play / pause", systemImage: "playpause")
+                Text("Anywhere").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.top, 6)
                 Label("⌘K — Command palette", systemImage: "command")
-                Label("Space — Play / pause", systemImage: "command")
+                Label("⌘F — Search", systemImage: "magnifyingglass")
             }
             .padding()
             .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             Spacer()
-            Button("Start clipping") { onComplete() }
+            Button("Open a video & start clipping") { onComplete() }
                 .controlSize(.large).buttonStyle(.borderedProminent)
         }
     }

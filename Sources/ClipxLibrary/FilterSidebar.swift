@@ -63,17 +63,21 @@ struct FilterSidebar: View {
                 }
                 .padding(.horizontal, 6)
             }
-            HStack(spacing: 6) {
-                Image(systemName: appState.activeFilters.unusedOnly ? "checkmark.square.fill" : "square")
-                    .frame(width: 16)
-                    .foregroundStyle(appState.activeFilters.unusedOnly ? .primary : .secondary)
-                Text("Unused only").font(.caption)
-                Spacer()
+            Button { appState.activeFilters.unusedOnly.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: appState.activeFilters.unusedOnly ? "checkmark.square.fill" : "square")
+                        .frame(width: 16)
+                        .foregroundStyle(appState.activeFilters.unusedOnly ? .primary : .secondary)
+                    Text("Unused only").font(.caption)
+                    Spacer()
+                }
+                .padding(.horizontal, 6).padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 6).padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .onTapGesture { appState.activeFilters.unusedOnly.toggle() }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Unused only")
+            .accessibilityValue(appState.activeFilters.unusedOnly ? "on" : "off")
 
             if appState.activeFilters.isActive || appState.selectedProjectID != nil || appState.selectedCollectionID != nil {
                 Button("Clear filters") {
@@ -97,18 +101,24 @@ struct FilterSidebar: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Image(systemName: isOpen.wrappedValue ? "chevron.down" : "chevron.right")
-                    .font(.caption2)
-                    .frame(width: 16)
-                Text(title)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
+            // A real Button so it's VoiceOver-actionable with a focus ring and
+            // an adequate hit target, not a tap-gesture on a plain row. (#40)
+            Button { isOpen.wrappedValue.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isOpen.wrappedValue ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .frame(width: 16)
+                    Text(title)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 4)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 6).padding(.vertical, 4)
-            .contentShape(Rectangle())
-            .onTapGesture { isOpen.wrappedValue.toggle() }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(title) filters")
+            .accessibilityValue(isOpen.wrappedValue ? "expanded" : "collapsed")
             if isOpen.wrappedValue {
                 VStack(alignment: .leading, spacing: 2) {
                     content()
@@ -120,18 +130,24 @@ struct FilterSidebar: View {
 
     @ViewBuilder
     private func chipRow(label: String, isOn: Bool, action: @escaping (Bool) -> Void) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                .font(.caption2)
-                .frame(width: 12)
-                .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
-            Text(label).font(.caption)
-            Spacer(minLength: 0)
+        Button { action(!isOn) } label: {
+            HStack(spacing: 6) {
+                // Pair the color with a check glyph so state isn't conveyed by
+                // hue alone. (#40)
+                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
+                    .font(.caption2)
+                    .frame(width: 12)
+                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                Text(label).font(.caption)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isOn ? .primary : .secondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
-        .foregroundStyle(isOn ? .primary : .secondary)
-        .padding(.horizontal, 6).padding(.vertical, 2)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture { action(!isOn) }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(isOn ? "selected" : "not selected")
     }
 }

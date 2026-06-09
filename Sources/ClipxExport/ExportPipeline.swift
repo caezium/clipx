@@ -151,9 +151,12 @@ final class ExportPipeline: ObservableObject {
             }
 
             AppState.shared.showToast(
-                "Exported \(filename) (\(job.preset.displayName))",
-                level: .success
-            )
+                "Exported \(filename)",
+                level: .success,
+                actionLabel: "Show in Finder"     // reveal the output (#32)
+            ) {
+                NSWorkspace.shared.activateFileViewerSelecting([url])
+            }
         } catch {
             cancelBox.set(nil)
             // Clean up the partial output so the user doesn't end up with

@@ -1,10 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The top-level layout: sidebar | library | inspector.
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didCompleteOnboarding")
     @State private var inspectorVisible = true
+    @State private var dropTargeted = false
 
     var body: some View {
         NavigationSplitView {
@@ -33,6 +35,22 @@ struct RootView: View {
         .background(Theme.bg)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
+        // Drop a folder (or video files) onto the window to add it. (#39)
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in handleDrop(providers) }
+        .overlay {
+            if dropTargeted {
+                ZStack {
+                    Theme.accent.opacity(0.08)
+                    Text("Drop footage to add it to your library")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 18).padding(.vertical, 12)
+                        .background(Theme.bgRaised, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.accent, lineWidth: 1.5))
+                }
+                .allowsHitTesting(false)
+            }
+        }
         .overlay(alignment: .top) {
             ToastStack(toasts: appState.toasts)
                 .padding(.top, 8)
@@ -70,6 +88,31 @@ struct RootView: View {
         } message: { error in
             Text(error)
         }
+    }
+}
+
+extension RootView {
+    fileprivate func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers where provider.canLoadObject(ofClass: URL.self) {
+            handled = true
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url else { return }
+                Task { @MainActor in addDroppedURL(url) }
+            }
+        }
+        return handled
+    }
+
+    @MainActor
+    fileprivate func addDroppedURL(_ url: URL) {
+        var isDir: ObjCBool = false
+        FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+        // A dropped folder is watched directly; a dropped video adds its
+        // containing folder. (#39)
+        let folder = isDir.boolValue ? url : url.deletingLastPathComponent()
+        AppEnvironment.shared.watcher?.add(folder: folder)
+        AppState.shared.showToast("Added \(folder.lastPathComponent) to library", level: .success)
     }
 }
 

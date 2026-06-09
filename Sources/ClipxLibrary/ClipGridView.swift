@@ -252,6 +252,7 @@ struct ClipCardView: View {
                 HStack(spacing: 4) {
                     if let label = clip.colorLabel, label > 0 {
                         Circle().fill(colorForLabel(label)).frame(width: 8, height: 8)
+                            .accessibilityLabel("Color label: \(colorName(label))")   // not hue-only (#40)
                     }
                     Text(clip.name ?? defaultName)
                         .font(.system(size: 12, weight: .medium))
@@ -340,6 +341,19 @@ struct ClipCardView: View {
         case 6: return .purple
         case 7: return .gray
         default: return .clear
+        }
+    }
+
+    private func colorName(_ label: Int) -> String {
+        switch label {
+        case 1: return "red"
+        case 2: return "orange"
+        case 3: return "yellow"
+        case 4: return "green"
+        case 5: return "blue"
+        case 6: return "purple"
+        case 7: return "gray"
+        default: return "labeled"
         }
     }
 }
