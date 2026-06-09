@@ -65,26 +65,38 @@ final class HTTPServer {
 
     private nonisolated func accept(connection: NWConnection) {
         connection.start(queue: serverQueue)
-        receive(on: connection, buffer: Data())
+        // Slowloris / idle guard: drop a connection that hasn't delivered a
+        // complete request within the window. Cancelled once parsing. (#7)
+        let timeout = DispatchWorkItem { connection.cancel() }
+        serverQueue.asyncAfter(deadline: .now() + 15, execute: timeout)
+        receive(on: connection, buffer: Data(), timeout: timeout)
     }
 
-    private nonisolated func receive(on connection: NWConnection, buffer: Data) {
+    private nonisolated func receive(on connection: NWConnection, buffer: Data, timeout: DispatchWorkItem) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             var newBuffer = buffer
             if let data, !data.isEmpty { newBuffer.append(data) }
+            // Bound memory: drop a request that blows past the size cap. (#7)
+            if HTTPRequest.exceedsLimit(newBuffer) {
+                timeout.cancel()
+                connection.cancel()
+                return
+            }
             if let request = HTTPRequest.tryParse(buffer: newBuffer) {
+                timeout.cancel()
                 Task { @MainActor in
                     await self.respond(to: request, on: connection)
                 }
                 return
             }
             if isComplete || error != nil {
+                timeout.cancel()
                 connection.cancel()
                 return
             }
             // Need more bytes; keep buffering.
-            self.receive(on: connection, buffer: newBuffer)
+            self.receive(on: connection, buffer: newBuffer, timeout: timeout)
         }
     }
 

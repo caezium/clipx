@@ -17,7 +17,12 @@ final class PairingStore {
     static let shared = PairingStore()
 
     private static let pinKey = "webServerPairingPIN"
-    private static let tokensKey = "webServerSessionTokens"
+    /// v2 store: hashed tokens with issue times (was a plaintext array). (#3)
+    private static let tokenStoreKey = "webServerTokenStoreV2"
+
+    /// Per-process failed-attempt throttle. In-memory is fine: a restart that
+    /// clears it also drops any in-flight brute force. (#1)
+    private var throttle = PairingThrottle(maxAttempts: 5, lockoutSeconds: 60)
 
     /// Returns the current PIN, generating one on first call.
     var pin: String {
@@ -30,40 +35,53 @@ final class PairingStore {
         return new
     }
 
-    /// Regenerates the PIN and invalidates all session tokens.
+    /// Regenerates the PIN and revokes all session tokens.
     func rotate() {
         let new = String(format: "%06d", Int.random(in: 0..<1_000_000))
         UserDefaults.standard.set(new, forKey: Self.pinKey)
-        UserDefaults.standard.set([String](), forKey: Self.tokensKey)
+        var store = loadTokens()
+        store.revokeAll()
+        saveTokens(store)
     }
 
-    /// Validates a candidate PIN and, if correct, mints a session token the
-    /// client can present in subsequent requests.
+    /// True when repeated failed pairings have tripped the lockout. The pairing
+    /// route surfaces this as 429 so even a correct PIN is refused. (#1)
+    func isLockedOut() -> Bool {
+        throttle.isLockedOut(now: Date().timeIntervalSince1970)
+    }
+
+    /// Validates a candidate PIN and, if correct, mints a session token. Failed
+    /// attempts are throttled; the PIN is compared in constant time. (#1, #2)
     func authenticate(pin candidate: String) -> String? {
-        guard constantTimeEquals(candidate, pin) else { return nil }
-        // Token is high-entropy random; we don't need crypto-strong, just
-        // unguessable.
-        let token = (0..<32).map { _ in
-            "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()!
+        let now = Date().timeIntervalSince1970
+        if throttle.isLockedOut(now: now) { return nil }
+        guard constantTimeEquals(candidate, pin) else {
+            throttle.recordFailure(now: now)
+            return nil
         }
-        let tokenString = String(token)
-        var tokens = UserDefaults.standard.stringArray(forKey: Self.tokensKey) ?? []
-        tokens.append(tokenString)
-        // Cap so the array can't grow forever if a malicious caller keeps
-        // re-pairing.
-        if tokens.count > 32 { tokens.removeFirst(tokens.count - 32) }
-        UserDefaults.standard.set(tokens, forKey: Self.tokensKey)
-        return tokenString
+        throttle.recordSuccess()
+        let token = generateSecureToken()         // CSPRNG (#3)
+        var store = loadTokens()
+        store.issue(token, now: now)              // stored hashed + with TTL (#3)
+        saveTokens(store)
+        return token
     }
 
-    /// True if the candidate token was minted by a successful authenticate().
-    /// Compares every stored token in constant time (no early exit) so token
-    /// validation isn't a timing oracle either. (#2)
+    /// True if the candidate token was minted recently enough and not revoked.
+    /// Comparison runs in constant time over stored hashes. (#2, #3)
     func isValid(token: String) -> Bool {
         guard !token.isEmpty else { return false }
-        let tokens = UserDefaults.standard.stringArray(forKey: Self.tokensKey) ?? []
-        var ok = false
-        for t in tokens where constantTimeEquals(token, t) { ok = true }
-        return ok
+        return loadTokens().isValid(token, now: Date().timeIntervalSince1970)
+    }
+
+    private func loadTokens() -> SessionTokenStore {
+        guard let data = UserDefaults.standard.data(forKey: Self.tokenStoreKey) else {
+            return SessionTokenStore()
+        }
+        return SessionTokenStore.decode(data)
+    }
+
+    private func saveTokens(_ store: SessionTokenStore) {
+        UserDefaults.standard.set(store.encoded(), forKey: Self.tokenStoreKey)
     }
 }

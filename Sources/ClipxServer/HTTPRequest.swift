@@ -10,6 +10,16 @@ struct HTTPRequest {
     let headers: [String: String]
     let body: Data
 
+    /// Upper bound on a single request (headers + body). Our writes are tiny
+    /// JSON; anything larger is abuse. Caps unbounded buffering. (#7)
+    static let maxRequestBytes = 1_048_576   // 1 MiB
+
+    /// True once an in-progress buffer has blown past the size cap — the server
+    /// drops the connection instead of buffering forever (memory DoS). (#7)
+    static func exceedsLimit(_ buffer: Data) -> Bool {
+        buffer.count > maxRequestBytes
+    }
+
     /// Returns nil if the buffer doesn't yet contain a complete request.
     /// Caller should keep accumulating bytes and re-call.
     static func tryParse(buffer: Data) -> HTTPRequest? {

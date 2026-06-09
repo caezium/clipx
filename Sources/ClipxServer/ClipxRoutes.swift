@@ -135,6 +135,14 @@ enum ClipxRoutes {
         guard let body = request.decodeJSON(PairBody.self) else {
             return .badRequest("Expected {\"pin\": \"...\"}")
         }
+        // Throttle brute force: once locked, refuse even a correct PIN. (#1)
+        if PairingStore.shared.isLockedOut() {
+            return HTTPResponse(
+                status: 429,
+                headers: ["Content-Type": "application/json"],
+                body: Data(#"{"error":"too many attempts — locked, try again shortly"}"#.utf8)
+            )
+        }
         guard let token = PairingStore.shared.authenticate(pin: body.pin) else {
             return HTTPResponse(
                 status: 401,

@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import Security
 
 /// Constant-time string comparison — its running time depends only on the
 /// longer input's length, never on the position of the first mismatch, so it
@@ -33,6 +35,93 @@ func isAllowedHost(_ host: String?) -> Bool {
     if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" { return true }
     if lower.hasSuffix(".local") { return true }   // Bonjour / mDNS name
     return isPrivateIPv4(lower)                     // the Mac's LAN address
+}
+
+/// Sliding-window failed-attempt throttle for PIN pairing. After
+/// `maxAttempts` failures within `lockoutSeconds`, pairing is locked for that
+/// window — turning a 1,000,000-value PIN from "guessable in minutes" into
+/// "infeasible". A success clears the counter. (#1)
+struct PairingThrottle {
+    let maxAttempts: Int
+    let lockoutSeconds: Double
+    private var failures: [Double] = []
+    private var lockedUntil: Double = 0
+
+    init(maxAttempts: Int = 5, lockoutSeconds: Double = 60) {
+        self.maxAttempts = maxAttempts
+        self.lockoutSeconds = lockoutSeconds
+    }
+
+    func isLockedOut(now: Double) -> Bool { now < lockedUntil }
+
+    mutating func recordFailure(now: Double) {
+        failures = failures.filter { now - $0 < lockoutSeconds }   // drop stale
+        failures.append(now)
+        if failures.count >= maxAttempts {
+            lockedUntil = now + lockoutSeconds
+            failures.removeAll()
+        }
+    }
+
+    mutating func recordSuccess() {
+        failures.removeAll()
+        lockedUntil = 0
+    }
+}
+
+/// Stores session tokens as SHA-256 hashes with an issue time, so leaking the
+/// persisted blob doesn't leak usable tokens, and tokens expire. Validation is
+/// constant-time over the stored hashes. (#3)
+struct SessionTokenStore: Codable {
+    var ttl: Double
+    private var entries: [String: Double]   // sha256(token) hex -> issuedAt epoch
+
+    init(ttl: Double = 30 * 24 * 3600) {     // 30 days
+        self.ttl = ttl
+        self.entries = [:]
+    }
+
+    static func hash(_ token: String) -> String {
+        SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    mutating func issue(_ token: String, now: Double) {
+        prune(now: now)
+        entries[Self.hash(token)] = now
+        // Bound growth from repeated pairings.
+        if entries.count > 64 {
+            let oldest = entries.sorted { $0.value < $1.value }.prefix(entries.count - 64).map(\.key)
+            for k in oldest { entries[k] = nil }
+        }
+    }
+
+    func isValid(_ token: String, now: Double) -> Bool {
+        let h = Self.hash(token)
+        var ok = false
+        for (k, issued) in entries where now - issued < ttl {
+            if constantTimeEquals(h, k) { ok = true }
+        }
+        return ok
+    }
+
+    mutating func revokeAll() { entries.removeAll() }
+    mutating func prune(now: Double) { entries = entries.filter { now - $0.value < ttl } }
+
+    func encoded() -> Data { (try? JSONEncoder().encode(self)) ?? Data() }
+    static func decode(_ data: Data) -> SessionTokenStore {
+        (try? JSONDecoder().decode(SessionTokenStore.self, from: data)) ?? SessionTokenStore()
+    }
+}
+
+/// Cryptographically-secure random token, hex-encoded. Uses the system CSPRNG
+/// (`SecRandomCopyBytes`) rather than `randomElement()`. (#3)
+func generateSecureToken(byteCount: Int = 24) -> String {
+    var bytes = [UInt8](repeating: 0, count: byteCount)
+    if SecRandomCopyBytes(kSecRandomDefault, byteCount, &bytes) != errSecSuccess {
+        var rng = SystemRandomNumberGenerator()   // also CSPRNG on Apple platforms
+        bytes = (0..<byteCount).map { _ in UInt8.random(in: 0...255, using: &rng) }
+    }
+    return bytes.map { String(format: "%02x", $0) }.joined()
 }
 
 private func isPrivateIPv4(_ s: String) -> Bool {
