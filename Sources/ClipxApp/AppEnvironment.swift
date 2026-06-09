@@ -67,6 +67,10 @@ final class AppEnvironment: @unchecked Sendable {
 
             watch.resumeAll()
 
+            // Close out any export the previous run was killed mid-flight, so no
+            // record is stuck "in progress" forever. (#17)
+            ExportPipeline.reconcileInterruptedExports(database: db)
+
             // One-time: derive recording dates from filenames for footage that
             // indexed without a usable created_at (DJI / action-cam files whose
             // filesystem date is the copy date, not the shoot date). Fixes the

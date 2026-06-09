@@ -75,4 +75,24 @@ final class SearchEngineTests: XCTestCase {
         XCTAssertEqual(results.count, 3) // all same duration; just check no crash
         XCTAssertEqual(results.map(\.durationMs).reduce(0, +), 3000)
     }
+
+    // #23 — "Newest (filmed)" must order by the source's recording date, not by
+    // when the clip was marked.
+    func test_filmedSort_ordersBySourceRecordingDateNotMarkerTime() throws {
+        let db2 = try Database.inMemory()
+        let s2 = SearchEngine(database: db2)
+        try db2.write { c in
+            try c.execute(sql: "INSERT INTO sources(path,hash,mtime,imported_at,created_at) VALUES('/a','ha',0,0,1000)")
+            let a = c.lastInsertedRowID
+            try c.execute(sql: "INSERT INTO sources(path,hash,mtime,imported_at,created_at) VALUES('/b','hb',0,0,2000)")
+            let b = c.lastInsertedRowID
+            // Clip from the EARLIER-filmed source A is marked LATER (created_at 9000);
+            // clip from the LATER-filmed source B is marked EARLIER (created_at 100).
+            try c.execute(sql: "INSERT INTO clips(source_id,in_ms,out_ms,name,created_at) VALUES(?,0,1000,'fromA',9000)", arguments: [a])
+            try c.execute(sql: "INSERT INTO clips(source_id,in_ms,out_ms,name,created_at) VALUES(?,0,1000,'fromB',100)", arguments: [b])
+        }
+        let newest = try s2.search(query: "", filters: ClipFilters(), sort: .sourceDateDesc)
+        XCTAssertEqual(newest.map(\.name), ["fromB", "fromA"],
+                       "filmed-desc follows source date (B=2000 before A=1000), not marker time")
+    }
 }

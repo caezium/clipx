@@ -22,7 +22,9 @@ final class SearchEngine {
         limit: Int = 500
     ) throws -> [Clip] {
         try database.read { db in
-            var sql = "SELECT c.* FROM clips c"
+            // Join the source so "filmed" sorts can order by the source's
+            // recording date, not the clip's marker-creation time. (#23)
+            var sql = "SELECT c.* FROM clips c JOIN sources s ON s.id = c.source_id"
             var arguments: [DatabaseValueConvertible] = []
             var wheres: [String] = []
 
@@ -113,12 +115,21 @@ final class SearchEngine {
     }
 
     private static func orderBy(_ sort: ClipSortOption) -> String {
+        // "Filmed" date = the source's recording date (falling back to its
+        // import time), with in-point as a stable tiebreak within a source. The
+        // bug (#23) was using c.created_at, which is when the clip was *marked*.
+        let filmedDesc = "COALESCE(s.created_at, s.imported_at) DESC, c.in_ms ASC"
+        let filmedAsc  = "COALESCE(s.created_at, s.imported_at) ASC, c.in_ms ASC"
         switch sort {
-        case .sourceDateDesc, .dateImportedDesc, .importedDesc:
-            return "c.created_at DESC"
-        case .sourceDateAsc, .dateImportedAsc, .importedAsc:
-            return "c.created_at ASC"
-        case .ratingDesc:   return "c.rating DESC, c.created_at DESC"
+        case .sourceDateDesc, .dateImportedDesc:
+            return filmedDesc
+        case .sourceDateAsc, .dateImportedAsc:
+            return filmedAsc
+        // "Recently / first imported" legitimately tracks when the clip was
+        // added (marked) — clips have no separate import timestamp.
+        case .importedDesc: return "c.created_at DESC"
+        case .importedAsc:  return "c.created_at ASC"
+        case .ratingDesc:   return "c.rating DESC, " + filmedDesc
         case .durationDesc: return "(c.out_ms - c.in_ms) DESC"
         case .nameAsc:      return "c.name ASC"
         }

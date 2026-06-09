@@ -87,20 +87,19 @@ final class PlayerController: ObservableObject {
         player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
+    /// Millisecond time of the frame currently displayed — marks should use
+    /// this so they land on the frame the user saw, not a rounded ms. (#14)
+    var currentFrameMs: Int64 { FrameMath.snapToFrame(ms: currentMs, fps: Double(fps)) }
+
     func stepForward() {
-        guard let player, fps > 0 else { return }
-        _ = player
-        let frameDuration = 1.0 / Double(fps)
-        let nextMs = currentMs + Int64(frameDuration * 1000)
-        seek(toMs: nextMs)
+        guard player != nil, fps > 0 else { return }
+        // Step in frame space so repeated steps don't accumulate ms rounding. (#14)
+        seek(toMs: FrameMath.steppedMs(fromMs: currentMs, frames: 1, fps: Double(fps)))
     }
 
     func stepBackward() {
-        guard let player, fps > 0 else { return }
-        _ = player
-        let frameDuration = 1.0 / Double(fps)
-        let prevMs = max(0, currentMs - Int64(frameDuration * 1000))
-        seek(toMs: prevMs)
+        guard player != nil, fps > 0 else { return }
+        seek(toMs: FrameMath.steppedMs(fromMs: currentMs, frames: -1, fps: Double(fps)))
     }
 
     /// Jump forward by N seconds. Caps at duration.

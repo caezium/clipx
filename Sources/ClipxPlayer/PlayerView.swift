@@ -226,12 +226,13 @@ struct PlayerView: View {
     }
 
     private func markIn() {
-        appState.playerInMs = controller.currentMs
+        // Snap to the displayed frame so the mark matches what the user saw. (#14)
+        appState.playerInMs = controller.currentFrameMs
         NotificationCenter.default.post(name: .markerDidChange, object: nil)
     }
 
     private func markOut() {
-        appState.playerOutMs = controller.currentMs
+        appState.playerOutMs = controller.currentFrameMs
         NotificationCenter.default.post(name: .markerDidChange, object: nil)
     }
 

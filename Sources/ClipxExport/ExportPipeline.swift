@@ -68,26 +68,39 @@ final class ExportPipeline: ObservableObject {
                 try Source.fetchOne(db, key: clip.sourceID)
             }) else { return }
 
-            // Sanitize + disambiguate. Without this, two clips named "intro"
-            // shared an output path and the second silently overwrote the first.
+            // Sanitize + disambiguate across clips AND across repeated exports of
+            // the same clip+preset, so a prior render is never silently
+            // overwritten — `name-id.mp4`, then `name-id-2.mp4`, … (#16)
             let base = ExportPipeline.sanitizeFilename(clip.name ?? "clip-\(clip.id ?? 0)")
-            let idSuffix = clip.id.map { "-\($0)" } ?? ""
-            let filename = "\(base)\(idSuffix).\(job.preset.containerExt)"
-            let url = job.outputDir.appendingPathComponent(filename)
+                + (clip.id.map { "-\($0)" } ?? "")
+            let url = ExportPipeline.uniqueOutputURL(
+                dir: job.outputDir, base: base, ext: job.preset.containerExt
+            ) { FileManager.default.fileExists(atPath: $0.path) }
+            let filename = url.lastPathComponent
             outputURL = url
+
+            // Snap the cut to the source's frame grid so the exported length
+            // matches the marks deterministically, not quantized to output fps. (#15)
+            let fps = Double(source.fps ?? 0)
+            let inMs = fps > 0 ? FrameMath.snapToFrame(ms: clip.inMs, fps: fps) : clip.inMs
+            let outMs = fps > 0 ? FrameMath.snapToFrame(ms: clip.outMs, fps: fps) : clip.outMs
 
             var record = ExportRecord(
                 id: nil, clipID: clip.id, preset: job.preset.id,
-                outputPath: url.path, bytes: nil, durationMs: clip.durationMs,
+                outputPath: url.path, bytes: nil, durationMs: outMs - inMs,
                 exportedAt: Int64(Date().timeIntervalSince1970),
                 status: ExportStatus.inProgress.rawValue
             )
-            try database.write { try record.insert($0) }
+            // One history row per output path — no duplicate records. (#16)
+            try database.write { db in
+                try db.execute(sql: "DELETE FROM exports WHERE output_path = ?", arguments: [url.path])
+                try record.insert(db)
+            }
 
             #if DIRECT_BUILD
             let args = FFmpegBackend.buildArguments(
                 sourcePath: source.path,
-                inMs: clip.inMs, outMs: clip.outMs,
+                inMs: inMs, outMs: outMs,
                 preset: job.preset, outputPath: url.path
             )
             let exitCode = try await FFmpegBackend.run(
@@ -106,7 +119,7 @@ final class ExportPipeline: ObservableObject {
             #else
             try await AVFoundationBackend.export(
                 sourcePath: source.path,
-                inMs: clip.inMs, outMs: clip.outMs,
+                inMs: inMs, outMs: outMs,
                 preset: job.preset, outputPath: url.path,
                 onCancellerRegistered: { [weak self] canceller in
                     Task { @MainActor [weak self] in
@@ -162,6 +175,39 @@ final class ExportPipeline: ObservableObject {
         cleaned = cleaned.replacingOccurrences(of: "..", with: "-")
         let trimmed = cleaned.trimmingCharacters(in: .whitespaces)
         return trimmed.isEmpty ? "clip" : trimmed
+    }
+
+    /// A non-colliding output URL: `base.ext`, then `base-2.ext`, `base-3.ext`, …
+    /// so re-exporting never overwrites a prior render. `exists` is injected so
+    /// this stays a pure, testable function. (#16)
+    nonisolated static func uniqueOutputURL(dir: URL, base: String, ext: String, exists: (URL) -> Bool) -> URL {
+        let first = dir.appendingPathComponent("\(base).\(ext)")
+        if !exists(first) { return first }
+        var n = 2
+        while true {
+            let candidate = dir.appendingPathComponent("\(base)-\(n).\(ext)")
+            if !exists(candidate) { return candidate }
+            n += 1
+        }
+    }
+
+    /// Close out exports left "in progress" by a crash: mark them failed and
+    /// delete any partial output. Run once at launch so no record survives as
+    /// in-progress across restarts. (#17)
+    nonisolated static func reconcileInterruptedExports(database: Database) {
+        let inProgress = ExportStatus.inProgress.rawValue
+        let stuck: [ExportRecord] = (try? database.read { db in
+            try ExportRecord.fetchAll(db, sql: "SELECT * FROM exports WHERE status = ?", arguments: [inProgress])
+        }) ?? []
+        for rec in stuck {
+            if let path = rec.outputPath { try? FileManager.default.removeItem(atPath: path) }
+        }
+        try? database.write { db in
+            try db.execute(
+                sql: "UPDATE exports SET status = ? WHERE status = ?",
+                arguments: [ExportStatus.failed.rawValue, inProgress]
+            )
+        }
     }
 }
 

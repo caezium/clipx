@@ -38,4 +38,27 @@ final class FileHasherTests: XCTestCase {
         }
         XCTAssertNotEqual(try FileHasher.quickHash(url: small), try FileHasher.quickHash(url: large))
     }
+
+    // #22 — files with identical size + head + tail but different interior
+    // must not collide (re-encodes that keep container header/footer).
+    func test_hash_distinguishesDifferentInteriorContent() throws {
+        let n = 4 * 1_048_576
+        func makeFile(midByte: UInt8) throws -> URL {
+            var bytes = [UInt8](repeating: 0xAA, count: n)          // identical head
+            for i in (n - 1_048_576)..<n { bytes[i] = 0xBB }        // identical tail
+            bytes[n / 2] = midByte                                   // differing interior
+            let url = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent("clipx-mid-\(UUID()).bin")
+            try Data(bytes).write(to: url)
+            return url
+        }
+        let a = try makeFile(midByte: 0x01)
+        let b = try makeFile(midByte: 0x02)
+        defer {
+            try? FileManager.default.removeItem(at: a)
+            try? FileManager.default.removeItem(at: b)
+        }
+        XCTAssertNotEqual(try FileHasher.quickHash(url: a), try FileHasher.quickHash(url: b),
+                          "interior sampling must break head+tail+size collisions")
+    }
 }
