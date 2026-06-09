@@ -39,7 +39,9 @@ final class FFmpegBackend {
             "-i", sourcePath,
             "-ss", String(format: "%.3f", min(1, startSec)),
             "-t", String(format: "%.3f", durationSec),
-            "-vf", "scale=\(preset.width):\(preset.height):force_original_aspect_ratio=decrease,pad=\(preset.width):\(preset.height):(ow-iw)/2:(oh-ih)/2:black",
+            // Shared fill+crop policy — matches the AVFoundation backend so
+            // Direct and MAS builds frame identically. (#12)
+            "-vf", FramingPolicy.ffmpegFilter(width: preset.width, height: preset.height),
             "-r", String(preset.frameRate),
             "-c:v", ChipDetector.recommendedH264Codec(),
             "-b:v", "\(preset.videoBitrateKbps)k",
@@ -57,6 +59,7 @@ final class FFmpegBackend {
             "-c:a", "aac",
             "-b:a", "\(preset.audioBitrateKbps)k",
             "-movflags", "+faststart",
+            "-progress", "pipe:2",       // machine-readable progress on stderr (#13)
             outputPath
         ])
         return args
@@ -64,7 +67,9 @@ final class FFmpegBackend {
 
     static func run(
         arguments: [String],
-        onCancellerRegistered: ((@Sendable @escaping () -> Void) -> Void)? = nil
+        durationSec: Double = 0,
+        onCancellerRegistered: ((@Sendable @escaping () -> Void) -> Void)? = nil,
+        onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> Int32 {
         // Up-front existence check so the user gets a clear error instead of
         // a cryptic NSPOSIXErrorDomain when ffmpeg isn't bundled.
@@ -86,10 +91,15 @@ final class FFmpegBackend {
 
         let handle = pipe.fileHandleForReading
         handle.readabilityHandler = { fh in
-            // Drain stderr to keep ffmpeg from blocking on a full pipe. We
-            // don't parse progress; callers that want per-job progress
-            // should switch to `-progress pipe:2` parsing.
-            _ = fh.availableData
+            // Drain stderr to keep ffmpeg from blocking on a full pipe, and
+            // parse `-progress pipe:2` output into a 0...1 fraction. (#13)
+            let data = fh.availableData
+            guard !data.isEmpty else { return }
+            if let onProgress, durationSec > 0,
+               let chunk = String(data: data, encoding: .utf8),
+               let us = FFmpegProgress.latestOutTimeUs(chunk) {
+                onProgress(FFmpegProgress.fraction(outTimeUs: us, durationSec: durationSec))
+            }
         }
 
         // Register canceller — pipeline calls this from cancelAll().

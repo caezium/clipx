@@ -61,7 +61,8 @@ final class AVFoundationBackend {
         if let composition = try? await Self.buildVideoComposition(
             asset: asset,
             renderWidth: preset.width,
-            renderHeight: preset.height
+            renderHeight: preset.height,
+            frameRate: preset.frameRate
         ) {
             session.videoComposition = composition
         }
@@ -104,7 +105,8 @@ final class AVFoundationBackend {
     private static func buildVideoComposition(
         asset: AVAsset,
         renderWidth: Int,
-        renderHeight: Int
+        renderHeight: Int,
+        frameRate: Int
     ) async throws -> AVMutableVideoComposition? {
         let tracks = try await asset.loadTracks(withMediaType: .video)
         guard let videoTrack = tracks.first else { return nil }
@@ -117,15 +119,13 @@ final class AVFoundationBackend {
 
         let dstW = CGFloat(renderWidth)
         let dstH = CGFloat(renderHeight)
-        let scale = max(dstW / srcW, dstH / srcH)
-        let scaledW = srcW * scale
-        let scaledH = srcH * scale
-        let translateX = (dstW - scaledW) / 2
-        let translateY = (dstH - scaledH) / 2
+        // Shared fill+crop framing — identical to the ffmpeg backend. (#12)
+        let scale = FramingPolicy.fillScale(srcW: srcW, srcH: srcH, dstW: dstW, dstH: dstH)
+        let off = FramingPolicy.centerOffset(scaledW: srcW * scale, scaledH: srcH * scale, dstW: dstW, dstH: dstH)
 
         var t = transform
         t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-        t = t.concatenating(CGAffineTransform(translationX: translateX, y: translateY))
+        t = t.concatenating(CGAffineTransform(translationX: off.x, y: off.y))
 
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
         layerInstruction.setTransform(t, at: .zero)
@@ -136,8 +136,9 @@ final class AVFoundationBackend {
 
         let composition = AVMutableVideoComposition()
         composition.renderSize = CGSize(width: dstW, height: dstH)
-        let frameRate = (try? await videoTrack.load(.nominalFrameRate)) ?? 30
-        composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(24, Int(frameRate.rounded()))))
+        // Honor the PRESET's frame rate, not the source's — a "60fps" preset
+        // used to stay at the source rate. (#11)
+        composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(1, frameRate)))
         composition.instructions = [instruction]
         return composition
     }

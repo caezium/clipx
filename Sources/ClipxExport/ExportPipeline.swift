@@ -14,8 +14,16 @@ final class ExportPipeline: ObservableObject {
     private let database: Database
     @Published private(set) var jobs: [ExportJob] = []
     @Published private(set) var isRunning = false
+    /// The job currently encoding (removed from `jobs` while it runs). (#13)
+    @Published private(set) var currentJob: ExportJob?
+    /// Per-job 0...1 progress for the queue UI. (#13)
+    @Published private(set) var progress: [UUID: Double] = [:]
     private var currentTask: Task<Void, Never>?
-    private var currentJobCanceller: (@Sendable () -> Void)?
+    /// Synchronous canceller for the running job — readable by cancelAll() with
+    /// no async window. (#10)
+    private let cancelBox = CancellerBox()
+
+    private func setProgress(_ id: UUID, _ value: Double) { progress[id] = value }
 
     init(database: Database) {
         self.database = database
@@ -32,9 +40,10 @@ final class ExportPipeline: ObservableObject {
     }
 
     func cancelAll() {
-        currentJobCanceller?()
+        cancelBox.cancel()        // stops the in-flight backend synchronously (#10)
         currentTask?.cancel()
         jobs.removeAll()
+        progress.removeAll()
         isRunning = false
         NSApp.dockTile.badgeLabel = nil
     }
@@ -44,10 +53,15 @@ final class ExportPipeline: ObservableObject {
         currentTask = Task { [weak self] in
             while let self, !self.jobs.isEmpty, !Task.isCancelled {
                 let job = self.jobs.removeFirst()
+                self.currentJob = job
+                self.progress[job.id] = 0
                 self.updateBadge()
                 await self.runJob(job)
+                self.currentJob = nil
+                self.progress[job.id] = nil
             }
             self?.isRunning = false
+            self?.currentJob = nil
             NSApp.dockTile.badgeLabel = nil
         }
     }
@@ -97,6 +111,7 @@ final class ExportPipeline: ObservableObject {
                 try record.insert(db)
             }
 
+            let jobID = job.id
             #if DIRECT_BUILD
             let args = FFmpegBackend.buildArguments(
                 sourcePath: source.path,
@@ -105,13 +120,11 @@ final class ExportPipeline: ObservableObject {
             )
             let exitCode = try await FFmpegBackend.run(
                 arguments: args,
-                onCancellerRegistered: { [weak self] canceller in
-                    Task { @MainActor [weak self] in
-                        self?.currentJobCanceller = canceller
-                    }
-                }
+                durationSec: Double(outMs - inMs) / 1000.0,
+                onCancellerRegistered: { [cancelBox] c in cancelBox.set(c) },           // synchronous (#10)
+                onProgress: { [weak self] p in Task { @MainActor in self?.setProgress(jobID, p) } } // (#13)
             )
-            currentJobCanceller = nil
+            cancelBox.set(nil)
             if exitCode != 0 {
                 throw NSError(domain: "clipx.export", code: Int(exitCode),
                               userInfo: [NSLocalizedDescriptionKey: "ffmpeg exited with code \(exitCode)"])
@@ -121,14 +134,10 @@ final class ExportPipeline: ObservableObject {
                 sourcePath: source.path,
                 inMs: inMs, outMs: outMs,
                 preset: job.preset, outputPath: url.path,
-                onCancellerRegistered: { [weak self] canceller in
-                    Task { @MainActor [weak self] in
-                        self?.currentJobCanceller = canceller
-                    }
-                },
-                onProgress: { _ in }
+                onCancellerRegistered: { [cancelBox] c in cancelBox.set(c) },           // synchronous (#10)
+                onProgress: { [weak self] p in Task { @MainActor in self?.setProgress(jobID, p) } } // (#13)
             )
-            currentJobCanceller = nil
+            cancelBox.set(nil)
             #endif
 
             let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
@@ -146,7 +155,7 @@ final class ExportPipeline: ObservableObject {
                 level: .success
             )
         } catch {
-            currentJobCanceller = nil
+            cancelBox.set(nil)
             // Clean up the partial output so the user doesn't end up with
             // junk files on disk.
             if let outputURL {

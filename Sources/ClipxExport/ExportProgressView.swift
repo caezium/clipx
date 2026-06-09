@@ -38,22 +38,19 @@ struct ExportProgressView: View {
     private func content(for pipeline: ExportPipeline) -> some View {
         // Wrap in a Group so SwiftUI knows we're observing pipeline.
         Group {
-            if pipeline.jobs.isEmpty && !pipeline.isRunning {
+            if pipeline.currentJob == nil && pipeline.jobs.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "tray").font(.system(size: 36)).foregroundStyle(.secondary)
                     Text("No exports in progress").foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                List(pipeline.jobs) { job in
-                    HStack {
-                        Image(systemName: "arrow.up.right.square")
-                        VStack(alignment: .leading) {
-                            Text(job.preset.displayName)
-                            Text("Clip #\(job.clipID)").font(.caption).foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        ProgressView().controlSize(.small)
+                List {
+                    if let job = pipeline.currentJob {
+                        jobRow(job, progress: pipeline.progress[job.id])
+                    }
+                    ForEach(pipeline.jobs) { job in
+                        jobRow(job, progress: nil)
                     }
                 }
                 .frame(minHeight: 200)
@@ -68,6 +65,26 @@ struct ExportProgressView: View {
         // pipeline is reference type so the @State var doesn't auto-observe.
         .onReceive(pipeline.objectWillChange) { _ in
             // Triggers a body re-eval.
+        }
+    }
+
+    @ViewBuilder
+    private func jobRow(_ job: ExportJob, progress: Double?) -> some View {
+        HStack {
+            Image(systemName: "arrow.up.right.square")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.preset.displayName)
+                Text("Clip #\(job.clipID)").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let p = progress {
+                VStack(alignment: .trailing, spacing: 2) {
+                    ProgressView(value: max(0, min(1, p))).frame(width: 110)
+                    Text("\(Int((max(0, min(1, p))) * 100))%").font(.caption2).foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Queued").font(.caption).foregroundStyle(.tertiary)
+            }
         }
     }
 }
