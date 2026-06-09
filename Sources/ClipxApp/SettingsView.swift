@@ -4,7 +4,7 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettingsView()
-                .tabItem { Label("General", systemImage: "gear") }
+                .tabItem { Label("General", systemImage: "gearshape") }
             LibrarySettingsView()
                 .tabItem { Label("Library", systemImage: "folder") }
             ExportSettingsView()
@@ -18,9 +18,264 @@ struct SettingsView: View {
             UpdatesSettingsView()
                 .tabItem { Label("Updates", systemImage: "arrow.triangle.2.circlepath") }
         }
-        .frame(width: 620, height: 500)
+        .frame(width: 680, height: 600)
+        .background(Theme.bg)
+        .tint(Theme.accent)
+        .preferredColorScheme(.dark)
     }
 }
+
+// MARK: - Reusable settings scaffolding
+
+/// Every page scrolls inside this so content never clips against the fixed
+/// window height — the old pages cut off when they were taller than 500pt.
+private struct SettingsScaffold<Content: View>: View {
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                content
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+}
+
+/// A titled, bordered group of settings rows.
+private struct SettingsCard<Content: View>: View {
+    let title: String?
+    let content: Content
+    init(_ title: String? = nil, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let title {
+                Text(title).clipxSectionLabel().padding(.leading, 2)
+            }
+            VStack(alignment: .leading, spacing: 13) {
+                content
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipxCard()
+        }
+    }
+}
+
+/// Wrapping descriptive caption. `fixedSize(vertical)` guarantees full text —
+/// the previous pages let captions truncate.
+private struct SettingsDesc: View {
+    let text: String
+    var tint: Color = Theme.textSecondary
+    init(_ text: String, tint: Color = Theme.textSecondary) { self.text = text; self.tint = tint }
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(tint)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct LabeledRow: View {
+    let label: String
+    let value: String
+    var body: some View {
+        HStack {
+            Text(label).font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            Spacer()
+            Text(value).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+        }
+    }
+}
+
+private struct KeyCap: View {
+    let text: String
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
+private struct SettingsField: View {
+    let placeholder: String
+    @Binding var text: String
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(Theme.bgRaised, in: RoundedRectangle(cornerRadius: Theme.r1))
+            .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.border, lineWidth: 1))
+    }
+}
+
+// MARK: - General
+
+struct GeneralSettingsView: View {
+    @AppStorage("openClipsInBuiltInPlayer") private var openInBuiltInPlayer = true
+
+    private var appVersion: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "—"
+        return "\(v) (\(b))"
+    }
+
+    var body: some View {
+        SettingsScaffold {
+            SettingsCard("Playback") {
+                Toggle("Open clips in the built-in player", isOn: $openInBuiltInPlayer)
+                    .font(.system(size: 13))
+                SettingsDesc("When off, clips open in your default video app instead of the Clipx player.")
+            }
+            SettingsCard("About") {
+                LabeledRow(label: "Version", value: appVersion)
+                Divider().overlay(Theme.border)
+                LabeledRow(label: "Appearance", value: "Dark (Clipx is dark-first)")
+            }
+        }
+    }
+}
+
+// MARK: - Library
+
+struct LibrarySettingsView: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var folders: [LibraryFolderDescriptor] = []
+
+    var body: some View {
+        SettingsScaffold {
+            HStack(spacing: 10) {
+                Button {
+                    Task { @MainActor in await ImportCoordinator.shared.pickFolder() }
+                } label: { Label("Add Folder…", systemImage: "plus") }
+                    .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
+                Button {
+                    AppEnvironment.shared.watcher?.rescanAll()
+                } label: { Label("Rescan All", systemImage: "arrow.clockwise") }
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                Spacer()
+                Text("\(folders.count) folder\(folders.count == 1 ? "" : "s")")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+            }
+
+            SettingsCard("Library Folders") {
+                if folders.isEmpty {
+                    SettingsDesc("No folders yet. Add a folder of footage and Clipx will index it and watch for new files.")
+                } else {
+                    ForEach(Array(folders.enumerated()), id: \.element.path) { idx, folder in
+                        if idx > 0 { Divider().overlay(Theme.border) }
+                        folderRow(folder)
+                    }
+                }
+            }
+        }
+        .onAppear(perform: reload)
+        .onChange(of: appState.libraryRevision) { _, _ in reload() }
+    }
+
+    private func folderRow(_ folder: LibraryFolderDescriptor) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: folder.online ? "folder.fill" : "folder.badge.questionmark")
+                .font(.system(size: 14))
+                .foregroundStyle(folder.online ? Theme.accent : .orange)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(URL(fileURLWithPath: folder.path).lastPathComponent)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(folder.path)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help(folder.path)
+            }
+            Spacer(minLength: 8)
+            Text("\(folder.fileCount)")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.textSecondary)
+            Text(folder.fileCount == 1 ? "file" : "files")
+                .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: folder.path)])
+            } label: { Image(systemName: "arrow.up.forward.app") }
+                .buttonStyle(.plain)
+                .clipxIconButton(size: 26)
+                .help("Reveal in Finder")
+        }
+    }
+
+    private func reload() {
+        folders = AppEnvironment.shared.bookmarkStore?.allFolders() ?? []
+    }
+}
+
+// MARK: - Export
+
+struct ExportSettingsView: View {
+    var body: some View {
+        SettingsScaffold {
+            SettingsCard("Export") {
+                SettingsDesc("Export presets are chosen per clip from the Export menu, the clip's right-click menu, or ⌘K → Export. Reels, TikTok, YouTube Shorts, Instagram Feed, YouTube 1080p/4K are built in.")
+            }
+            #if MAS_BUILD
+            SettingsCard("Audio") {
+                Label("Audio loudness normalization is unavailable in the Mac App Store build.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                Link("Get the Direct version for −10/−14 LUFS exports",
+                     destination: URL(string: "https://clipx.app/download")!)
+                    .font(.system(size: 12))
+            }
+            #endif
+        }
+    }
+}
+
+// MARK: - Bridges
+
+struct BridgesSettingsView: View {
+    @AppStorage("obsidianVaultPath") private var obsidianVaultPath: String = ""
+
+    var body: some View {
+        SettingsScaffold {
+            SettingsCard("Obsidian") {
+                HStack(spacing: 8) {
+                    SettingsField(placeholder: "Vault folder…", text: $obsidianVaultPath)
+                    Button("Choose…") {
+                        Task { @MainActor in
+                            if let path = await FolderPicker.pickFolder() {
+                                obsidianVaultPath = path
+                            }
+                        }
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                }
+                SettingsDesc("Clipx writes a Markdown sidecar to this folder for each saved clip, with its timecodes, rating, and tags.")
+            }
+            SettingsCard("FCPXML") {
+                SettingsDesc("FCPXML 1.13 is generated on demand via the Export menu — drop it straight into a Final Cut Pro timeline.")
+            }
+        }
+    }
+}
+
+// MARK: - Remote
 
 /// Controls the embedded web server that powers the phone / laptop browser
 /// frontend. Off by default — turning it on exposes a tiny HTTP server on
@@ -32,9 +287,10 @@ struct RemoteSettingsView: View {
     @State private var pin: String = ""
 
     var body: some View {
-        Form {
-            Section("Web UI") {
-                Toggle("Serve Clipx web UI on this network", isOn: $enabled)
+        SettingsScaffold {
+            SettingsCard("Web UI") {
+                Toggle("Serve the Clipx web UI on this network", isOn: $enabled)
+                    .font(.system(size: 13))
                     .onChange(of: enabled) { _, newValue in
                         Task { @MainActor in
                             if newValue {
@@ -46,71 +302,82 @@ struct RemoteSettingsView: View {
                             refreshURL()
                         }
                     }
+                Divider().overlay(Theme.border)
                 HStack {
-                    Text("Port")
+                    Text("Port").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     Spacer()
                     TextField("", value: $port, format: .number.grouping(.never))
-                        .frame(width: 80)
-                        .textFieldStyle(.roundedBorder)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, design: .monospaced))
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 70)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(Theme.bgRaised, in: RoundedRectangle(cornerRadius: Theme.r1))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.border, lineWidth: 1))
                         .disabled(enabled)
+                        .opacity(enabled ? 0.5 : 1)
                 }
-                if enabled, !displayURL.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Image(systemName: "link")
-                            Text(displayURL)
-                                .font(.system(.body, design: .monospaced))
-                                .textSelection(.enabled)
-                            Spacer()
-                            Button("Copy") {
-                                let pb = NSPasteboard.general
-                                pb.clearContents()
-                                pb.setString(displayURL, forType: .string)
-                            }
-                        }
-                        .padding(8)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-
-                        HStack(spacing: 8) {
-                            Image(systemName: "key.fill")
-                            Text("Pairing PIN")
-                            Spacer()
-                            Text(pin)
-                                .font(.system(size: 22, weight: .semibold, design: .monospaced))
-                                .tracking(4)
-                                .padding(.horizontal, 10).padding(.vertical, 4)
-                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-                                .textSelection(.enabled)
-                            Button("New PIN") {
-                                PairingStore.shared.rotate()
-                                pin = PairingStore.shared.pin
-                            }
-                            .help("Invalidates every paired device and generates a fresh code.")
-                        }
-                    }
-                    Text("Open the URL on your phone/laptop, type the PIN once. Tokens persist in browser storage; New PIN forces everyone to re-pair.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if enabled {
-                    Text("Couldn't determine your Mac's local IP — make sure Wi-Fi or Ethernet is connected.")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("When enabled, your phone or laptop can browse sources, watch clips, and mark new clips remotely.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if !enabled {
+                    SettingsDesc("When enabled, your phone or laptop can browse sources, watch clips, and mark new clips remotely.")
                 }
             }
-            Section {
-                Label(
-                    "PIN auth is rate-limited only by network — don't use on coffee-shop Wi-Fi. Treat the URL like a password.",
-                    systemImage: "exclamationmark.triangle"
-                )
-                .foregroundStyle(.orange)
-                .font(.caption)
+
+            if enabled, !displayURL.isEmpty {
+                SettingsCard("Connection") {
+                    HStack(spacing: 8) {
+                        Image(systemName: "link").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+                        Text(displayURL)
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                            .lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Button("Copy") {
+                            let pb = NSPasteboard.general
+                            pb.clearContents()
+                            pb.setString(displayURL, forType: .string)
+                        }
+                        .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                    }
+                    Divider().overlay(Theme.border)
+                    HStack(spacing: 10) {
+                        Image(systemName: "key.fill").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+                        Text("Pairing PIN").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                        Spacer()
+                        Text(pin)
+                            .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                            .tracking(4)
+                            .foregroundStyle(Theme.textPrimary)
+                            .padding(.horizontal, 12).padding(.vertical, 5)
+                            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r1))
+                            .textSelection(.enabled)
+                        Button("New PIN") {
+                            PairingStore.shared.rotate()
+                            pin = PairingStore.shared.pin
+                        }
+                        .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                        .help("Invalidates every paired device and generates a fresh code.")
+                    }
+                    SettingsDesc("Open the URL on your phone or laptop and type the PIN once. Tokens persist in browser storage; New PIN forces everyone to re-pair.")
+                }
+            } else if enabled {
+                SettingsCard("Connection") {
+                    Label("Couldn't determine your Mac's local IP — make sure Wi-Fi or Ethernet is connected.",
+                          systemImage: "wifi.exclamationmark")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            SettingsCard("Security") {
+                Label("PIN auth is rate-limited only by your network — don't use this on coffee-shop Wi-Fi. Treat the URL like a password.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding()
         .onAppear {
             refreshURL()
             if enabled { pin = PairingStore.shared.pin }
@@ -123,180 +390,88 @@ struct RemoteSettingsView: View {
     }
 }
 
-struct GeneralSettingsView: View {
-    @AppStorage("appearance") private var appearance: String = "system"
-    @AppStorage("openClipsInBuiltInPlayer") private var openInBuiltInPlayer = true
-
-    var body: some View {
-        Form {
-            Picker("Appearance", selection: $appearance) {
-                Text("System").tag("system")
-                Text("Light").tag("light")
-                Text("Dark").tag("dark")
-            }
-            .onChange(of: appearance) { _, new in applyAppearance(new) }
-            Toggle("Open clips in built-in player", isOn: $openInBuiltInPlayer)
-        }
-        .padding()
-        .onAppear { applyAppearance(appearance) }
-    }
-
-    /// Pushes the user's appearance choice into NSApp so the whole window
-    /// re-themes immediately. Without this the picker is a cosmetic no-op.
-    private func applyAppearance(_ value: String) {
-        switch value {
-        case "light": NSApp.appearance = NSAppearance(named: .aqua)
-        case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
-        default:      NSApp.appearance = nil // follow system
-        }
-    }
-}
-
-struct LibrarySettingsView: View {
-    @State private var folders: [LibraryFolderDescriptor] = []
-
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text("Library folders").font(.headline)
-            List(folders, id: \.path) { folder in
-                HStack {
-                    Image(systemName: folder.online ? "folder.fill" : "folder.badge.questionmark")
-                    Text(folder.path)
-                    Spacer()
-                    Text("\(folder.fileCount) files").foregroundStyle(.secondary).font(.caption)
-                }
-            }
-            HStack {
-                Button("Add Folder…") {
-                    Task { @MainActor in await ImportCoordinator.shared.pickFolder() }
-                }
-                Spacer()
-                Button("Rescan All") {
-                    AppEnvironment.shared.watcher?.rescanAll()
-                }
-            }
-        }
-        .padding()
-        .onAppear { reload() }
-    }
-
-    private func reload() {
-        folders = AppEnvironment.shared.bookmarkStore?.allFolders() ?? []
-    }
-}
-
-struct ExportSettingsView: View {
-    var body: some View {
-        Form {
-            Text("Export presets are edited via the Export menu.").foregroundStyle(.secondary)
-            #if MAS_BUILD
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Audio loudness normalization is unavailable in the Mac App Store build.",
-                      systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange)
-                Link("Get the Direct version for -10/-14 LUFS exports",
-                     destination: URL(string: "https://clipx.app/download")!)
-            }
-            .padding(.top)
-            #endif
-        }
-        .padding()
-    }
-}
-
-struct BridgesSettingsView: View {
-    @AppStorage("obsidianVaultPath") private var obsidianVaultPath: String = ""
-
-    var body: some View {
-        Form {
-            Section("Obsidian") {
-                HStack {
-                    TextField("Vault folder", text: $obsidianVaultPath)
-                    Button("Choose…") {
-                        Task { @MainActor in
-                            if let path = await FolderPicker.pickFolder() {
-                                obsidianVaultPath = path
-                            }
-                        }
-                    }
-                }
-                Text("Clipx writes a `.md` sidecar to this folder for each saved clip.")
-                    .foregroundStyle(.secondary).font(.caption)
-            }
-            Section("FCPXML") {
-                Text("FCPXML 1.13 is generated on demand via the Export menu.")
-                    .foregroundStyle(.secondary).font(.caption)
-            }
-        }
-        .padding()
-    }
-}
+// MARK: - Hotkeys
 
 struct HotkeySettingsView: View {
     var body: some View {
-        Form {
-            Section("Player shortcuts") {
-                ShortcutLabel(key: "I", label: "Mark In")
-                ShortcutLabel(key: "O", label: "Mark Out")
-                ShortcutLabel(key: "S", label: "Save Range as Clip")
-                ShortcutLabel(key: "Space / K", label: "Play / Pause")
-                ShortcutLabel(key: "← / →", label: "Step one frame")
-                ShortcutLabel(key: "⇧← / ⇧→ or J / L", label: "Jump ±5s")
+        SettingsScaffold {
+            SettingsCard("Player") {
+                shortcutRow("Mark In", "I")
+                shortcutRow("Mark Out", "O")
+                shortcutRow("Save Range as Clip", "S")
+                shortcutRow("Play / Pause", "Space · K")
+                shortcutRow("Step one frame", "← · →")
+                shortcutRow("Jump ±5s", "⇧← ⇧→ · J L")
+            }
+            SettingsCard("App") {
+                shortcutRow("Command Palette", "⌘K")
+                shortcutRow("Search", "⌘F")
+                shortcutRow("Import Folder", "⌘O")
+                shortcutRow("Rescan Library Folders", "⌘R")
+                shortcutRow("Toggle Inspector", "⌥⌘I")
+                shortcutRow("Export as Reels", "⇧⌘R")
             }
             #if DIRECT_BUILD
-            Section("Global") {
-                ShortcutLabel(key: "⇧⌃⌘C", label: "Quick add to library (global hotkey)")
-                Text("Rebinding is on the roadmap — defaults are locked for now.")
-                    .font(.caption).foregroundStyle(.secondary)
+            SettingsCard("Global") {
+                shortcutRow("Quick add to library", "⇧⌃⌘C")
+                SettingsDesc("Rebinding is on the roadmap — defaults are locked for now.")
             }
             #else
-            Section {
+            SettingsCard("Global") {
                 Label("Global hotkeys are unavailable in the Mac App Store build.",
                       systemImage: "lock")
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textSecondary)
             }
             #endif
         }
-        .padding()
     }
-}
 
-/// Read-only shortcut row. Bookmark for when key-capture lands.
-private struct ShortcutLabel: View {
-    let key: String
-    let label: String
-    var body: some View {
+    private func shortcutRow(_ label: String, _ key: String) -> some View {
         HStack {
-            Text(label)
+            Text(label).font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
             Spacer()
-            Text(key)
-                .font(.system(.body, design: .monospaced))
-                .padding(.horizontal, 8).padding(.vertical, 2)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+            KeyCap(text: key)
         }
     }
 }
+
+// MARK: - Updates
 
 struct UpdatesSettingsView: View {
+    @State private var channel = "stable"
+
     var body: some View {
-        Form {
+        SettingsScaffold {
             #if DIRECT_BUILD
-            HStack {
-                Text("Updates are delivered via Sparkle.")
-                Spacer()
-                Button("Check for Updates") {
-                    UpdateManager.shared.checkForUpdates()
+            SettingsCard("Updates") {
+                HStack {
+                    Text("Updates are delivered via Sparkle.")
+                        .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Button("Check for Updates") {
+                        UpdateManager.shared.checkForUpdates()
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                }
+                Divider().overlay(Theme.border)
+                HStack {
+                    Text("Channel").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Picker("", selection: $channel) {
+                        Text("Stable").tag("stable")
+                        Text("Beta").tag("beta")
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
                 }
             }
-            Picker("Channel", selection: .constant("stable")) {
-                Text("Stable").tag("stable")
-                Text("Beta").tag("beta")
-            }
             #else
-            Text("Updates are delivered via the Mac App Store.").foregroundStyle(.secondary)
+            SettingsCard("Updates") {
+                SettingsDesc("Updates are delivered via the Mac App Store.")
+            }
             #endif
         }
-        .padding()
     }
 }
 

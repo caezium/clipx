@@ -21,6 +21,10 @@ struct ClipxCommands: Commands {
                 }
             }
             .keyboardShortcut("o", modifiers: [.command])
+            Button("Rescan Library Folders") {
+                AppEnvironment.shared.watcher?.rescanAll()
+            }
+            .keyboardShortcut("r", modifiers: [.command])
         }
         // Clip menu items remain clickable for discoverability; the keyboard
         // path goes through PlayerView's local onKeyPress so TextFields are

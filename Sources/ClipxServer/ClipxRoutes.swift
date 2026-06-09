@@ -76,6 +76,13 @@ enum ClipxRoutes {
                 .dropLast("/video".count)
             if let id = Int64(middle) { return await videoForSource(id: id, request: request) }
         }
+        if request.method == "GET", request.path.hasPrefix("/api/sources/"),
+           request.path.hasSuffix("/proxy-status") {
+            let middle = request.path
+                .dropFirst("/api/sources/".count)
+                .dropLast("/proxy-status".count)
+            if let id = Int64(middle) { return await proxyStatus(id: id) }
+        }
         if request.method == "POST", request.path.hasPrefix("/api/clips/"),
            request.path.hasSuffix("/rating") {
             let middle = request.path
@@ -261,26 +268,70 @@ enum ClipxRoutes {
         return .bytes(data, contentType: "image/jpeg")
     }
 
-    // Streams source video with Range support so <video> can seek.
+    // Streams the compressed *proxy* with Range support so <video> can seek.
+    // The raw source is tens of Mbps (DJI 1080p50) — unusable over Wi-Fi — so we
+    // never serve it to the browser. If the proxy isn't transcoded yet we kick
+    // it off and return 202; the web client polls /proxy-status and shows a
+    // "Preparing…" overlay until it's ready.
     private static func videoForSource(id sourceID: Int64, request: HTTPRequest) async -> HTTPResponse {
-        guard let database = AppEnvironment.shared.database else {
+        guard let database = AppEnvironment.shared.database,
+              let proxy = AppEnvironment.shared.webProxyEngine else {
             return .serverError("Library not ready")
         }
-        do {
-            guard let source: Source = try database.read({ try Source.fetchOne($0, key: sourceID) }) else {
-                return .notFound("Source #\(sourceID) not found")
-            }
-            let fm = FileManager.default
-            guard fm.fileExists(atPath: source.path) else {
-                return .notFound("Source file offline")
-            }
-            let attrs = try fm.attributesOfItem(atPath: source.path)
-            let size = (attrs[.size] as? Int64) ?? 0
-            let mime = mimeType(for: URL(fileURLWithPath: source.path).pathExtension)
+        guard let source: Source = try? database.read({ try Source.fetchOne($0, key: sourceID) }) else {
+            return .notFound("Source #\(sourceID) not found")
+        }
+        guard FileManager.default.fileExists(atPath: source.path) else {
+            return .notFound("Source file offline")
+        }
+        let state = await proxy.status(forHash: source.hash)
+        guard state.ready else {
+            await proxy.startProxyIfNeeded(sourcePath: source.path, hash: source.hash)
+            let s = await proxy.status(forHash: source.hash)
+            let pct = Int((s.progress * 100).rounded())
+            return HTTPResponse(
+                status: 202,
+                headers: ["Content-Type": "application/json", "Retry-After": "2"],
+                body: Data("{\"status\":\"transcoding\",\"progress\":\(pct)}".utf8)
+            )
+        }
+        return serveFileWithRange(
+            at: proxy.proxyPath(forHash: source.hash),
+            mime: "video/mp4",
+            request: request
+        )
+    }
 
-            // Parse Range: bytes=START-END (END optional).
-            if let rangeHeader = request.headers["range"],
-               rangeHeader.hasPrefix("bytes=") {
+    /// {ready, progress} for a source's web proxy. Triggers transcoding on the
+    /// first poll so the client doesn't have to hit /video to start the job.
+    private static func proxyStatus(id sourceID: Int64) async -> HTTPResponse {
+        guard let database = AppEnvironment.shared.database,
+              let proxy = AppEnvironment.shared.webProxyEngine else {
+            return .serverError("Library not ready")
+        }
+        guard let source: Source = try? database.read({ try Source.fetchOne($0, key: sourceID) }) else {
+            return .notFound("Source #\(sourceID) not found")
+        }
+        struct Status: Encodable { let ready: Bool; let progress: Int; let offline: Bool }
+        if !FileManager.default.fileExists(atPath: source.path) {
+            return .json(Status(ready: false, progress: 0, offline: true))
+        }
+        let state = await proxy.status(forHash: source.hash)
+        if !state.ready {
+            await proxy.startProxyIfNeeded(sourcePath: source.path, hash: source.hash)
+        }
+        return .json(Status(ready: state.ready, progress: Int((state.progress * 100).rounded()), offline: false))
+    }
+
+    /// Serves any on-disk file with HTTP Range support (1 MiB default chunk).
+    private static func serveFileWithRange(at url: URL, mime: String, request: HTTPRequest) -> HTTPResponse {
+        let fm = FileManager.default
+        guard let attrs = try? fm.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int64, size > 0 else {
+            return .notFound("File not available")
+        }
+        do {
+            if let rangeHeader = request.headers["range"], rangeHeader.hasPrefix("bytes=") {
                 let spec = String(rangeHeader.dropFirst("bytes=".count))
                 let parts = spec.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
                 let start = Int64(parts.first ?? "0") ?? 0
@@ -288,14 +339,13 @@ enum ClipxRoutes {
                 if parts.count > 1, !parts[1].isEmpty {
                     end = min(size - 1, Int64(parts[1]) ?? size - 1)
                 } else {
-                    // Default chunk is 1 MiB — keeps memory bounded per request.
-                    end = min(size - 1, start + 1_048_575)
+                    end = min(size - 1, start + 1_048_575) // 1 MiB chunk
                 }
                 guard start <= end, end < size else {
                     return HTTPResponse(status: 416, body: Data())
                 }
                 let length = end - start + 1
-                let handle = try FileHandle(forReadingFrom: URL(fileURLWithPath: source.path))
+                let handle = try FileHandle(forReadingFrom: url)
                 try handle.seek(toOffset: UInt64(start))
                 let data = try handle.read(upToCount: Int(length)) ?? Data()
                 try? handle.close()
@@ -309,20 +359,14 @@ enum ClipxRoutes {
                     body: data
                 )
             }
-            // No Range header → 200 with the whole thing. <video> usually
-            // re-requests with Range immediately, so this rarely hits for
-            // large files; for small ones it's fine.
-            let data = try Data(contentsOf: URL(fileURLWithPath: source.path))
+            let data = try Data(contentsOf: url)
             return HTTPResponse(
                 status: 200,
-                headers: [
-                    "Content-Type": mime,
-                    "Accept-Ranges": "bytes",
-                ],
+                headers: ["Content-Type": mime, "Accept-Ranges": "bytes"],
                 body: data
             )
         } catch {
-            return .serverError("Video error: \(error.localizedDescription)")
+            return .serverError("File error: \(error.localizedDescription)")
         }
     }
 

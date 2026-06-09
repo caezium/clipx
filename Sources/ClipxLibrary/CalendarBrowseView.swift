@@ -7,11 +7,23 @@ import SwiftUI
 struct CalendarBrowseView: View {
     let sources: [Source]
     @EnvironmentObject private var appState: AppState
+    /// Months collapsed to a one-line header. Default: every month except the
+    /// most recent — so a big library opens calm, showing this month only.
     @State private var collapsedMonths: Set<String> = []
+    /// Days expanded to a thumbnail grid. Default: the most recent couple of
+    /// shoot days. Everything older stays a compact, tappable summary row.
+    @State private var expandedDays: Set<String> = []
     /// Memoized group buckets. The computation is O(N log N) over the sources
     /// array, and was previously re-run on every body invalidation. Now it
     /// runs only when `sources` actually changes.
     @State private var groups: [MonthGroup] = []
+    /// Smart defaults are applied once, and again whenever the month/day
+    /// structure changes — but not on incidental reloads (e.g. tagging), so the
+    /// user's manual expand/collapse survives a `libraryRevision` bump.
+    @State private var didApplyDefaults = false
+
+    /// How many of the most recent shoot days open automatically.
+    private static let autoExpandRecentDays = 2
 
     // DateFormatter is expensive to allocate; keep one static.
     private static let monthFormatter: DateFormatter = {
@@ -21,7 +33,7 @@ struct CalendarBrowseView: View {
         let f = DateFormatter(); f.dateFormat = "EEE, MMM d"; return f
     }()
 
-    private let columns = [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 10)]
+    private let columns = [GridItem(.adaptive(minimum: 220, maximum: 280), spacing: 12)]
 
     struct DayGroup: Identifiable {
         let id: String
@@ -84,10 +96,11 @@ struct CalendarBrowseView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
+            LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
                 if sources.isEmpty {
-                    Text("No sources to browse yet.")
-                        .foregroundStyle(.secondary)
+                    Text("No footage to browse yet.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textSecondary)
                         .padding(20)
                 }
                 ForEach(groups) { month in
@@ -102,11 +115,43 @@ struct CalendarBrowseView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
         }
-        .onAppear { groups = Self.computeGroups(sources) }
-        // Re-group only when the source set actually changes — count is a
-        // cheap-but-not-perfect proxy; combined with libraryRevision via
-        // LibraryView's reload this catches add/remove flows.
-        .onChange(of: sources.count) { _, _ in groups = Self.computeGroups(sources) }
+        .onAppear { recompute() }
+        // Key on a content signature that folds in each source's date, not just
+        // the count: the date backfill re-buckets the calendar without adding or
+        // removing any rows, so a count-only trigger would miss it.
+        .onChange(of: sourcesSignature) { _, _ in recompute() }
+    }
+
+    /// Cheap fingerprint of the source set that changes when ids OR recording
+    /// dates change — drives recompute precisely when grouping would differ.
+    private var sourcesSignature: Int {
+        var hasher = Hasher()
+        hasher.combine(sources.count)
+        for s in sources {
+            hasher.combine(s.id)
+            hasher.combine(s.createdAt)
+        }
+        return hasher.finalize()
+    }
+
+    private func recompute() {
+        let new = Self.computeGroups(sources)
+        let structureChanged = new.map(\.id) != groups.map(\.id)
+        groups = new
+        if !didApplyDefaults || structureChanged {
+            applyDefaults()
+            didApplyDefaults = true
+        }
+    }
+
+    /// Most recent month open, older months collapsed; the latest couple of
+    /// shoot days expanded, everything older compacted.
+    private func applyDefaults() {
+        collapsedMonths = Set(groups.dropFirst().map(\.id))
+        // groups are month-descending and each month's days are day-descending,
+        // so the first N flattened days are the most recent shoots overall.
+        let recent = groups.flatMap { $0.days }.prefix(Self.autoExpandRecentDays).map(\.id)
+        expandedDays = Set(recent)
     }
 
     @ViewBuilder
@@ -118,55 +163,92 @@ struct CalendarBrowseView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                    .font(.caption)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
                 Text(month.id == "unknown" ? "No recording date" : Self.monthFormatter.string(from: month.date))
-                    .font(.title3.weight(.semibold))
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
                 Text("\(month.totalCount)")
-                    .font(.caption.monospacedDigit())
-                    .padding(.horizontal, 6).padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .padding(.horizontal, 7).padding(.vertical, 1)
+                    .background(Theme.surface, in: Capsule())
+                    .foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
-            .padding(.horizontal, 8).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(.bar)
+        .background(Theme.bg)
     }
 
     @ViewBuilder
     private func daySection(day: DayGroup, monthKey: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Text(day.id == "unknown" ? "Unknown day" : Self.dayFormatter.string(from: day.date))
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Text("\(day.sources.count)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                Spacer()
-                let totalMs = day.sources.reduce(Int64(0)) { $0 + ($1.durationMs ?? 0) }
-                if totalMs > 0 {
-                    Text(formatTotal(totalMs))
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(.horizontal, 8)
-            LazyVGrid(columns: columns, spacing: 10) {
-                ForEach(day.sources) { source in
-                    SourceCardView(source: source)
-                        .onTapGesture(count: 2) {
+        let isExpanded = expandedDays.contains(day.id)
+        VStack(alignment: .leading, spacing: 8) {
+            dayHeader(day: day, isExpanded: isExpanded)
+            if isExpanded {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(day.sources) { source in
+                        // Single click opens the source in the player — the
+                        // whole point of browsing by date is to jump straight
+                        // in and start clipping.
+                        SourceCardView(source: source) {
                             appState.selectedClipIDs = []
                             appState.playerSourceID = source.id
                             appState.playerInMs = nil
                             appState.playerOutMs = nil
                         }
+                    }
                 }
+                .padding(.horizontal, 2)
             }
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, isExpanded ? 8 : 0)
+    }
+
+    /// Day header doubles as the expand/collapse control. When collapsed it
+    /// reads as a compact, tappable summary chip (date · count · duration).
+    @ViewBuilder
+    private func dayHeader(day: DayGroup, isExpanded: Bool) -> some View {
+        let totalMs = day.sources.reduce(Int64(0)) { $0 + ($1.durationMs ?? 0) }
+        Button {
+            withAnimation(.easeOut(duration: 0.16)) {
+                if isExpanded { expandedDays.remove(day.id) }
+                else { expandedDays.insert(day.id) }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .frame(width: 12)
+                Text(day.id == "unknown" ? "Unknown day" : Self.dayFormatter.string(from: day.date))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isExpanded ? Theme.textPrimary : Theme.textSecondary)
+                Text("\(day.sources.count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer()
+                if totalMs > 0 {
+                    Text(formatTotal(totalMs))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(Theme.textTertiary)
+                }
+            }
+            .padding(.horizontal, 10).padding(.vertical, isExpanded ? 4 : 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.r1)
+                    .fill(isExpanded ? Color.clear : Theme.surface)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.r1)
+                    .strokeBorder(isExpanded ? Color.clear : Theme.border, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func formatTotal(_ ms: Int64) -> String {

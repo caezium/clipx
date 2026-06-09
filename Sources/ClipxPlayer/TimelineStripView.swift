@@ -17,13 +17,21 @@ struct TimelineStripView: View {
 
     var body: some View {
         GeometryReader { geo in
+            let total = controller.durationMs
+            let playX = x(forMs: controller.currentMs, total: total, geo: geo)
             ZStack(alignment: .leading) {
-                Rectangle().fill(Color(nsColor: .windowBackgroundColor))
-                // Base track
-                Rectangle()
-                    .fill(.tertiary)
+                Rectangle().fill(Theme.bgRaised)
+
+                // Base track — thin, centered.
+                Capsule()
+                    .fill(Theme.surfaceHover)
                     .frame(height: 4)
-                    .offset(y: 28)
+                    .accessibilityHidden(true)
+
+                // Played portion — the blue→white scrubber gradient.
+                Capsule()
+                    .fill(Theme.scrubber)
+                    .frame(width: max(0, playX), height: 4)
                     .accessibilityHidden(true)
 
                 // Background scrub layer — drag/tap to seek. Sits behind the
@@ -42,24 +50,22 @@ struct TimelineStripView: View {
                     )
                     .accessibilityLabel("Timeline scrubber")
 
-                // Previously saved clips as faint blue bars, full timeline height
+                // Previously saved clips as slim accent pins.
                 ForEach(savedClips, id: \.id) { clip in
-                    let xStart = x(forMs: clip.inMs, total: controller.durationMs, geo: geo)
-                    let w = width(forMs: clip.outMs - clip.inMs, total: controller.durationMs, geo: geo)
-                    // Min hit width of 6pt so densely packed clips remain
-                    // tappable. Visual width still scales below that.
-                    let hitWidth = max(6, w)
-                    Rectangle()
-                        .fill(Color.accentColor.opacity(0.25))
-                        .frame(width: max(2, w), height: 38)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(Color.accentColor).frame(width: 1)
-                        }
-                        .overlay(alignment: .trailing) {
-                            Rectangle().fill(Color.accentColor).frame(width: 1)
-                        }
-                        .contentShape(Rectangle().inset(by: -((hitWidth - max(2, w)) / 2)))
-                        .offset(x: xStart, y: 11)
+                    let xStart = x(forMs: clip.inMs, total: total, geo: geo)
+                    let w = width(forMs: clip.outMs - clip.inMs, total: total, geo: geo)
+                    // Min hit width of 8pt so densely packed clips remain tappable.
+                    let visW = max(3, w)
+                    let hitWidth = max(8, w)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Theme.accent.opacity(0.30))
+                        .frame(width: visW, height: 22)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .strokeBorder(Theme.accent.opacity(0.8), lineWidth: 1)
+                        )
+                        .contentShape(Rectangle().inset(by: -((hitWidth - visW) / 2)))
+                        .offset(x: xStart)
                         // Win the hit test against the parent scrub gesture.
                         .highPriorityGesture(
                             TapGesture().onEnded { onSelectClip?(clip) }
@@ -68,22 +74,30 @@ struct TimelineStripView: View {
                         .accessibilityLabel(Text(clip.name ?? "Saved clip"))
                 }
 
-                // Active in/out range overlay — bright green, sits above saved
-                // clip bars. Guards against playerOutMs < playerInMs.
+                // Active in/out range overlay — green, above the saved pins.
                 if let inMs = appState.playerInMs {
                     let endMs = max(inMs, appState.playerOutMs ?? controller.currentMs)
-                    Rectangle().fill(.green.opacity(0.45))
-                        .frame(width: width(forMs: endMs - inMs, total: controller.durationMs, geo: geo))
-                        .offset(x: x(forMs: inMs, total: controller.durationMs, geo: geo), y: 22)
-                        .frame(height: 16)
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(Theme.success.opacity(0.40))
+                        .frame(width: width(forMs: endMs - inMs, total: total, geo: geo), height: 26)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .strokeBorder(Theme.success, lineWidth: 1)
+                        )
+                        .offset(x: x(forMs: inMs, total: total, geo: geo))
                         .allowsHitTesting(false)
                 }
 
-                // Playhead
-                Rectangle().fill(.red)
-                    .frame(width: 2, height: 50)
-                    .offset(x: x(forMs: controller.currentMs, total: controller.durationMs, geo: geo), y: 5)
-                    .allowsHitTesting(false)
+                // Playhead — thin white line with a knob at the track.
+                ZStack {
+                    Capsule().fill(.white)
+                        .frame(width: 2, height: 44)
+                    Circle().fill(.white)
+                        .frame(width: 9, height: 9)
+                        .shadow(color: .black.opacity(0.5), radius: 2)
+                }
+                .offset(x: playX - 4.5)
+                .allowsHitTesting(false)
             }
         }
     }

@@ -1,28 +1,34 @@
 import SwiftUI
 
-/// Left navigation pane: library counts, collections, projects, smart filters.
-/// Uses a manual VStack inside a ScrollView so we avoid SwiftUI's sidebar
-/// `Section` headers, which clip in narrow columns on macOS 26.
+/// Left navigation pane: brand, library scopes, and — only when they exist —
+/// collections and projects. Filters are tucked behind a collapsed disclosure
+/// so the default sidebar is calm: footage-finding first, organization second.
 struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
     @State private var collections: [Collection] = []
     @State private var projects: [Project] = []
     @State private var showNewProject = false
     @State private var showNewCollection = false
+    @State private var filtersExpanded = false
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 16) {
+                brandHeader
                 librarySection
-                collectionsSection
-                projectsSection
+                // Empty Collections/Projects sections used to take up space with
+                // nothing but a "New…" row. They now appear only once populated;
+                // creation lives in the header "+" menu.
+                if !collections.isEmpty { collectionsSection }
+                if !projects.isEmpty { projectsSection }
                 filtersSection
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .background(.bar)
+        .background(Theme.bgRaised)
         .onAppear(perform: load)
         .onChange(of: appState.bootstrapped) { _, ready in if ready { load() } }
         .onChange(of: appState.libraryRevision) { _, _ in load() }
@@ -34,6 +40,30 @@ struct SidebarView: View {
         }
     }
 
+    // MARK: - Brand + create menu
+
+    private var brandHeader: some View {
+        HStack(spacing: 6) {
+            Text("clipx")
+                .font(Theme.wordmark(size: 22))
+                .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Menu {
+                Button("New Project…") { showNewProject = true }
+                Button("New Collection…") { showNewCollection = true }
+            } label: {
+                Image(systemName: "plus")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 28, height: 28)
+            .foregroundStyle(Theme.textSecondary)
+            .help("New project or collection")
+        }
+        .padding(.horizontal, 6)
+        .padding(.top, 2)
+    }
+
     // MARK: - Sections
 
     private var librarySection: some View {
@@ -42,31 +72,20 @@ struct SidebarView: View {
             // Note: each row also clears any project/collection scope —
             // without this, picking "Unused" while in a Project view kept
             // the project filter, producing confusing empty results.
-            sidebarRow(
-                label: "All Clips",
-                icon: "rectangle.stack",
-                isActive: isAllClipsActive
-            ) {
+            SidebarRow(label: "All Clips", icon: "rectangle.stack", isActive: isAllClipsActive) {
                 appState.activeFilters = ClipFilters()
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
             }
-            sidebarRow(
-                label: "Recently Imported",
-                icon: "clock.arrow.circlepath",
-                isActive: isRecentlyImportedActive
-            ) {
+            SidebarRow(label: "Recently Imported", icon: "clock.arrow.circlepath", isActive: isRecentlyImportedActive) {
                 var f = ClipFilters()
                 f.dateFrom = Calendar.current.date(byAdding: .day, value: -7, to: Date())
                 appState.activeFilters = f
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
             }
-            sidebarRow(
-                label: "Unused",
-                icon: "sparkles",
-                isActive: appState.activeFilters.unusedOnly && appState.selectedProjectID == nil
-            ) {
+            SidebarRow(label: "Unused", icon: "sparkles",
+                       isActive: appState.activeFilters.unusedOnly && appState.selectedProjectID == nil) {
                 var f = ClipFilters()
                 f.unusedOnly = true
                 appState.activeFilters = f
@@ -94,12 +113,10 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 2) {
             sectionHeader("Collections")
             ForEach(collections) { collection in
-                sidebarRow(label: collection.name, icon: "tray.full") {
+                SidebarRow(label: collection.name, icon: "tray.full",
+                           isActive: appState.selectedCollectionID == collection.id) {
                     appState.selectedCollectionID = collection.id
                 }
-            }
-            sidebarRow(label: "New Collection…", icon: "plus.circle", muted: true) {
-                showNewCollection = true
             }
         }
     }
@@ -109,27 +126,8 @@ struct SidebarView: View {
             sectionHeader("Projects")
             ForEach(projects) { project in
                 let isSelected = appState.selectedProjectID == project.id
-                HStack(spacing: 6) {
-                    Image(systemName: "folder.fill")
-                        .frame(width: 16)
-                        .foregroundStyle(isSelected ? .primary : .secondary)
-                    Text(project.name)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Spacer(minLength: 4)
-                    Text(project.status.capitalized)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-                .padding(.horizontal, 6).padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isSelected ? Color.accentColor.opacity(0.22) : .clear)
-                )
-                .contentShape(Rectangle())
-                .onTapGesture {
+                SidebarRow(label: project.name, icon: "folder.fill",
+                           trailing: project.status.capitalized, isActive: isSelected) {
                     if isSelected, let id = project.id {
                         appState.selectedProjectID = nil
                         appState.activeFilters.projectIDs.remove(id)
@@ -139,60 +137,46 @@ struct SidebarView: View {
                     }
                 }
             }
-            sidebarRow(label: "New Project…", icon: "plus.circle", muted: true) {
-                showNewProject = true
-            }
         }
     }
 
     private var filtersSection: some View {
         VStack(alignment: .leading, spacing: 2) {
-            sectionHeader("Filters")
-            FilterSidebar()
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { filtersExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Color.clear.frame(width: 16, height: 1)
+                    Text("Filters").clipxSectionLabel()
+                    if appState.activeFilters.isActive {
+                        Circle().fill(Theme.accent).frame(width: 5, height: 5)
+                    }
+                    Spacer(minLength: 0)
+                    Image(systemName: filtersExpanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .padding(.horizontal, 6).padding(.vertical, 4)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if filtersExpanded {
+                FilterSidebar()
+                    .padding(.top, 2)
+            }
         }
     }
 
     // MARK: - Helpers
 
     private func sectionHeader(_ title: String) -> some View {
-        // Wrapped in a button-style HStack with an invisible leading icon to
-        // match the rows' leading offset. macOS NavigationSplitView appears to
-        // give items an implicit ~24pt leading inset for icons; bare Text
-        // without that inset ends up clipped in narrow columns.
         HStack(spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
-            Text(title.uppercased())
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            Text(title).clipxSectionLabel()
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6).padding(.top, 6).padding(.bottom, 2)
-    }
-
-    /// `isActive=true` paints the row with the selection tint so the user can
-    /// see at a glance which scope they're in (All / Recent / Unused).
-    private func sidebarRow(label: String, icon: String, muted: Bool = false, isActive: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: icon)
-                    .frame(width: 16)
-                    .foregroundStyle(muted ? .tertiary : (isActive ? .primary : .secondary))
-                Text(label)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(muted ? .secondary : .primary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 6).padding(.vertical, 4)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(isActive ? Color.accentColor.opacity(0.22) : .clear)
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     private func load() {
@@ -203,5 +187,48 @@ struct SidebarView: View {
         } catch {
             ClipxLog.library.error("SidebarView.load failed: \(String(describing: error), privacy: .public)")
         }
+    }
+}
+
+/// A single sidebar navigation row with a hover wash and active-tint. Its own
+/// view so each row can track hover independently.
+private struct SidebarRow: View {
+    let label: String
+    let icon: String
+    var trailing: String? = nil
+    var isActive: Bool = false
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .frame(width: 16)
+                    .foregroundStyle(isActive ? Theme.accent : Theme.textSecondary)
+                Text(label)
+                    .font(.system(size: 13, weight: isActive ? .semibold : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
+                Spacer(minLength: 4)
+                if let trailing {
+                    Text(trailing)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(isActive ? Theme.accentSoft : (hovering ? Theme.surfaceHover : .clear))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }

@@ -23,8 +23,10 @@ final class AppState: ObservableObject {
     @Published var exportProgressOpen: Bool = false
 
     // MARK: View modes
-    @Published var viewMode: LibraryViewMode = .grid
-    @Published var sortOption: ClipSortOption = .dateImportedDesc
+    // Default to the calendar/date-grouped view: launch should land on "find the
+    // shoot from Saturday", not a wall of 100+ mixed sources and clips.
+    @Published var viewMode: LibraryViewMode = .calendar
+    @Published var sortOption: ClipSortOption = .sourceDateDesc
     @Published var inspectorVisible: Bool = false
 
     // MARK: Player

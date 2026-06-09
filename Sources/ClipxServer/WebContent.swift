@@ -71,6 +71,11 @@ enum WebContent {
           <span id="player-title"></span>
         </div>
         <video id="player-video" playsinline controls preload="auto"></video>
+        <div id="player-prep" class="prep hidden">
+          <div class="spinner"></div>
+          <div id="player-prep-text">Preparing…</div>
+          <div id="player-prep-sub" class="prep-sub"></div>
+        </div>
         <div class="player-controls">
           <div class="timeline">
             <div class="range" id="player-range"></div>
@@ -185,6 +190,12 @@ enum WebContent {
     .player-buttons button.primary { background: var(--accent); border-color: var(--accent); color: white; }
     .player-buttons button:active { transform: scale(0.97); }
     .player-marks { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8px; font-variant-numeric: tabular-nums; }
+    /* Proxy "preparing" overlay */
+    .prep { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgba(0,0,0,0.72); z-index: 5; text-align: center; padding: 24px; }
+    .prep .spinner { width: 38px; height: 38px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.18); border-top-color: var(--accent); animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #player-prep-text { font-size: 15px; font-weight: 500; }
+    .prep .prep-sub { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
     """
 
     static let appJS = """
@@ -411,6 +422,9 @@ enum WebContent {
     let currentSource = null;
     async function openSourceDetail(src) {
       currentSource = src;
+      // Warm the proxy in the background so it's likely ready by the time the
+      // user taps "Open player" — fire-and-forget, ignore the result.
+      api(`/api/sources/${src.id}/proxy-status`).catch(() => {});
       switchTab('source-detail-pane');
       $('#source-detail-title').textContent = src.name;
       $('#source-detail-meta').textContent = `${src.width || '?'}×${src.height || '?'} · ${src.fps ? Math.round(src.fps) + 'fps' : ''} · ${formatDuration(src.durationMs)}`;
@@ -471,19 +485,56 @@ enum WebContent {
     let playerSource = null;
     let inMs = null, outMs = null;
 
-    function openPlayer(src) {
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+    function showPrep(title, sub) {
+      $('#player-prep-text').textContent = title;
+      $('#player-prep-sub').textContent = sub || '';
+      $('#player-prep').classList.remove('hidden');
+    }
+    function hidePrep() { $('#player-prep').classList.add('hidden'); }
+
+    // The server streams a compressed proxy, not the raw source. The first time
+    // a source is opened it has to be transcoded, so poll until it's ready.
+    async function waitForProxy(id) {
+      for (let i = 0; i < 900; i++) { // ~30 min ceiling at 2s/poll
+        if ($('#player-modal').classList.contains('hidden')) return false;
+        try {
+          const s = await api(`/api/sources/${id}/proxy-status`);
+          if (s.offline) { showPrep('Source drive is offline', 'Reconnect it on the Mac.'); return false; }
+          if (s.ready) return true;
+          showPrep('Preparing a smooth, compressed version…', (s.progress || 0) + '%');
+        } catch (e) {
+          if (e.message === 'unauthorized') return false;
+          // transient network hiccup — keep polling
+        }
+        await sleep(2000);
+      }
+      showPrep('Still preparing — close and try again shortly.', '');
+      return false;
+    }
+
+    async function openPlayer(src) {
       playerSource = src;
       inMs = null; outMs = null;
       updateMarksDisplay();
       $('#player-title').textContent = src.name;
       const video = $('#player-video');
-      video.src = `/api/sources/${src.id}/video?token=${encodeURIComponent(token)}`;
+      video.removeAttribute('src');
+      video.load();
+      $('#player-modal').classList.remove('hidden');
+      showPrep('Preparing a smooth, compressed version…', '');
+      requestAnimationFrame(updatePlayhead);
+
+      const ready = await waitForProxy(src.id);
+      // Bail if the user closed the player or opened a different source while
+      // we were waiting.
+      if (!ready || !playerSource || playerSource.id !== src.id) return;
+      hidePrep();
       // Token in querystring as fallback — <video> can't set Authorization
       // headers; the server also accepts ?token= when Authorization is absent.
-      $('#player-modal').classList.remove('hidden');
+      video.src = `/api/sources/${src.id}/video?token=${encodeURIComponent(token)}`;
       video.load();
       video.play().catch(() => { /* autoplay may be blocked, that's ok */ });
-      requestAnimationFrame(updatePlayhead);
     }
 
     function closePlayer() {
@@ -491,6 +542,7 @@ enum WebContent {
       video.pause();
       video.removeAttribute('src');
       video.load();
+      hidePrep();
       $('#player-modal').classList.add('hidden');
       playerSource = null;
     }

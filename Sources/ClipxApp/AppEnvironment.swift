@@ -21,6 +21,9 @@ final class AppEnvironment: @unchecked Sendable {
     private(set) var tagStore: TagStore?
     private(set) var bookmarkStore: BookmarkStore?
     private(set) var searchEngine: SearchEngine?
+    /// Transcodes + caches small web proxies so the browser streams a
+    /// compressed version instead of the raw multi-Mbps source file.
+    private(set) var webProxyEngine: WebProxyEngine?
     /// Embedded HTTP server that powers the phone/laptop web UI on the
     /// local network. Optional — disabled by user setting kills the listener.
     private(set) var httpServer: HTTPServer?
@@ -56,12 +59,25 @@ final class AppEnvironment: @unchecked Sendable {
             self.indexer = idx
             self.watcher = watch
             self.exportPipeline = exports
+            self.webProxyEngine = WebProxyEngine()
 
             ClipxLog.app.info("bootstrap: DB + services initialized")
             AppState.shared.bootstrapped = true
             AppState.shared.libraryRevision &+= 1
 
             watch.resumeAll()
+
+            // One-time: derive recording dates from filenames for footage that
+            // indexed without a usable created_at (DJI / action-cam files whose
+            // filesystem date is the copy date, not the shoot date). Fixes the
+            // calendar's "No recording date" bucket for the existing library.
+            if !UserDefaults.standard.bool(forKey: "filenameDateBackfillV1") {
+                Task.detached {
+                    let n = await idx.backfillFilenameDates()
+                    UserDefaults.standard.set(true, forKey: "filenameDateBackfillV1")
+                    if n > 0 { ClipxLog.app.info("filename date backfill updated \(n) sources") }
+                }
+            }
 
             // Background-prime thumbnails for any source missing one. Without
             // this, blank cards stay blank until the user scrolls them into
@@ -88,6 +104,7 @@ final class AppEnvironment: @unchecked Sendable {
             self.indexer = nil
             self.watcher = nil
             self.exportPipeline = nil
+            self.webProxyEngine = nil
             didBootstrap = false
             ClipxLog.app.error("bootstrap FAILED: \(String(describing: error), privacy: .public)")
             AppState.shared.bootstrapError = error.localizedDescription

@@ -4,6 +4,10 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        // Clipx is a dark-first app. Lock AppKit to dark so the Settings window,
+        // About box, and open/save panels all match the dark SwiftUI UI instead
+        // of rendering light against it.
+        NSApp.appearance = NSAppearance(named: .darkAqua)
 
         // Under XCTest, skip every side-effect of launch — bootstrap, sleep/
         // wake observers, hotkey registration, Sparkle. Tests use

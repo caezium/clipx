@@ -53,6 +53,7 @@ struct InspectorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.automatic)
+        .background(Theme.bgRaised)
         .onAppear(perform: load)
         .onChange(of: clipID) { _, _ in load() }
         .onDisappear { notesCommitTask?.cancel() }
@@ -244,19 +245,17 @@ struct InspectorView: View {
                 Button("Add", action: addTag)
                     .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            FlowLayout(spacing: 4) {
+            FlowLayout(spacing: 5) {
                 ForEach(tags, id: \.self) { tag in
                     HStack(spacing: 4) {
-                        Text(tag).font(.caption)
+                        Text(tag)
                         Button { remove(tag: tag) } label: {
                             Image(systemName: "xmark.circle.fill").font(.caption2)
-                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove tag \(tag)")
                     }
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
+                    .clipxChip(selected: true)
                 }
             }
         }
@@ -502,18 +501,11 @@ struct ChipPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            FlowLayout(spacing: 4) {
+            Text(label).font(.caption).foregroundStyle(Theme.textSecondary)
+            FlowLayout(spacing: 5) {
                 ForEach(options, id: \.self) { opt in
-                    Button {
-                        toggle(opt)
-                    } label: {
-                        Text(opt)
-                            .font(.caption)
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(selected.contains(opt) ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15),
-                                        in: Capsule())
-                            .foregroundStyle(selected.contains(opt) ? Color.accentColor : Color.primary)
+                    Button { toggle(opt) } label: {
+                        Text(opt).clipxChip(selected: selected.contains(opt))
                     }
                     .buttonStyle(.plain)
                 }

@@ -14,13 +14,19 @@ struct CommandPaletteView: View {
             Color.black.opacity(0.35).ignoresSafeArea()
                 .onTapGesture { dismiss() }
             VStack(spacing: 0) {
-                TextField("Type a command, clip name, or tag…", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.title3)
-                    .padding(16)
-                    .focused($fieldFocused)
-                    .onSubmit { runSelected() }
-                Divider()
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.textTertiary)
+                    TextField("Type a command, clip name, or tag…", text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 18))
+                        .foregroundStyle(Theme.textPrimary)
+                        .focused($fieldFocused)
+                        .onSubmit { runSelected() }
+                }
+                .padding(16)
+                Divider().overlay(Theme.border)
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
@@ -30,20 +36,31 @@ struct CommandPaletteView: View {
                                     selectedIndex = idx
                                     runSelected()
                                 } label: {
-                                    HStack {
+                                    HStack(spacing: 11) {
                                         Image(systemName: item.icon)
+                                            .font(.system(size: 13))
+                                            .frame(width: 18)
+                                            .foregroundStyle(isSelected ? Theme.accent : Theme.textSecondary)
                                         Text(item.title)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(Theme.textPrimary)
                                         Spacer()
                                         if let hint = item.shortcut {
-                                            Text(hint).font(.caption).foregroundStyle(.secondary)
+                                            Text(hint)
+                                                .font(.system(size: 11, design: .monospaced))
+                                                .foregroundStyle(Theme.textTertiary)
                                         }
                                     }
-                                    .padding(.horizontal, 16).padding(.vertical, 8)
-                                    .background(isSelected ? Color.accentColor.opacity(0.22) : .clear)
+                                    .padding(.horizontal, 14).padding(.vertical, 9)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(isSelected ? Theme.accentSoft : .clear)
+                                    )
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .id(item.id)
+                                .padding(.horizontal, 6)
                             }
                         }
                     }
@@ -55,9 +72,10 @@ struct CommandPaletteView: View {
                 }
             }
             .frame(width: 640, height: 420)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
-            .shadow(radius: 24)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.r3))
+            .background(Theme.bgRaised.opacity(0.6), in: RoundedRectangle(cornerRadius: Theme.r3))
+            .overlay(RoundedRectangle(cornerRadius: Theme.r3).strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .shadow(color: .black.opacity(0.5), radius: 30, y: 12)
         }
         .onAppear {
             fieldFocused = true
@@ -90,37 +108,95 @@ struct CommandPaletteView: View {
     }
 
     private func reload() {
-        var items: [PaletteItem] = []
-        items.append(PaletteItem(
-            id: "add-folder", title: "Add Folder…", icon: "folder.badge.plus", shortcut: "⌘O"
-        ) { Task { @MainActor in await ImportCoordinator.shared.pickFolder() } })
-        items.append(PaletteItem(
-            id: "export-reels", title: "Export Selected as Reels", icon: "square.and.arrow.up", shortcut: "⇧⌘R"
-        ) { ExportActions.exportSelected(.reels) })
-        items.append(PaletteItem(
-            id: "export-yt-1080", title: "Export YouTube 1080p", icon: "play.rectangle"
-        ) { ExportActions.exportSelected(.youtube1080p) })
-        items.append(PaletteItem(
-            id: "export-fcpxml", title: "Export FCPXML…", icon: "film.stack"
-        ) { ExportActions.exportFCPXML() })
-        items.append(PaletteItem(
-            id: "export-obsidian", title: "Write Obsidian Sidecars…", icon: "doc.text.below.ecg"
-        ) { ExportActions.exportObsidian() })
-
-        let q = query.lowercased()
+        let commands = staticCommands()
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if q.isEmpty {
-            results = items
-        } else {
-            // Subsequence match (each query char in order) ranks better than
-            // raw substring `.contains` while staying allocation-light.
-            results = items
-                .compactMap { item -> (PaletteItem, Int)? in
-                    guard let score = subsequenceScore(of: q, in: item.title.lowercased()) else { return nil }
-                    return (item, score)
-                }
-                .sorted { $0.1 < $1.1 } // lower = tighter match
-                .map(\.0)
+            results = commands
+            return
         }
+        // Subsequence match (each query char in order) ranks better than raw
+        // `.contains` while staying allocation-light.
+        let matchedCommands = commands
+            .compactMap { item -> (PaletteItem, Int)? in
+                guard let score = subsequenceScore(of: q, in: item.title.lowercased()) else { return nil }
+                return (item, score)
+            }
+            .sorted { $0.1 < $1.1 } // lower = tighter match
+            .map(\.0)
+        // The placeholder promises "clip name, or tag" — actually search them.
+        results = matchedCommands + clipResults(for: q)
+    }
+
+    /// The fixed action commands. Order here is the default (empty-query) order.
+    private func staticCommands() -> [PaletteItem] {
+        var items: [PaletteItem] = []
+        items.append(PaletteItem(id: "add-folder", title: "Add Folder…", icon: "folder.badge.plus", shortcut: "⌘O") {
+            Task { @MainActor in await ImportCoordinator.shared.pickFolder() }
+        })
+        items.append(PaletteItem(id: "rescan", title: "Rescan Library Folders", icon: "arrow.clockwise", shortcut: "⌘R") {
+            AppEnvironment.shared.watcher?.rescanAll()
+        })
+        items.append(PaletteItem(id: "view-calendar", title: "Calendar View", icon: "calendar") {
+            appState.playerSourceID = nil; appState.viewMode = .calendar
+        })
+        items.append(PaletteItem(id: "view-grid", title: "Grid View", icon: "square.grid.2x2") {
+            appState.playerSourceID = nil; appState.viewMode = .grid
+        })
+        items.append(PaletteItem(id: "view-list", title: "List View", icon: "list.bullet") {
+            appState.playerSourceID = nil; appState.viewMode = .list
+        })
+        items.append(PaletteItem(id: "toggle-inspector", title: "Toggle Inspector", icon: "sidebar.trailing", shortcut: "⌥⌘I") {
+            appState.inspectorVisible.toggle()
+        })
+        items.append(PaletteItem(id: "all-clips", title: "Show All Clips", icon: "rectangle.stack") {
+            appState.activeFilters = ClipFilters()
+            appState.selectedProjectID = nil
+            appState.selectedCollectionID = nil
+        })
+        items.append(PaletteItem(id: "unused", title: "Show Unused Clips", icon: "sparkles") {
+            var f = ClipFilters(); f.unusedOnly = true
+            appState.activeFilters = f
+            appState.selectedProjectID = nil
+        })
+        items.append(PaletteItem(id: "export-reels", title: "Export Selected as Reels", icon: "square.and.arrow.up", shortcut: "⇧⌘R") {
+            ExportActions.exportSelected(.reels)
+        })
+        items.append(PaletteItem(id: "export-yt-1080", title: "Export YouTube 1080p", icon: "play.rectangle") {
+            ExportActions.exportSelected(.youtube1080p)
+        })
+        items.append(PaletteItem(id: "export-fcpxml", title: "Export FCPXML…", icon: "film.stack") {
+            ExportActions.exportFCPXML()
+        })
+        items.append(PaletteItem(id: "export-obsidian", title: "Write Obsidian Sidecars…", icon: "doc.text.below.ecg") {
+            ExportActions.exportObsidian()
+        })
+        items.append(PaletteItem(id: "settings", title: "Settings…", icon: "gearshape", shortcut: "⌘,") {
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        })
+        return items
+    }
+
+    /// Live clip matches from the FTS search engine — selecting one opens it in
+    /// the player. This is what makes the palette a navigation tool, not just a
+    /// command list.
+    private func clipResults(for query: String) -> [PaletteItem] {
+        guard let search = AppEnvironment.shared.searchEngine else { return [] }
+        let clips = (try? search.search(query: query, filters: ClipFilters(), sort: .nameAsc, limit: 8)) ?? []
+        return clips.prefix(8).map { clip in
+            PaletteItem(
+                id: "clip-\(clip.id ?? 0)",
+                title: clip.name ?? "Clip #\(clip.id ?? 0)",
+                icon: "scissors",
+                shortcut: PlayerController.formatMs(clip.outMs - clip.inMs)
+            ) { openClip(clip) }
+        }
+    }
+
+    private func openClip(_ clip: Clip) {
+        if let id = clip.id { appState.selectedClipIDs = [id] }
+        appState.playerSourceID = clip.sourceID
+        appState.playerInMs = clip.inMs
+        appState.playerOutMs = clip.outMs
     }
 
     private func runSelected() {

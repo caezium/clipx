@@ -67,8 +67,14 @@ enum MetadataExtractor {
             ClipxLog.indexer.debug("audio tracks load failed: \(String(describing: error), privacy: .public)")
         }
 
-        if let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey]),
-           let date = resourceValues.creationDate {
+        // Recording date: prefer the date embedded in the filename (the true
+        // shoot date for DJI / action-cam footage) over the filesystem creation
+        // date, which is really the copy/import date once footage is moved onto
+        // this Mac. Fall back to the filesystem date when the name has none.
+        if let fromName = FilenameDateParser.parse(url.lastPathComponent) {
+            meta.createdAt = fromName
+        } else if let resourceValues = try? url.resourceValues(forKeys: [.creationDateKey]),
+                  let date = resourceValues.creationDate {
             meta.createdAt = Int64(date.timeIntervalSince1970)
         }
 

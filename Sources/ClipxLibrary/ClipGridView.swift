@@ -37,30 +37,32 @@ struct ClipGridView: View {
                     sectionHeader(title: "Sources", count: sources.count)
                     LazyVGrid(columns: columns, spacing: 12) {
                         ForEach(sources) { source in
-                            SourceCardView(source: source)
-                                .onTapGesture {
-                                    appState.selectedClipIDs = []
-                                    appState.playerSourceID = source.id
-                                    appState.playerInMs = nil
-                                    appState.playerOutMs = nil
-                                }
+                            SourceCardView(source: source) {
+                                appState.selectedClipIDs = []
+                                appState.playerSourceID = source.id
+                                appState.playerInMs = nil
+                                appState.playerOutMs = nil
+                            }
                         }
                     }
                 }
             }
-            .padding(12)
+            .padding(14)
         }
+        .background(Theme.bg)
     }
 
     @ViewBuilder
     private func sectionHeader(title: String, count: Int) -> some View {
-        HStack(spacing: 6) {
-            Text(title).font(.headline)
+        HStack(spacing: 7) {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
             Text("\(count)")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 6).padding(.vertical, 1)
-                .background(.quaternary, in: Capsule())
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.horizontal, 7).padding(.vertical, 1)
+                .background(Theme.surface, in: Capsule())
         }
     }
 
@@ -184,8 +186,8 @@ struct ClipCardView: View {
                             .font(.caption2.monospacedDigit())
                     }
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.green.opacity(0.85), in: Capsule())
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Theme.success.opacity(0.9), in: Capsule())
                     .padding(.bottom, 6)
                 }
                 .clipped()
@@ -193,7 +195,7 @@ struct ClipCardView: View {
                     Text(formatDuration(clip.durationMs))
                         .font(.caption2.monospacedDigit())
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.black.opacity(0.7), in: Capsule())
+                        .background(.black.opacity(0.6), in: Capsule())
                         .foregroundStyle(.white)
                         .padding(6)
                 }
@@ -204,34 +206,29 @@ struct ClipCardView: View {
                         Circle().fill(colorForLabel(label)).frame(width: 8, height: 8)
                     }
                     Text(clip.name ?? defaultName)
-                        .font(.caption.weight(.medium))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer()
                     if clip.rating > 0 {
                         Text(String(repeating: "★", count: clip.rating))
                             .font(.caption2)
-                            .foregroundStyle(.yellow)
+                            .foregroundStyle(Theme.star)
                     }
                 }
                 if !sourceName.isEmpty && clip.name != nil {
                     Text(sourceName)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
             }
-            .padding(.horizontal, 6).padding(.bottom, 6)
+            .padding(.horizontal, 8).padding(.vertical, 7)
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8).stroke(.separator)
-                .opacity(isSelected ? 0 : 1)
-        )
+        .clipxCard(radius: Theme.r2, selected: isSelected)
+        .scaleEffect(hovering ? 1.012 : 1)
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .contentShape(Rectangle())
         // Single-tap selects. The hover play button handles "open in player".
         .onTapGesture(perform: onSelect)
@@ -297,7 +294,9 @@ struct ClipCardView: View {
 
 struct SourceCardView: View {
     let source: Source
+    var onOpen: (() -> Void)? = nil
     @State private var thumbImage: NSImage?
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -318,6 +317,14 @@ struct SourceCardView: View {
                     }
                 )
                 .clipped()
+                .overlay(alignment: .center) {
+                    if hovering {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 40, weight: .light))
+                            .foregroundStyle(.white)
+                            .shadow(radius: 5)
+                    }
+                }
                 .overlay(alignment: .topLeading) {
                     if !source.online {
                         Text("Offline").font(.caption2)
@@ -348,22 +355,28 @@ struct SourceCardView: View {
 
             HStack(spacing: 4) {
                 Text(source.displayName)
-                    .font(.caption)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
                 if let fps = source.fps {
                     Text("\(Int(fps))p")
                         .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Theme.textTertiary)
                 }
             }
-            .padding(.horizontal, 6).padding(.bottom, 6)
+            .padding(.horizontal, 8).padding(.vertical, 7)
         }
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
+        .clipxCard(radius: Theme.r2)
+        .scaleEffect(hovering ? 1.012 : 1)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen?() }
+        .onHover { hovering = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(source.displayName))
+        .accessibilityAddTraits(.isButton)
         .onAppear { loadThumb() }
     }
 

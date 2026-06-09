@@ -19,12 +19,13 @@ struct LibraryView: View {
     var body: some View {
         VStack(spacing: 0) {
             toolbar
-            Divider()
+            Divider().overlay(Theme.border)
             if let pid = appState.selectedProjectID {
                 ProjectHeaderView(projectID: pid)
             }
             content
         }
+        .background(Theme.bg)
         .onAppear(perform: reload)
         // Search debounced — every other change reloads immediately.
         .onChange(of: appState.searchQuery) { _, _ in scheduleDebouncedReload() }
@@ -36,16 +37,27 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var toolbar: some View {
-        HStack {
-            HStack {
+        HStack(spacing: 10) {
+            HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textTertiary)
                 TextField("Search clips, tags, notes…", text: $appState.searchQuery)
                     .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                if !appState.searchQuery.isEmpty {
+                    Button { appState.searchQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill").font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.textTertiary)
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
-            .frame(maxWidth: 360)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 7)
+            .background(Theme.surface, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+            .frame(maxWidth: 380)
 
             Spacer()
 
@@ -55,28 +67,31 @@ struct LibraryView: View {
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 180)
+            .labelsHidden()
+            .tint(Theme.textSecondary)
+            .frame(width: 170)
 
             Picker("", selection: $appState.viewMode) {
+                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
                 Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
                 Image(systemName: "list.bullet").tag(LibraryViewMode.list)
-                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
             }
             .pickerStyle(.segmented)
             .frame(width: 120)
-            .help("Grid · List · Calendar")
+            .help("Calendar · Grid · List")
 
             Button {
                 appState.inspectorVisible.toggle()
             } label: {
                 Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
-                    .foregroundStyle(appState.inspectorVisible ? Color.accentColor : .secondary)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .clipxIconButton(active: appState.inspectorVisible)
             .help("Toggle Inspector (⌥⌘I)")
             .keyboardShortcut("i", modifiers: [.command, .option])
         }
-        .padding(8)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Theme.bgRaised)
     }
 
     @ViewBuilder
@@ -106,14 +121,14 @@ struct LibraryView: View {
         HStack {
             Image(systemName: "ellipsis.circle")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textTertiary)
             Text("Showing first \(Self.sourcesLimit) sources — refine search or filters to see more.")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textTertiary)
             Spacer()
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(.bar)
+        .background(Theme.bgRaised)
     }
 
     private func scheduleDebouncedReload() {
@@ -204,20 +219,23 @@ struct LibraryView: View {
 
 private struct EmptyLibraryView: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "rectangle.stack.badge.plus")
-                .font(.system(size: 56, weight: .ultraLight))
-                .foregroundStyle(.secondary)
+        VStack(spacing: 14) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 52, weight: .ultraLight))
+                .foregroundStyle(Theme.textTertiary)
             Text("Your library is empty")
-                .font(.title3)
-            Text("Add a folder of videos to get started.")
-                .foregroundStyle(.secondary)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+            Text("Add a folder of footage to get started.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textSecondary)
             Button("Add Folder…") {
                 Task { @MainActor in await ImportCoordinator.shared.pickFolder() }
             }
-            .controlSize(.large)
-            .padding(.top, 8)
+            .buttonStyle(PillButtonStyle(kind: .primary))
+            .padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
     }
 }

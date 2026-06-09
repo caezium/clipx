@@ -10,6 +10,10 @@ struct PlayerView: View {
     @State private var source: Source?
     @State private var savedClips: [Clip] = []
     @FocusState private var keyboardFocused: Bool
+    // Tag-at-the-cut: pressing Save opens an inline capture instead of writing a
+    // nameless clip and forcing a trip to the Inspector.
+    @State private var capturing = false
+    @State private var captureSuggestions: [String] = []
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,11 +26,20 @@ struct PlayerView: View {
                 if let player = controller.player {
                     PlayerSurface(player: player)
                         .contentShape(Rectangle())
-                        .onTapGesture { keyboardFocused = true }
+                        .onTapGesture { if !capturing { keyboardFocused = true } }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(-1)
+            // The capture card floats over the bottom of the video so marking
+            // → naming → tagging never leaves the player.
+            .overlay(alignment: .bottom) {
+                if capturing {
+                    captureCard
+                        .padding(.bottom, 18)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
 
             TimelineStripView(
                 controller: controller,
@@ -90,54 +103,55 @@ struct PlayerView: View {
     }
 
     private var controlBar: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             // Transport cluster: -5s | prev frame | play/pause | next frame | +5s
-            HStack(spacing: 4) {
+            HStack(spacing: 2) {
                 Button { controller.jumpBackward(seconds: 5) } label: {
-                    Image(systemName: "gobackward.5").font(.title3)
+                    Image(systemName: "gobackward.5").font(.system(size: 15))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain).clipxIconButton()
                 .help("Back 5s (J or ⇧←)")
 
                 Button { controller.stepBackward() } label: {
-                    Image(systemName: "backward.frame.fill").font(.title3)
+                    Image(systemName: "backward.frame.fill").font(.system(size: 13))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain).clipxIconButton()
                 .help("Previous frame (←)")
 
                 Button { controller.togglePlayPause() } label: {
-                    Image(systemName: controller.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 28))
+                    Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 15))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain).clipxIconButton(size: 36, active: false)
                 .help("Play / Pause (Space or K)")
 
                 Button { controller.stepForward() } label: {
-                    Image(systemName: "forward.frame.fill").font(.title3)
+                    Image(systemName: "forward.frame.fill").font(.system(size: 13))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain).clipxIconButton()
                 .help("Next frame (→)")
 
                 Button { controller.jumpForward(seconds: 5) } label: {
-                    Image(systemName: "goforward.5").font(.title3)
+                    Image(systemName: "goforward.5").font(.system(size: 15))
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain).clipxIconButton()
                 .help("Forward 5s (L or ⇧→)")
             }
 
             // Time display
             HStack(spacing: 4) {
                 Text(controller.currentTimeLabel)
-                    .monospacedDigit().font(.system(.body, design: .monospaced))
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
                     .fixedSize()
-                Text("/").foregroundStyle(.tertiary)
+                Text("/").foregroundStyle(Theme.textTertiary)
                 Text(controller.durationLabel)
-                    .monospacedDigit().font(.system(.body, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(Theme.textSecondary)
                     .fixedSize()
             }
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .background(Theme.surface, in: Capsule())
 
             // In/Out range indicator
             if let inMs = appState.playerInMs {
@@ -151,12 +165,13 @@ struct PlayerView: View {
                             .font(.caption.monospacedDigit())
                         Text("(\(PlayerController.formatMs(outMs - inMs)))")
                             .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .opacity(0.8)
                     }
                 }
-                .padding(.horizontal, 8).padding(.vertical, 4)
-                .background(.green.opacity(0.15), in: RoundedRectangle(cornerRadius: 6))
-                .foregroundStyle(.green)
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .background(Theme.success.opacity(0.14), in: Capsule())
+                .overlay(Capsule().strokeBorder(Theme.success.opacity(0.35), lineWidth: 1))
+                .foregroundStyle(Theme.success)
                 .fixedSize()
             }
 
@@ -168,28 +183,30 @@ struct PlayerView: View {
                     Label("In", systemImage: "i.square")
                         .labelStyle(.titleAndIcon)
                 }
+                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                 .fixedSize()
                 .help("Mark In (I)")
                 Button { markOut() } label: {
                     Label("Out", systemImage: "o.square")
                         .labelStyle(.titleAndIcon)
                 }
+                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                 .fixedSize()
                 .help("Mark Out (O)")
                 Button { saveRange() } label: {
-                    Label("Save Clip", systemImage: "checkmark.circle.fill")
+                    Label("Save Clip", systemImage: "checkmark")
                         .labelStyle(.titleAndIcon)
                 }
+                .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
                 .fixedSize()
-                .buttonStyle(.borderedProminent)
                 // No keyboardShortcut here — menu shortcuts hijack focused
-                // TextFields. The .onKeyPress("s") on the view (line ~65)
-                // handles the keyboard path when the player has focus.
+                // TextFields. The .onKeyPress("s") on the view handles the
+                // keyboard path when the player has focus.
                 .help("Save range as clip (S)")
             }
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .background(.regularMaterial)
+        .padding(.horizontal, 14).padding(.vertical, 9)
+        .background(Theme.bgRaised)
     }
 
     private func load() {
@@ -218,34 +235,75 @@ struct PlayerView: View {
         NotificationCenter.default.post(name: .markerDidChange, object: nil)
     }
 
+    /// Save (S) no longer writes a nameless clip — it opens the inline capture
+    /// so the clip is named, tagged, and rated at the moment of the cut.
     private func saveRange() {
-        guard let inMs = appState.playerInMs, let outMs = appState.playerOutMs else {
+        guard !capturing else { return }
+        guard let inMs = appState.playerInMs, let outMs = appState.playerOutMs, outMs > inMs else {
             AppState.shared.showToast("Mark in and out points first (I, O)", level: .warning)
             return
         }
-        guard let markerStore = AppEnvironment.shared.markerStore else {
+        guard AppEnvironment.shared.markerStore != nil else {
             AppState.shared.showToast("Library still loading", level: .warning)
             return
         }
+        // Pull existing tags so the user can one-tap the labels they already use.
+        captureSuggestions = (try? AppEnvironment.shared.tagStore?
+            .suggestions(prefix: "", limit: 14).map(\.name)) ?? []
+        withAnimation(.easeOut(duration: 0.16)) { capturing = true }
+    }
+
+    /// Persist the captured clip with its name / rating / tags, then park the
+    /// playhead past the out point and ready the next cut.
+    private func commitCapture(name: String, rating: Int, tags: [String]) {
+        guard let inMs = appState.playerInMs, let outMs = appState.playerOutMs,
+              let markerStore = AppEnvironment.shared.markerStore else { return }
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            _ = try markerStore.saveRange(
-                sourceID: sourceID, inMs: inMs, outMs: outMs
+            let clip = try markerStore.saveRange(
+                sourceID: sourceID, inMs: inMs, outMs: outMs,
+                name: trimmedName.isEmpty ? nil : trimmedName
             )
-            // Show the running count so the user gets a sense of progress on
-            // this source. Reload happens via libraryRevision observer.
+            if let id = clip.id {
+                if rating > 0 { try? markerStore.updateRating(id, rating: rating) }
+                if let tagStore = AppEnvironment.shared.tagStore {
+                    for tag in tags { try? tagStore.addTag(tag, toClip: id) }
+                }
+            }
             let count = savedClips.count + 1
             AppState.shared.showToast(
-                "Saved clip \(count) (\(PlayerController.formatMs(outMs - inMs)))",
+                trimmedName.isEmpty
+                    ? "Saved clip \(count) (\(PlayerController.formatMs(outMs - inMs)))"
+                    : "Saved “\(trimmedName)” (\(PlayerController.formatMs(outMs - inMs)))",
                 level: .success
             )
-            // Park the playhead just after the out point so the user can
-            // immediately mark the next clip's in/out without re-scrubbing.
+            // Park just past the out point so the next clip can be marked without
+            // re-scrubbing. Reload of the strip happens via libraryRevision.
             controller.seek(toMs: outMs)
             appState.playerInMs = nil
             appState.playerOutMs = nil
         } catch {
             AppState.shared.showToast("Failed to save: \(error.localizedDescription)", level: .error)
         }
+        withAnimation(.easeOut(duration: 0.16)) { capturing = false }
+        keyboardFocused = true
+    }
+
+    private func cancelCapture() {
+        // Keep the in/out marks so the user can re-scrub and try again.
+        withAnimation(.easeOut(duration: 0.16)) { capturing = false }
+        keyboardFocused = true
+    }
+
+    private var captureCard: some View {
+        ClipCaptureCard(
+            durationMs: (appState.playerOutMs ?? 0) - (appState.playerInMs ?? 0),
+            suggestions: captureSuggestions,
+            onCommit: { name, rating, tags in commitCapture(name: name, rating: rating, tags: tags) },
+            onCancel: { cancelCapture() }
+        )
+        // Fresh state each time a new range is captured.
+        .id("\(appState.playerInMs ?? 0)-\(appState.playerOutMs ?? 0)")
     }
 
     private func reloadSavedClips() {
@@ -261,14 +319,12 @@ struct PlayerView: View {
     private var savedClipsStrip: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
-                Text("Clips from this source")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                Text("Clips from this source").clipxSectionLabel()
                 Text("\(savedClips.count)")
-                    .font(.caption.monospacedDigit())
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(.quaternary, in: Capsule())
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(Theme.surface, in: Capsule())
+                    .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button {
                     AppState.shared.showToast(
@@ -276,14 +332,14 @@ struct PlayerView: View {
                         level: .info
                     )
                 } label: {
-                    Image(systemName: "info.circle").font(.caption)
+                    Image(systemName: "info.circle").font(.system(size: 12))
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.tertiary)
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textTertiary)
                 .help("Keyboard shortcuts")
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
+            .padding(.horizontal, 14)
+            .padding(.top, 7)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
@@ -291,10 +347,10 @@ struct PlayerView: View {
                         savedClipChip(clip)
                     }
                 }
-                .padding(.horizontal, 12).padding(.bottom, 6)
+                .padding(.horizontal, 14).padding(.bottom, 8)
             }
         }
-        .background(.bar)
+        .background(Theme.bgRaised)
     }
 
     private func savedClipChip(_ clip: Clip) -> some View {
@@ -313,24 +369,24 @@ struct PlayerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "scissors")
                     .font(.caption2)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Theme.success)
                 Text(clip.name ?? "Clip \(clip.id ?? 0)")
-                    .font(.caption)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                 Text(PlayerController.formatMs(clip.outMs - clip.inMs))
                     .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textTertiary)
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
+            .padding(.horizontal, 9).padding(.vertical, 5)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15))
+                RoundedRectangle(cornerRadius: Theme.r1)
+                    .fill(isSelected ? Theme.accentSoft : Theme.surface)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 1.5)
+                RoundedRectangle(cornerRadius: Theme.r1)
+                    .strokeBorder(isSelected ? Theme.accent : Theme.border, lineWidth: 1)
             )
-            .foregroundStyle(.primary)
         }
         .buttonStyle(.plain)
         .contextMenu {
@@ -405,5 +461,122 @@ final class PlayerSurfaceView: NSView {
     override func layout() {
         super.layout()
         playerLayer?.frame = bounds
+    }
+}
+
+/// Inline "tag at the cut" capture. Appears over the player the moment you hit
+/// Save so a clip is named / rated / tagged without ever opening the Inspector.
+/// Enter (in the name field) saves; Esc cancels and keeps the in/out marks.
+struct ClipCaptureCard: View {
+    let durationMs: Int64
+    let suggestions: [String]
+    let onCommit: (String, Int, [String]) -> Void
+    let onCancel: () -> Void
+
+    @State private var name = ""
+    @State private var rating = 0
+    @State private var selectedTags: Set<String> = []
+    @State private var newTag = ""
+    @FocusState private var nameFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            // Title
+            HStack(spacing: 7) {
+                Image(systemName: "scissors").font(.system(size: 12)).foregroundStyle(Theme.success)
+                Text("New clip").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                Text(PlayerController.formatMs(max(0, durationMs)))
+                    .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button(action: onCancel) { Image(systemName: "xmark").font(.system(size: 11)) }
+                    .buttonStyle(.plain).clipxIconButton(size: 24)
+            }
+
+            // Name — autofocused, Enter saves.
+            TextField("Name this clip…", text: $name)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textPrimary)
+                .focused($nameFocused)
+                .onSubmit(commit)
+                .padding(.horizontal, 11).padding(.vertical, 9)
+                .background(Theme.bg, in: RoundedRectangle(cornerRadius: Theme.r1))
+                .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.borderStrong, lineWidth: 1))
+
+            // Rating — for "the parts where I do well".
+            HStack(spacing: 4) {
+                ForEach(1...5, id: \.self) { i in
+                    Button { rating = (rating == i) ? 0 : i } label: {
+                        Image(systemName: i <= rating ? "star.fill" : "star")
+                            .font(.system(size: 14))
+                            .foregroundStyle(i <= rating ? Theme.star : Theme.textTertiary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+            }
+
+            // Quick tags — one-tap the labels you already use, plus free entry.
+            if !suggestions.isEmpty || !selectedTags.isEmpty {
+                FlowLayout(spacing: 5) {
+                    ForEach(tagPalette, id: \.self) { tag in
+                        ClipxToggleChip(label: tag, selected: selectedTags.contains(tag)) {
+                            if selectedTags.contains(tag) { selectedTags.remove(tag) }
+                            else { selectedTags.insert(tag) }
+                        }
+                    }
+                }
+            }
+
+            // Add-a-tag + actions
+            HStack(spacing: 8) {
+                HStack(spacing: 5) {
+                    Image(systemName: "tag").font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                    TextField("add tag", text: $newTag)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12))
+                        .onSubmit(addCurrentTag)
+                }
+                .padding(.horizontal, 9).padding(.vertical, 6)
+                .background(Theme.bg, in: Capsule())
+                .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                .frame(maxWidth: 140)
+
+                Spacer()
+
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                    .keyboardShortcut(.cancelAction)
+                Button("Save", action: commit)
+                    .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
+            }
+        }
+        .padding(14)
+        .frame(width: 390)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.r3))
+        .background(Theme.surfaceActive, in: RoundedRectangle(cornerRadius: Theme.r3))
+        .overlay(RoundedRectangle(cornerRadius: Theme.r3).strokeBorder(Theme.borderStrong, lineWidth: 1))
+        .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
+        .onAppear { nameFocused = true }
+    }
+
+    /// Selected tags first, then remaining suggestions — so toggled chips don't
+    /// jump around as the user picks them.
+    private var tagPalette: [String] {
+        let selectedList = selectedTags.sorted()
+        let rest = suggestions.filter { !selectedTags.contains($0) }
+        return selectedList + rest
+    }
+
+    private func addCurrentTag() {
+        let t = newTag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !t.isEmpty else { return }
+        selectedTags.insert(t)
+        newTag = ""
+    }
+
+    private func commit() {
+        addCurrentTag() // fold any half-typed tag in
+        onCommit(name, rating, Array(selectedTags))
     }
 }

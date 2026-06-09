@@ -65,11 +65,37 @@ final class FolderWatcher {
         restartStream()
     }
 
+    /// Re-walks every library folder and indexes new/changed files. Reports a
+    /// start + completion toast so the action is never a silent no-op.
     func rescanAll() {
-        for path in paths {
-            let url = URL(fileURLWithPath: path)
-            let idx = indexer
-            Task.detached { await idx.index(folder: url) }
+        // Source of truth is the persisted folder list, not the in-memory
+        // `paths` (the FSEvents set), which is empty whenever bookmark resume
+        // failed — the previous cause of "Rescan All does nothing".
+        var roots = bookmarkStore.allFolders().map(\.path)
+        if roots.isEmpty { roots = paths }
+        let urls = uniquePaths(from: roots).map { URL(fileURLWithPath: $0) }
+        guard !urls.isEmpty else {
+            AppState.shared.showToast("No library folders to rescan — add a folder first.", level: .warning)
+            return
+        }
+        AppState.shared.showToast(
+            "Rescanning \(urls.count) folder\(urls.count == 1 ? "" : "s")…", level: .info
+        )
+        let idx = indexer
+        Task.detached {
+            var scanned = 0, indexed = 0
+            for url in urls {
+                let r = await idx.index(folder: url)
+                scanned += r.scanned
+                indexed += r.indexed
+            }
+            await MainActor.run {
+                let msg = indexed > 0
+                    ? "Rescan complete — \(indexed) new or updated of \(scanned) file\(scanned == 1 ? "" : "s")."
+                    : "Rescan complete — no changes (\(scanned) file\(scanned == 1 ? "" : "s") checked)."
+                AppState.shared.showToast(msg, level: .success)
+                AppState.shared.libraryRevision &+= 1
+            }
         }
     }
 

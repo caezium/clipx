@@ -30,6 +30,9 @@ struct RootView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        .background(Theme.bg)
+        .preferredColorScheme(.dark)
+        .tint(Theme.accent)
         .overlay(alignment: .top) {
             ToastStack(toasts: appState.toasts)
                 .padding(.top, 8)
@@ -90,32 +93,32 @@ private struct PlayerWorkspace: View {
                     Label("Library", systemImage: "chevron.left")
                         .labelStyle(.titleAndIcon)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                 .keyboardShortcut(.escape, modifiers: [])
 
                 Text(sourceName)
-                    .font(.headline)
+                    .font(.system(size: 14, weight: .semibold))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 if appState.selectedClipIDs.first != nil {
                     Button {
                         appState.inspectorVisible.toggle()
                     } label: {
                         Image(systemName: "sidebar.trailing")
-                            .foregroundStyle(appState.inspectorVisible ? Color.accentColor : .secondary)
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.plain)
+                    .clipxIconButton(active: appState.inspectorVisible)
                     .keyboardShortcut("i", modifiers: [.command, .option])
                     .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(.bar)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Theme.bgRaised)
 
-            Divider()
+            Divider().overlay(Theme.border)
 
             // Player + (optional) inspector
             HStack(spacing: 0) {

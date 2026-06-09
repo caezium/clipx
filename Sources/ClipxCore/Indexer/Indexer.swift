@@ -24,19 +24,27 @@ actor Indexer {
     }
 
     /// Scans the given root folder recursively for videos and indexes them.
-    /// Calls `progress` periodically with (processed, total).
-    func index(folder: URL, progress: ((Int, Int) -> Void)? = nil) async {
+    /// Calls `progress` periodically with (processed, total). Returns how many
+    /// files were seen and how many were actually new/changed (written) so
+    /// callers like "Rescan All" can report a meaningful result.
+    @discardableResult
+    func index(folder: URL, progress: ((Int, Int) -> Void)? = nil) async -> (scanned: Int, indexed: Int) {
         let urls = collectVideoFiles(at: folder)
         let total = urls.count
         var processed = 0
+        var indexed = 0
         for url in urls {
-            await indexFile(url)
+            if await indexFile(url) { indexed += 1 }
             processed += 1
             progress?(processed, total)
         }
+        return (scanned: total, indexed: indexed)
     }
 
-    func indexFile(_ url: URL) async {
+    /// Indexes a single file. Returns `true` if it wrote a new/updated row,
+    /// `false` if the file was unchanged (skipped) or failed.
+    @discardableResult
+    func indexFile(_ url: URL) async -> Bool {
         do {
             let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
             let mtime = Int64(((attrs[.modificationDate] as? Date) ?? Date()).timeIntervalSince1970)
@@ -66,7 +74,7 @@ actor Indexer {
                             )
                         }
                     }
-                    return
+                    return false
                 }
             }
 
@@ -125,8 +133,10 @@ actor Indexer {
             }
 
             scheduleRevisionBump()
+            return true
         } catch {
             ClipxLog.indexer.error("indexFile failed for \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
+            return false
         }
     }
 
@@ -182,6 +192,37 @@ actor Indexer {
             result.append(url)
         }
         return result
+    }
+
+    /// One-time pass: derive each source's recording date from its filename
+    /// (the true shoot date for DJI / action-cam footage) wherever the name
+    /// carries one. Fixes sources that indexed with a missing or copy-date
+    /// `created_at` — the cause of footage landing under "No recording date".
+    /// Returns the number of rows updated.
+    @discardableResult
+    func backfillFilenameDates() async -> Int {
+        let sources: [Source] = (try? database.read { db in
+            try Source.fetchAll(db)
+        }) ?? []
+        var updated = 0
+        for src in sources {
+            guard let id = src.id else { continue }
+            let name = URL(fileURLWithPath: src.path).lastPathComponent
+            guard let parsed = FilenameDateParser.parse(name), src.createdAt != parsed else { continue }
+            do {
+                try database.write { db in
+                    try db.execute(
+                        sql: "UPDATE sources SET created_at = ? WHERE id = ?",
+                        arguments: [parsed, id]
+                    )
+                }
+                updated += 1
+            } catch {
+                ClipxLog.indexer.error("backfillFilenameDates failed for \(name, privacy: .public): \(String(describing: error), privacy: .public)")
+            }
+        }
+        if updated > 0 { scheduleRevisionBump() }
+        return updated
     }
 
     /// Marks all sources under the given folder as offline (drive unplugged).

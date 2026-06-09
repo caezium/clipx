@@ -10,11 +10,14 @@ struct ToastStack: View {
                     Image(systemName: icon(for: toast.level))
                     Text(toast.message)
                 }
+                .font(.system(size: 12, weight: .medium))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(.regularMaterial, in: Capsule())
-                .overlay(Capsule().stroke(color(for: toast.level).opacity(0.4)))
+                .background(.ultraThinMaterial, in: Capsule())
+                .background(Theme.bgRaised.opacity(0.9), in: Capsule())
+                .overlay(Capsule().strokeBorder(color(for: toast.level).opacity(0.45), lineWidth: 1))
                 .foregroundStyle(color(for: toast.level))
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(Text("\(accessibilityPrefix(for: toast.level)): \(toast.message)"))
@@ -38,10 +41,10 @@ struct ToastStack: View {
 
     private func color(for level: ToastLevel) -> Color {
         switch level {
-        case .info: return .secondary
-        case .success: return .green
+        case .info: return Theme.textSecondary
+        case .success: return Theme.success
         case .warning: return .orange
-        case .error: return .red
+        case .error: return Theme.danger
         }
     }
 
