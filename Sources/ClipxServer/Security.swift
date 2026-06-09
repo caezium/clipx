@@ -113,6 +113,41 @@ struct SessionTokenStore: Codable {
     }
 }
 
+/// Resolves a `Range` header (or its absence) into a concrete byte window,
+/// always bounded by `maxChunk` so a single response never reads an entire
+/// large file into memory. Returns nil for an unsatisfiable range. A request
+/// with no Range gets a bounded first chunk (the browser continues with
+/// Range requests). (#5)
+func resolveByteRange(_ header: String?, size: Int64, maxChunk: Int64 = 1_048_576) -> (start: Int64, end: Int64)? {
+    guard size > 0 else { return nil }
+    guard let header, header.hasPrefix("bytes=") else {
+        return (0, Swift.min(size - 1, maxChunk - 1))
+    }
+    let spec = String(header.dropFirst("bytes=".count))
+    let parts = spec.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+    let start = Int64(parts.first ?? "0") ?? 0
+    let end: Int64
+    if parts.count > 1, !parts[1].isEmpty {
+        end = Swift.min(size - 1, Int64(parts[1]) ?? (size - 1))
+    } else {
+        end = Swift.min(size - 1, start + maxChunk - 1)
+    }
+    guard start >= 0, start <= end, end < size else { return nil }
+    return (start, end)
+}
+
+/// Extracts a single cookie value from a `Cookie:` header. Lets the web client
+/// carry its session in a same-origin cookie instead of a `?token=` query
+/// param that leaks into logs and Referer headers. (#6)
+func cookieValue(_ cookieHeader: String?, name: String) -> String? {
+    guard let cookieHeader else { return nil }
+    for pair in cookieHeader.split(separator: ";") {
+        let kv = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+        if kv.count == 2, kv[0] == name { return kv[1] }
+    }
+    return nil
+}
+
 /// Cryptographically-secure random token, hex-encoded. Uses the system CSPRNG
 /// (`SecRandomCopyBytes`) rather than `randomElement()`. (#3)
 func generateSecureToken(byteCount: Int = 24) -> String {

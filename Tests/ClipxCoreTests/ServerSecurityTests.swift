@@ -126,4 +126,34 @@ final class ServerSecurityTests: XCTestCase {
         XCTAssertFalse(HTTPRequest.exceedsLimit(Data(count: 10)))
         XCTAssertTrue(HTTPRequest.exceedsLimit(Data(count: HTTPRequest.maxRequestBytes + 1)))
     }
+
+    // MARK: #5 — bounded byte ranges
+
+    func test_resolveByteRange_noHeaderReturnsBoundedFirstChunk() {
+        let r = resolveByteRange(nil, size: 100_000_000, maxChunk: 1_048_576)
+        XCTAssertEqual(r?.start, 0)
+        XCTAssertEqual(r?.end, 1_048_575, "no Range must not read the whole file")
+    }
+
+    func test_resolveByteRange_explicitRangeClampsToSizeAndChunk() {
+        XCTAssertEqual(resolveByteRange("bytes=10-20", size: 1000, maxChunk: 1_048_576).map { [$0.start, $0.end] }, [10, 20])
+        // open-ended range is capped by maxChunk
+        XCTAssertEqual(resolveByteRange("bytes=0-", size: 100_000_000, maxChunk: 1_048_576)?.end, 1_048_575)
+        // end past EOF clamps to size-1
+        XCTAssertEqual(resolveByteRange("bytes=990-99999", size: 1000, maxChunk: 1_048_576)?.end, 999)
+    }
+
+    func test_resolveByteRange_rejectsUnsatisfiable() {
+        XCTAssertNil(resolveByteRange("bytes=2000-3000", size: 1000))
+        XCTAssertNil(resolveByteRange(nil, size: 0))
+    }
+
+    // MARK: #6 — session cookie instead of token in URL
+
+    func test_cookieValue_parsesNamedCookie() {
+        XCTAssertEqual(cookieValue("a=1; clipx_session=abc123; b=2", name: "clipx_session"), "abc123")
+        XCTAssertEqual(cookieValue("clipx_session=xyz", name: "clipx_session"), "xyz")
+        XCTAssertNil(cookieValue("other=1", name: "clipx_session"))
+        XCTAssertNil(cookieValue(nil, name: "clipx_session"))
+    }
 }

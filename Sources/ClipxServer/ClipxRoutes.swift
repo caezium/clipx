@@ -120,8 +120,14 @@ enum ClipxRoutes {
             let token = String(header.dropFirst(7)).trimmingCharacters(in: .whitespaces)
             if PairingStore.shared.isValid(token: token) { return true }
         }
-        // Query-string fallback — for <video src=> and <img src=>, which
-        // can't carry custom headers. Still requires the same valid token.
+        // Same-origin session cookie — used by <video>/<img>/fetch so the
+        // token never appears in the URL (where it leaks into logs/Referer). (#6)
+        if let cookieTok = cookieValue(request.headers["cookie"], name: "clipx_session"),
+           PairingStore.shared.isValid(token: cookieTok) {
+            return true
+        }
+        // Legacy query-string fallback — kept so already-paired clients that
+        // still append ?token= keep working.
         if let qToken = request.query["token"],
            PairingStore.shared.isValid(token: qToken) {
             return true
@@ -341,46 +347,30 @@ enum ClipxRoutes {
         return .json(Status(ready: state.ready, progress: Int((state.progress * 100).rounded()), offline: false))
     }
 
-    /// Serves any on-disk file with HTTP Range support (1 MiB default chunk).
+    /// Serves any on-disk file with HTTP Range support. Always responds with a
+    /// bounded chunk (≤1 MiB) — even when the client sends no Range header — so
+    /// one request can never read a whole multi-hundred-MB file into memory. (#5)
     private static func serveFileWithRange(at url: URL, mime: String, request: HTTPRequest) -> HTTPResponse {
         let fm = FileManager.default
         guard let attrs = try? fm.attributesOfItem(atPath: url.path),
               let size = attrs[.size] as? Int64, size > 0 else {
             return .notFound("File not available")
         }
+        guard let (start, end) = resolveByteRange(request.headers["range"], size: size) else {
+            return HTTPResponse(status: 416, headers: ["Content-Range": "bytes */\(size)"], body: Data())
+        }
         do {
-            if let rangeHeader = request.headers["range"], rangeHeader.hasPrefix("bytes=") {
-                let spec = String(rangeHeader.dropFirst("bytes=".count))
-                let parts = spec.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-                let start = Int64(parts.first ?? "0") ?? 0
-                let end: Int64
-                if parts.count > 1, !parts[1].isEmpty {
-                    end = min(size - 1, Int64(parts[1]) ?? size - 1)
-                } else {
-                    end = min(size - 1, start + 1_048_575) // 1 MiB chunk
-                }
-                guard start <= end, end < size else {
-                    return HTTPResponse(status: 416, body: Data())
-                }
-                let length = end - start + 1
-                let handle = try FileHandle(forReadingFrom: url)
-                try handle.seek(toOffset: UInt64(start))
-                let data = try handle.read(upToCount: Int(length)) ?? Data()
-                try? handle.close()
-                return HTTPResponse(
-                    status: 206,
-                    headers: [
-                        "Content-Type": mime,
-                        "Content-Range": "bytes \(start)-\(end)/\(size)",
-                        "Accept-Ranges": "bytes",
-                    ],
-                    body: data
-                )
-            }
-            let data = try Data(contentsOf: url)
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            try handle.seek(toOffset: UInt64(start))
+            let data = try handle.read(upToCount: Int(end - start + 1)) ?? Data()
             return HTTPResponse(
-                status: 200,
-                headers: ["Content-Type": mime, "Accept-Ranges": "bytes"],
+                status: 206,
+                headers: [
+                    "Content-Type": mime,
+                    "Content-Range": "bytes \(start)-\(end)/\(size)",
+                    "Accept-Ranges": "bytes",
+                ],
                 body: data
             )
         } catch {

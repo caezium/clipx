@@ -206,6 +206,12 @@ enum WebContent {
     const TOKEN_KEY = 'clipxToken';
     let token = localStorage.getItem(TOKEN_KEY) || '';
 
+    // Carry the session in a same-origin cookie so <video>/<img> requests
+    // authenticate without putting the token in the URL. (#6)
+    function setSessionCookie(t) {
+      if (t) document.cookie = 'clipx_session=' + t + '; path=/; SameSite=Strict; max-age=2592000';
+    }
+
     async function api(path, opts = {}) {
       const headers = Object.assign({}, opts.headers || {});
       if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -249,6 +255,7 @@ enum WebContent {
         const body = await res.json();
         token = body.token;
         localStorage.setItem(TOKEN_KEY, token);
+        setSessionCookie(token);
         hidePairGate();
         loadSources();
       } catch (e) {
@@ -530,9 +537,9 @@ enum WebContent {
       // we were waiting.
       if (!ready || !playerSource || playerSource.id !== src.id) return;
       hidePrep();
-      // Token in querystring as fallback — <video> can't set Authorization
-      // headers; the server also accepts ?token= when Authorization is absent.
-      video.src = `/api/sources/${src.id}/video?token=${encodeURIComponent(token)}`;
+      // No ?token= in the URL — the same-origin session cookie authenticates
+      // the <video> request instead. (#6)
+      video.src = `/api/sources/${src.id}/video`;
       video.load();
       video.play().catch(() => { /* autoplay may be blocked, that's ok */ });
     }
@@ -668,6 +675,6 @@ enum WebContent {
 
     // ----- Boot -----
     if (!token) showPairGate();
-    else loadSources();
+    else { setSessionCookie(token); loadSources(); }
     """
 }
