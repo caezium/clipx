@@ -14,7 +14,7 @@ struct ClipxApp: App {
         WindowGroup("Clipx") {
             RootView()
                 .environmentObject(appState)
-                .frame(minWidth: 1280, idealWidth: 1320, minHeight: 700, idealHeight: 820)
+                .frame(minWidth: 900, idealWidth: 1320, minHeight: 700, idealHeight: 820)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: true))

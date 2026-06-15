@@ -5,8 +5,16 @@ import UniformTypeIdentifiers
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didCompleteOnboarding")
-    @State private var inspectorVisible = true
     @State private var dropTargeted = false
+
+    /// The inspector column shows only when toggled on AND a clip is selected,
+    /// preserving the prior behavior while letting AppKit own the column width.
+    private var inspectorPresented: Binding<Bool> {
+        Binding(
+            get: { appState.inspectorVisible && appState.selectedClipIDs.first != nil },
+            set: { appState.inspectorVisible = $0 }
+        )
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -14,21 +22,24 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
             // Single-column content area. The player takes over when active so
-            // it gets real horizontal space; library grid shows otherwise.
-            if let sourceID = appState.playerSourceID {
-                PlayerWorkspace(sourceID: sourceID)
-            } else {
-                HStack(spacing: 0) {
+            // it gets real horizontal space; library grid shows otherwise. The
+            // inspector is a framework-managed trailing column (not a hand-built
+            // fixed-width HStack panel): AppKit subtracts its width from the
+            // content, so sidebar + library + inspector can never sum past the
+            // window and clip offscreen. (recurring sidebar-clip root-cause fix)
+            Group {
+                if let sourceID = appState.playerSourceID {
+                    PlayerWorkspace(sourceID: sourceID)
+                } else {
                     LibraryView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    if appState.inspectorVisible, let clipID = appState.selectedClipIDs.first {
-                        Divider()
-                        InspectorView(clipID: clipID)
-                            .frame(width: 300)
-                            .transition(.move(edge: .trailing))
-                    }
                 }
-                .animation(.easeInOut(duration: 0.18), value: appState.inspectorVisible)
+            }
+            .inspector(isPresented: inspectorPresented) {
+                if let clipID = appState.selectedClipIDs.first {
+                    InspectorView(clipID: clipID)
+                        .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
+                }
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -163,18 +174,11 @@ private struct PlayerWorkspace: View {
 
             Divider().overlay(Theme.border)
 
-            // Player + (optional) inspector
-            HStack(spacing: 0) {
-                PlayerView(sourceID: sourceID)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                if appState.inspectorVisible, let clipID = appState.selectedClipIDs.first {
-                    Divider()
-                    InspectorView(clipID: clipID)
-                        .frame(width: 300)
-                        .transition(.move(edge: .trailing))
-                }
-            }
-            .animation(.easeInOut(duration: 0.18), value: appState.inspectorVisible)
+            // Player fills the detail area; the inspector is a framework-managed
+            // trailing column owned by RootView (see .inspector above), so the
+            // player no longer competes with a fixed-width sibling panel.
+            PlayerView(sourceID: sourceID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .onAppear(perform: loadName)
         .onChange(of: sourceID) { _, _ in loadName() }
