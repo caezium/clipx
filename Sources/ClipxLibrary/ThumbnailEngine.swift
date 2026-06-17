@@ -4,6 +4,13 @@ import AppKit
 import CryptoKit
 import GRDB
 
+/// One-shot box to hand an async-loaded value back across a semaphore bridge.
+/// `@unchecked Sendable` is sound here because the DispatchSemaphore establishes
+/// the happens-before between the Task's write and the waiter's read.
+private final class DurationResultBox: @unchecked Sendable {
+    var seconds: Double?
+}
+
 /// Generates and caches thumbnails (single frame + hover sprite strip) for sources.
 /// Uses AVAssetImageGenerator under a serial dispatch queue, semaphore-limited
 /// to 4 concurrent requests so the UI thread stays responsive.
@@ -99,22 +106,21 @@ final class ThumbnailEngine {
     /// concurrent slots.
     private func generateSync(source: Source, target: URL, fanout: @escaping (URL?) -> Void) {
         let asset = AVURLAsset(url: source.url)
+        // Load duration via the modern async API (replaces the deprecated
+        // loadValuesAsynchronously + statusOfValue + asset.duration), bridged
+        // back to this real dispatch queue with a semaphore. 8s ceiling per
+        // asset so networked / corrupt files can't permanently hold one of our
+        // 4 slots. The load runs on the cooperative pool and only signals; this
+        // (real, non-cooperative) dispatch thread is the one that blocks, so the
+        // pool is never starved.
         let loadGroup = DispatchSemaphore(value: 0)
-        var duration: Double = 0
-        var loadOK = false
-        asset.loadValuesAsynchronously(forKeys: ["duration", "tracks"]) {
-            var error: NSError?
-            let status = asset.statusOfValue(forKey: "duration", error: &error)
-            if status == .loaded {
-                duration = CMTimeGetSeconds(asset.duration)
-                loadOK = duration > 0 && duration.isFinite
-            }
+        let box = DurationResultBox()
+        Task {
+            box.seconds = (try? await asset.load(.duration)).map(CMTimeGetSeconds)
             loadGroup.signal()
         }
-        // 8s ceiling per asset — networked / corrupt files won't permanently
-        // block a slot.
-        let waitResult = loadGroup.wait(timeout: .now() + .seconds(8))
-        guard waitResult == .success, loadOK else {
+        guard loadGroup.wait(timeout: .now() + .seconds(8)) == .success,
+              let duration = box.seconds, duration > 0, duration.isFinite else {
             fanout(nil)
             return
         }
