@@ -145,67 +145,91 @@ final class ThumbnailEngine {
     }
 
     /// Generates a horizontal sprite strip of N frames for hover-scrubbing preview.
+    ///
+    /// Runs on a real DispatchQueue, not the Swift cooperative pool — same
+    /// reasoning as `generateThumbnail`. Previously this ran its whole body in
+    /// `Task.detached` and called `DispatchSemaphore.wait()` on that cooperative
+    /// thread: the classic pool-starvation deadlock (and a hard error under the
+    /// Swift 6 language mode, where `wait()` is unavailable from async contexts).
     func generateSprite(source: Source, frameCount: Int = 10, completion: @escaping (URL?) -> Void) {
         let target = spritePath(for: source.hash)
         if FileManager.default.fileExists(atPath: target.path) {
             completion(target)
             return
         }
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { completion(nil); return }
+        queue.async { [weak self] in
+            guard let self else { DispatchQueue.main.async { completion(nil) }; return }
             self.semaphore.wait()
             defer { self.semaphore.signal() }
+            self.generateSpriteSync(
+                source: source, frameCount: frameCount, target: target, completion: completion
+            )
+        }
+    }
 
-            let asset = AVURLAsset(url: source.url)
-            let duration: Double
-            do {
-                let cm = try await asset.load(.duration)
-                duration = CMTimeGetSeconds(cm)
-            } catch {
-                await MainActor.run { completion(nil) }
-                return
-            }
-            guard duration > 0 else { await MainActor.run { completion(nil) }; return }
-            autoreleasepool {
-                let frameW = 240, frameH = 135
-                let generator = AVAssetImageGenerator(asset: asset)
-                generator.appliesPreferredTrackTransform = true
-                generator.maximumSize = CGSize(width: frameW, height: frameH)
-                generator.requestedTimeToleranceBefore = .zero
-                generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+    /// Synchronous body of sprite-strip generation — safe to call from a real
+    /// dispatch queue. Bridges the async duration load back to this thread with
+    /// a DispatchSemaphore + 8s timeout (same pattern as `generateSync`), so the
+    /// load runs on the cooperative pool and only signals while this real,
+    /// non-cooperative thread blocks — the pool is never starved. Completion
+    /// always fires on main.
+    private func generateSpriteSync(
+        source: Source, frameCount: Int, target: URL, completion: @escaping (URL?) -> Void
+    ) {
+        let finish: (URL?) -> Void = { result in
+            DispatchQueue.main.async { completion(result) }
+        }
+        let asset = AVURLAsset(url: source.url)
+        let loadGroup = DispatchSemaphore(value: 0)
+        let box = DurationResultBox()
+        Task {
+            box.seconds = (try? await asset.load(.duration)).map(CMTimeGetSeconds)
+            loadGroup.signal()
+        }
+        guard loadGroup.wait(timeout: .now() + .seconds(8)) == .success,
+              let duration = box.seconds, duration > 0, duration.isFinite else {
+            finish(nil)
+            return
+        }
+        autoreleasepool {
+            let frameW = 240, frameH = 135
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: frameW, height: frameH)
+            generator.requestedTimeToleranceBefore = .zero
+            generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
 
-                let bitmap = NSBitmapImageRep(
-                    bitmapDataPlanes: nil,
-                    pixelsWide: frameW * frameCount,
-                    pixelsHigh: frameH,
-                    bitsPerSample: 8,
-                    samplesPerPixel: 4,
-                    hasAlpha: true,
-                    isPlanar: false,
-                    colorSpaceName: .deviceRGB,
-                    bitmapFormat: [],
-                    bytesPerRow: 0,
-                    bitsPerPixel: 32
-                )
-                guard let bitmap = bitmap else { completion(nil); return }
+            let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: frameW * frameCount,
+                pixelsHigh: frameH,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bitmapFormat: [],
+                bytesPerRow: 0,
+                bitsPerPixel: 32
+            )
+            guard let bitmap = bitmap else { finish(nil); return }
 
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
-                for i in 0..<frameCount {
-                    let t = duration * Double(i) / Double(frameCount - 1)
-                    let time = CMTime(seconds: t, preferredTimescale: 600)
-                    if let cg = try? generator.copyCGImage(at: time, actualTime: nil) {
-                        let rect = CGRect(x: CGFloat(i * frameW), y: 0,
-                                          width: CGFloat(frameW), height: CGFloat(frameH))
-                        let image = NSImage(cgImage: cg, size: rect.size)
-                        image.draw(in: rect)
-                    }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+            for i in 0..<frameCount {
+                let t = duration * Double(i) / Double(frameCount - 1)
+                let time = CMTime(seconds: t, preferredTimescale: 600)
+                if let cg = try? generator.copyCGImage(at: time, actualTime: nil) {
+                    let rect = CGRect(x: CGFloat(i * frameW), y: 0,
+                                      width: CGFloat(frameW), height: CGFloat(frameH))
+                    let image = NSImage(cgImage: cg, size: rect.size)
+                    image.draw(in: rect)
                 }
-                NSGraphicsContext.restoreGraphicsState()
-                let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
-                try? data?.write(to: target)
-                DispatchQueue.main.async { completion(target) }
             }
+            NSGraphicsContext.restoreGraphicsState()
+            let data = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8])
+            try? data?.write(to: target)
+            finish(target)
         }
     }
 

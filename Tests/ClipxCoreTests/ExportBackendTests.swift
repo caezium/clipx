@@ -53,4 +53,33 @@ final class ExportBackendTests: XCTestCase {
         XCTAssertEqual(FFmpegProgress.fraction(outTimeUs: 5_000_000, durationSec: 2), 1.0, "clamped to 1")
         XCTAssertNil(FFmpegProgress.latestOutTimeUs("no progress here"))
     }
+
+    // MARK: rotation geometry
+
+    func test_videoRotation_renderSizeSwapsFor90And270() {
+        let s = CGSize(width: 1920, height: 1080)
+        XCTAssertEqual(VideoRotation.renderSize(oriented: s, degrees: 0), s)
+        XCTAssertEqual(VideoRotation.renderSize(oriented: s, degrees: 90), CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(VideoRotation.renderSize(oriented: s, degrees: 180), s)
+        XCTAssertEqual(VideoRotation.renderSize(oriented: s, degrees: 270), CGSize(width: 1080, height: 1920))
+        XCTAssertEqual(VideoRotation.renderSize(oriented: s, degrees: -90), CGSize(width: 1080, height: 1920))
+    }
+
+    func test_videoRotation_transformMapsRectIntoRotatedCanvas() {
+        let w: CGFloat = 100, h: CGFloat = 40
+        let t = VideoRotation.transform(oriented: CGSize(width: w, height: h), degrees: 90)
+        let p0 = CGPoint.zero.applying(t)              // (0,0) → (h,0)
+        XCTAssertEqual(p0.x, h, accuracy: 0.001)
+        XCTAssertEqual(p0.y, 0, accuracy: 0.001)
+        let p1 = CGPoint(x: w, y: h).applying(t)        // (w,h) → (0,w)
+        XCTAssertEqual(p1.x, 0, accuracy: 0.001)
+        XCTAssertEqual(p1.y, w, accuracy: 0.001)
+    }
+
+    func test_videoRotation_ffmpegFilter() {
+        XCTAssertNil(VideoRotation.ffmpegFilter(degrees: 0))
+        XCTAssertEqual(VideoRotation.ffmpegFilter(degrees: 90), "transpose=1")
+        XCTAssertEqual(VideoRotation.ffmpegFilter(degrees: 180), "transpose=1,transpose=1")
+        XCTAssertEqual(VideoRotation.ffmpegFilter(degrees: 270), "transpose=2")
+    }
 }

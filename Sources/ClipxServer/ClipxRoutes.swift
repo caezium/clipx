@@ -72,6 +72,11 @@ enum ClipxRoutes {
                 .replacingOccurrences(of: ".jpg", with: "")
             return await thumb(hash: hash)
         }
+        if request.method == "GET", request.path.hasPrefix("/api/sprite/") {
+            let hash = String(request.path.dropFirst("/api/sprite/".count))
+                .replacingOccurrences(of: ".jpg", with: "")
+            return await sprite(hash: hash)
+        }
         if request.method == "GET", request.path.hasPrefix("/api/sources/"),
            request.path.hasSuffix("/clips") {
             let middle = request.path
@@ -290,6 +295,57 @@ enum ClipxRoutes {
             return .notFound("Thumb not yet generated")
         }
         return .bytes(data, contentType: "image/jpeg")
+    }
+
+    /// Hashes whose hover-scrub sprite strip is being generated on demand right
+    /// now. Lets `sprite(hash:)` dedupe the web client's retry polling instead
+    /// of dispatching a fresh `generateSprite` — and a racing write to the same
+    /// cache file — on every poll. MainActor-isolated: only touched by route
+    /// dispatch and the (main-thread) generation completion below.
+    private static var spritesInFlight: Set<String> = []
+
+    /// Serves a source's hover-scrub sprite strip — the horizontal JPEG of 10
+    /// frames `ThumbnailEngine.generateSprite` produces (240×135 per tile).
+    /// Unlike single thumbs (pre-primed by `primeMissingThumbnails`), sprites
+    /// are generated lazily on first hover: if the strip isn't cached we kick
+    /// off generation and return 202 so the client retries, then serve the JPEG
+    /// once it lands. `generateSprite` runs on the engine's real dispatch queue,
+    /// so this call never blocks.
+    private static func sprite(hash: String) async -> HTTPResponse {
+        guard hash.range(of: "^[a-f0-9]{6,128}$", options: .regularExpression) != nil,
+              let engine = AppEnvironment.shared.thumbnailEngine else {
+            return .badRequest("Invalid hash")
+        }
+        let url = engine.spritePath(for: hash)
+        if let data = try? Data(contentsOf: url) {
+            return .bytes(data, contentType: "image/jpeg")
+        }
+        // Not cached yet. Kick off generation unless one's already running for
+        // this hash — we need the source's file URL to extract frames.
+        if !spritesInFlight.contains(hash) {
+            guard let database = AppEnvironment.shared.database else {
+                return .serverError("Library not ready")
+            }
+            let source: Source? = try? database.read { db in
+                try Source.filter(Source.Columns.hash == hash).fetchOne(db)
+            }
+            guard let source else { return .notFound("No source for hash") }
+            guard FileManager.default.fileExists(atPath: source.path) else {
+                return .notFound("Source file offline")
+            }
+            spritesInFlight.insert(hash)
+            engine.generateSprite(source: source) { _ in
+                // Fires on main (= MainActor). Clear the marker so a failed
+                // generation can be retried on a later poll; a successful one
+                // is served by the file-exists fast path above.
+                Self.spritesInFlight.remove(hash)
+            }
+        }
+        return HTTPResponse(
+            status: 202,
+            headers: ["Content-Type": "application/json", "Retry-After": "1"],
+            body: Data(#"{"status":"generating"}"#.utf8)
+        )
     }
 
     // Streams the compressed *proxy* with Range support so <video> can seek.

@@ -184,6 +184,14 @@ enum Migrations {
             )
         }
 
+        // v3: per-source rotation (degrees clockwise, 0/90/180/270) applied to
+        // the player preview and baked into exports.
+        migrator.registerMigration("v3_source_rotation") { db in
+            try db.alter(table: "sources") { t in
+                t.add(column: "rotation", .integer).notNull().defaults(to: 0)
+            }
+        }
+
         return migrator
     }
 }

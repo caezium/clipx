@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import AVFoundation
+import AppKit
 
 /// Built-in player with frame-accurate scrubbing and I/O marking hotkeys.
 struct PlayerView: View {
@@ -73,26 +74,32 @@ struct PlayerView: View {
             controller.pause()
         }
         .onDisappear { controller.tearDown() }
-        .onKeyPress("i") { markIn(); return .handled }
-        .onKeyPress("o") { markOut(); return .handled }
-        .onKeyPress("s") { saveRange(); return .handled }
-        .onKeyPress(.space) { controller.togglePlayPause(); return .handled }
+        // All player hotkeys route through `key()`, which returns `.ignored`
+        // while a text field is being edited (the capture card's name/tag
+        // fields, etc.) so typing "s" doesn't fire Save. (onKeyPress on this
+        // container otherwise also receives keys aimed at focused descendants.)
+        .onKeyPress("i") { key { markIn() } }
+        .onKeyPress("o") { key { markOut() } }
+        .onKeyPress("s") { key { saveRange() } }
+        .onKeyPress(.space) { key { controller.togglePlayPause() } }
         // Plain arrows: frame-accurate single-frame step.
         // Shift+arrow: 5-second jump for fast scrubbing.
         // J / L (industry-standard transport keys): also 5s jump.
         .onKeyPress(keys: [.leftArrow]) { press in
-            if press.modifiers.contains(.shift) { controller.jumpBackward(seconds: 5) }
-            else { controller.stepBackward() }
-            return .handled
+            key {
+                if press.modifiers.contains(.shift) { controller.jumpBackward(seconds: 5) }
+                else { controller.stepBackward() }
+            }
         }
         .onKeyPress(keys: [.rightArrow]) { press in
-            if press.modifiers.contains(.shift) { controller.jumpForward(seconds: 5) }
-            else { controller.stepForward() }
-            return .handled
+            key {
+                if press.modifiers.contains(.shift) { controller.jumpForward(seconds: 5) }
+                else { controller.stepForward() }
+            }
         }
-        .onKeyPress("j") { controller.jumpBackward(seconds: 5); return .handled }
-        .onKeyPress("l") { controller.jumpForward(seconds: 5); return .handled }
-        .onKeyPress("k") { controller.togglePlayPause(); return .handled }
+        .onKeyPress("j") { key { controller.jumpBackward(seconds: 5) } }
+        .onKeyPress("l") { key { controller.jumpForward(seconds: 5) } }
+        .onKeyPress("k") { key { controller.togglePlayPause() } }
         // Menu commands and command palette post these notifications. We observe
         // them here so the menu drives whichever player is currently visible.
         .onReceive(NotificationCenter.default.publisher(for: .markIn)) { _ in markIn() }
@@ -177,6 +184,14 @@ struct PlayerView: View {
 
             Spacer()
 
+            // Rotate 90° — persists per source and is baked into exports.
+            Button { rotate() } label: {
+                Image(systemName: "rotate.right").font(.system(size: 14))
+            }
+            .buttonStyle(.plain)
+            .clipxIconButton(active: controller.rotation != 0)
+            .help(controller.rotation == 0 ? "Rotate 90°" : "Rotated \(controller.rotation)° — click to rotate")
+
             // Mark cluster
             HStack(spacing: 6) {
                 Button { markIn() } label: {
@@ -217,12 +232,43 @@ struct PlayerView: View {
             }) else { return }
             self.source = src
             controller.load(url: src.url)
+            controller.setRotation(src.rotation)   // restore the source's rotation
             if let inMs = appState.playerInMs {
                 controller.seek(toMs: inMs)
             }
         } catch {
             ClipxLog.player.error("PlayerView.load failed: \(String(describing: error), privacy: .public)")
         }
+    }
+
+    /// Runs `action` and consumes the key — unless a text field is being edited
+    /// (the capture card's name/tag fields, etc.), in which case the key is
+    /// ignored so it reaches the field instead of firing a player shortcut.
+    private func key(_ action: () -> Void) -> KeyPress.Result {
+        if capturing || PlayerView.isEditingText() { return .ignored }
+        action()
+        return .handled
+    }
+
+    /// True when a text field/editor currently holds keyboard focus. A focused
+    /// SwiftUI TextField/TextEditor makes the field editor (an NSText subclass)
+    /// the window's first responder.
+    private static func isEditingText() -> Bool {
+        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
+        return responder is NSText
+    }
+
+    /// Rotate the source 90° CW, persist it, and re-apply to the preview.
+    private func rotate() {
+        let newRotation = (controller.rotation + 90) % 360
+        controller.setRotation(newRotation)
+        guard var src = source, let id = src.id else { return }
+        src.rotation = newRotation
+        source = src
+        try? AppEnvironment.shared.database?.write { db in
+            try db.execute(sql: "UPDATE sources SET rotation = ? WHERE id = ?", arguments: [newRotation, id])
+        }
+        AppState.shared.libraryRevision &+= 1
     }
 
     private func markIn() {

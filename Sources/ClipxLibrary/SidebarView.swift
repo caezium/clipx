@@ -131,6 +131,7 @@ struct SidebarView: View {
                 appState.activeFilters = ClipFilters()
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
+                ensureClipsVisible()
             }
             SidebarRow(label: "Recently Imported", icon: "clock.arrow.circlepath", isActive: isRecentlyImportedActive) {
                 var f = ClipFilters()
@@ -138,6 +139,7 @@ struct SidebarView: View {
                 appState.activeFilters = f
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
+                ensureClipsVisible()
             }
             SidebarRow(label: "Unused", icon: "sparkles",
                        isActive: appState.activeFilters.unusedOnly && appState.selectedProjectID == nil) {
@@ -146,6 +148,7 @@ struct SidebarView: View {
                 appState.activeFilters = f
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
+                ensureClipsVisible()
             }
         }
     }
@@ -176,6 +179,7 @@ struct SidebarView: View {
                     appState.selectedProjectID = nil
                     appState.activeFilters.projectIDs = []
                     appState.activeFilters.collectionIDs = [id]
+                    ensureClipsVisible()
                 }
                 .contextMenu {
                     Button("Rename…") {
@@ -203,6 +207,7 @@ struct SidebarView: View {
                         appState.selectedProjectID = id
                         appState.activeFilters.projectIDs = [id]
                     }
+                    ensureClipsVisible()
                 }
                 .contextMenu {
                     Button("Rename…") {
@@ -253,6 +258,12 @@ struct SidebarView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6).padding(.top, 6).padding(.bottom, 2)
+    }
+
+    /// The calendar shows only sources; when the user picks a clip scope, switch
+    /// to the grid so their saved clips are actually visible.
+    private func ensureClipsVisible() {
+        if appState.viewMode == .calendar { appState.viewMode = .grid }
     }
 
     private func load() {

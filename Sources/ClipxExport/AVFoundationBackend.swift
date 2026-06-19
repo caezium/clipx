@@ -17,6 +17,7 @@ final class AVFoundationBackend {
         outMs: Int64,
         preset: ExportPreset,
         outputPath: String,
+        rotation: Int = 0,
         onCancellerRegistered: ((@Sendable @escaping () -> Void) -> Void)? = nil,
         onProgress: @escaping (Double) -> Void
     ) async throws {
@@ -62,7 +63,8 @@ final class AVFoundationBackend {
             asset: asset,
             renderWidth: preset.width,
             renderHeight: preset.height,
-            frameRate: preset.frameRate
+            frameRate: preset.frameRate,
+            rotation: rotation
         ) {
             session.videoComposition = composition
         }
@@ -106,15 +108,20 @@ final class AVFoundationBackend {
         asset: AVAsset,
         renderWidth: Int,
         renderHeight: Int,
-        frameRate: Int
+        frameRate: Int,
+        rotation: Int = 0
     ) async throws -> AVMutableVideoComposition? {
         let tracks = try await asset.loadTracks(withMediaType: .video)
         guard let videoTrack = tracks.first else { return nil }
         let naturalSize = try await videoTrack.load(.naturalSize)
         let transform = try await videoTrack.load(.preferredTransform)
         let oriented = naturalSize.applying(transform)
-        let srcW = abs(oriented.width)
-        let srcH = abs(oriented.height)
+        let orientedSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+        // Fill-scale against the *rotated* size so a rotated source still fills
+        // the preset's frame. (rotation)
+        let rotatedSize = VideoRotation.renderSize(oriented: orientedSize, degrees: rotation)
+        let srcW = rotatedSize.width
+        let srcH = rotatedSize.height
         guard srcW > 0, srcH > 0 else { return nil }
 
         let dstW = CGFloat(renderWidth)
@@ -124,6 +131,7 @@ final class AVFoundationBackend {
         let off = FramingPolicy.centerOffset(scaledW: srcW * scale, scaledH: srcH * scale, dstW: dstW, dstH: dstH)
 
         var t = transform
+        t = t.concatenating(VideoRotation.transform(oriented: orientedSize, degrees: rotation))
         t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
         t = t.concatenating(CGAffineTransform(translationX: off.x, y: off.y))
 

@@ -25,7 +25,8 @@ final class FFmpegBackend {
         inMs: Int64,
         outMs: Int64,
         preset: ExportPreset,
-        outputPath: String
+        outputPath: String,
+        rotation: Int = 0
     ) -> [String] {
         let durationSec = Double(outMs - inMs) / 1000.0
         let startSec = Double(inMs) / 1000.0
@@ -39,9 +40,11 @@ final class FFmpegBackend {
             "-i", sourcePath,
             "-ss", String(format: "%.3f", min(1, startSec)),
             "-t", String(format: "%.3f", durationSec),
-            // Shared fill+crop policy — matches the AVFoundation backend so
-            // Direct and MAS builds frame identically. (#12)
-            "-vf", FramingPolicy.ffmpegFilter(width: preset.width, height: preset.height),
+            // Rotation (if any) THEN shared fill+crop — matches the AVFoundation
+            // backend so Direct and MAS builds frame identically. (#12, rotation)
+            "-vf", [VideoRotation.ffmpegFilter(degrees: rotation),
+                    FramingPolicy.ffmpegFilter(width: preset.width, height: preset.height)]
+                .compactMap { $0 }.joined(separator: ","),
             "-r", String(preset.frameRate),
             "-c:v", ChipDetector.recommendedH264Codec(),
             "-b:v", "\(preset.videoBitrateKbps)k",

@@ -25,6 +25,9 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
     var thumbPath: String?
     var online: Bool = true
     var notes: String?
+    /// Display rotation in degrees clockwise (0/90/180/270). Applied to the
+    /// player preview and baked into exports.
+    var rotation: Int = 0
 
     static let databaseTableName = "sources"
 
@@ -37,7 +40,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         case createdAt = "created_at"
         case importedAt = "imported_at"
         case thumbPath = "thumb_path"
-        case online, notes
+        case online, notes, rotation
     }
 
     enum Columns: String, ColumnExpression {
@@ -49,7 +52,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         case createdAt = "created_at"
         case importedAt = "imported_at"
         case thumbPath = "thumb_path"
-        case online, notes
+        case online, notes, rotation
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {

@@ -16,9 +16,12 @@ final class PlayerController: ObservableObject {
     @Published private(set) var currentMs: Int64 = 0
     @Published private(set) var durationMs: Int64 = 0
     @Published var aspectRatio: CGFloat = 16.0 / 9.0
+    /// Display rotation (degrees CW) applied to the preview via a video composition.
+    @Published private(set) var rotation: Int = 0
 
     private var timeObserver: Any?
     private var statusCancellable: AnyCancellable?
+    private var asset: AVURLAsset?
     private(set) var fps: Float = 30.0
 
     init() {}
@@ -26,6 +29,7 @@ final class PlayerController: ObservableObject {
     func load(url: URL) {
         tearDown()
         let asset = AVURLAsset(url: url)
+        self.asset = asset
         let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         self.player = player
@@ -64,9 +68,53 @@ final class PlayerController: ObservableObject {
         timeObserver = nil
         player?.pause()
         player = nil
+        asset = nil
+        rotation = 0
         isPlaying = false
         currentMs = 0
         durationMs = 0
+    }
+
+    /// Set the preview rotation (degrees CW) and apply it via a video
+    /// composition on the current item.
+    func setRotation(_ degrees: Int) {
+        rotation = VideoRotation.normalized(degrees)
+        applyRotationComposition()
+    }
+
+    private func applyRotationComposition() {
+        guard let item = player?.currentItem else { return }
+        let degrees = rotation
+        if degrees == 0 { item.videoComposition = nil; return }
+        guard let asset else { return }
+        Task { [weak self] in
+            let comp = await Self.rotationComposition(asset: asset, degrees: degrees)
+            await MainActor.run {
+                guard let self, self.rotation == degrees, self.player?.currentItem === item else { return }
+                item.videoComposition = comp
+            }
+        }
+    }
+
+    nonisolated private static func rotationComposition(asset: AVURLAsset, degrees: Int) async -> AVMutableVideoComposition? {
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let natural = try? await track.load(.naturalSize) else { return nil }
+        let preferred = (try? await track.load(.preferredTransform)) ?? .identity
+        let oriented = natural.applying(preferred)
+        let orientedSize = CGSize(width: abs(oriented.width), height: abs(oriented.height))
+        var t = preferred
+        t = t.concatenating(VideoRotation.transform(oriented: orientedSize, degrees: degrees))
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+        layer.setTransform(t, at: .zero)
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: (try? await asset.load(.duration)) ?? .zero)
+        instruction.layerInstructions = [layer]
+        let comp = AVMutableVideoComposition()
+        comp.renderSize = VideoRotation.renderSize(oriented: orientedSize, degrees: degrees)
+        let fps = (try? await track.load(.nominalFrameRate)) ?? 30
+        comp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(max(24, Int(fps.rounded()))))
+        comp.instructions = [instruction]
+        return comp
     }
 
     func togglePlayPause() {

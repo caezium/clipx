@@ -155,6 +155,12 @@ enum WebContent {
     .card:active { transform: scale(0.98); }
     .card .thumb { background: var(--panel-2); aspect-ratio: 16 / 9; position: relative; overflow: hidden; }
     .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    /* Hover-scrub sprite overlay. The strip is 10 frames laid side by side, so
+       background-size: 1000% makes one frame exactly fill the 16/9 thumb;
+       background-position-x then steps between frames. pointer-events: none so
+       mousemove still hits .thumb (which carries the scrub listener). */
+    .card .thumb .sprite { position: absolute; inset: 0; background-repeat: no-repeat; background-size: 1000% 100%; background-position: 0 0; opacity: 0; pointer-events: none; transition: opacity 0.12s ease; }
+    .card .thumb .sprite.active { opacity: 1; }
     .card .thumb .badge { position: absolute; bottom: 6px; right: 6px; background: rgba(0,0,0,0.75); color: white; font-size: 11px; padding: 2px 6px; border-radius: 999px; font-variant-numeric: tabular-nums; }
     .card .thumb .badge.left { left: 6px; right: auto; }
     .card .meta { padding: 8px 10px; }
@@ -280,6 +286,66 @@ enum WebContent {
       return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(cs).padStart(2,'0')}`;
     }
     function thumbURL(hash) { return hash ? `/api/thumb/${hash}.jpg` : ''; }
+    function spriteURL(hash) { return hash ? `/api/sprite/${hash}.jpg` : ''; }
+
+    // ----- Hover-scrub sprites -----
+    // The server hands back a horizontal strip of SPRITE_FRAMES frames (240×135
+    // each). Mapping the cursor's x-fraction to a frame index lets a card
+    // preview the whole clip on hover. Sprites aren't pre-generated, so the
+    // first request may 202 while the strip renders — we poll, then cache the
+    // decoded blob URL per hash so subsequent hovers are instant.
+    const SPRITE_FRAMES = 10;
+    const spriteCache = new Map(); // hash -> Promise<string|null> (object URL)
+
+    function loadSprite(hash) {
+      if (!hash) return Promise.resolve(null);
+      if (spriteCache.has(hash)) return spriteCache.get(hash);
+      const p = (async () => {
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        for (let i = 0; i < 40; i++) { // ~1 min ceiling while the strip renders
+          let res;
+          try { res = await fetch(spriteURL(hash), { headers }); }
+          catch (e) { return null; }
+          if (res.status === 200) return URL.createObjectURL(await res.blob());
+          if (res.status === 202) { await sleep(1500); continue; } // still generating
+          return null; // 404 (offline / no source) / 401 / error — keep static thumb
+        }
+        return null;
+      })();
+      spriteCache.set(hash, p);
+      return p;
+    }
+
+    // Wire hover-scrub onto a card's .thumb (which must contain a .sprite div).
+    function attachHoverScrub(thumbEl, hash) {
+      if (!thumbEl) return;
+      const spriteEl = thumbEl.querySelector('.sprite');
+      if (!spriteEl) return;
+      let ready = false, hovering = false;
+      thumbEl.addEventListener('mouseenter', () => {
+        hovering = true;
+        if (ready) return;
+        loadSprite(hash).then(objURL => {
+          if (!objURL) return; // generation failed / offline → static thumb stays
+          spriteEl.style.backgroundImage = `url(${objURL})`;
+          ready = true;
+          if (hovering) spriteEl.classList.add('active');
+        });
+      });
+      thumbEl.addEventListener('mousemove', (e) => {
+        if (!ready) return;
+        const rect = thumbEl.getBoundingClientRect();
+        if (rect.width <= 0) return;
+        const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const idx = Math.min(SPRITE_FRAMES - 1, Math.floor(frac * SPRITE_FRAMES));
+        spriteEl.style.backgroundPositionX = (idx / (SPRITE_FRAMES - 1) * 100) + '%';
+        spriteEl.classList.add('active');
+      });
+      thumbEl.addEventListener('mouseleave', () => {
+        hovering = false;
+        spriteEl.classList.remove('active');
+      });
+    }
 
     function sourceCard(src) {
       const card = document.createElement('div');
@@ -287,6 +353,7 @@ enum WebContent {
       card.innerHTML = `
         <div class="thumb">
           ${src.hash ? `<img loading="lazy" src="${thumbURL(src.hash)}" onerror="this.style.display='none'">` : ''}
+          ${src.hash ? `<div class="sprite" aria-hidden="true"></div>` : ''}
           ${src.durationMs ? `<span class="badge left">${formatDuration(src.durationMs)}</span>` : ''}
           ${src.width && src.height ? `<span class="badge">${src.width}×${src.height}</span>` : ''}
         </div>
@@ -295,6 +362,7 @@ enum WebContent {
           <div class="sub">${src.fps ? Math.round(src.fps) + 'p' : ''}${src.online ? '' : ' · offline'}</div>
         </div>
       `;
+      if (src.hash) attachHoverScrub(card.querySelector('.thumb'), src.hash);
       card.addEventListener('click', () => openSourceDetail(src));
       return card;
     }
