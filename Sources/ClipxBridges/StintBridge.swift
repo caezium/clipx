@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import AVFoundation
+import GRDB
 
 /// Bridges a Clipx clip into a Stint review project — the review half of the
 /// Clipx ⇄ Stint merge. It renders the clip, creates a Stint project + clip,
@@ -200,29 +201,34 @@ enum StintBridge {
         AppState.shared.showToast("Rendering \(ids.count) clip(s) for review…", level: .info)
         do {
             let project = try await createProject(base: config.baseURL, name: projectName)
+            let pid = project.project.id
+            var stintClipByClip: [Int64: String] = [:]
             for cid in ids {
                 let render = try await renderClip(clipID: cid)
                 let stintClipID = try await createClip(
-                    base: config.baseURL, projectID: project.project.id,
+                    base: config.baseURL, projectID: pid,
                     ownerKey: project.ownerKey, name: render.name
                 )
                 try await uploadVideo(
-                    base: config.baseURL, projectID: project.project.id,
+                    base: config.baseURL, projectID: pid,
                     ownerKey: project.ownerKey, stintClipID: stintClipID,
                     fileURL: render.fileURL, durationSeconds: render.durationSeconds
                 )
                 try? FileManager.default.removeItem(at: render.fileURL)
+                stintClipByClip[cid] = stintClipID
             }
-            let link = shareURL(
-                base: config.baseURL, projectID: project.project.id,
-                shareToken: project.shareToken
-            )
+            let link = shareURL(base: config.baseURL, projectID: pid, shareToken: project.shareToken)
             if let db = AppEnvironment.shared.database {
                 try? db.write { dbc in
+                    // Remember the project's creds so comments can be pulled back.
+                    try dbc.execute(
+                        sql: "INSERT OR REPLACE INTO stint_projects(project_id, owner_key, share_token, base_url, created_at) VALUES(?,?,?,?,?)",
+                        arguments: [pid, project.ownerKey, project.shareToken, config.baseURL.absoluteString, Int64(Date().timeIntervalSince1970)]
+                    )
                     for cid in ids {
                         try dbc.execute(
-                            sql: "UPDATE clips SET review_url = ? WHERE id = ?",
-                            arguments: [link.absoluteString, cid]
+                            sql: "UPDATE clips SET review_url = ?, stint_project_id = ?, stint_clip_id = ? WHERE id = ?",
+                            arguments: [link.absoluteString, pid, stintClipByClip[cid], cid]
                         )
                     }
                 }
@@ -240,6 +246,132 @@ enum StintBridge {
             }
         } catch {
             AppState.shared.showToast("Send to review failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+
+    // MARK: - Pull-back (Stint comments → clip notes)
+
+    struct StintComment: Decodable {
+        let id: String
+        let t: Double?
+        let authorName: String
+        let body: String
+        let resolved: Bool
+        let parentCommentId: String?
+        let transcript: String?
+    }
+    private struct CommentsResponse: Decodable { let comments: [StintComment] }
+
+    /// m:ss for a comment's frame timestamp (pure).
+    static func mmss(_ t: Double?) -> String {
+        guard let t, t >= 0 else { return "—" }
+        let total = Int(t.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
+    /// Render a threaded digest of comments + the total count (pure, testable).
+    static func formatComments(_ comments: [StintComment]) -> (text: String, count: Int) {
+        var childrenByParent: [String: [StintComment]] = [:]
+        for c in comments where c.parentCommentId != nil {
+            childrenByParent[c.parentCommentId!, default: []].append(c)
+        }
+        func bodyText(_ c: StintComment) -> String {
+            if !c.body.isEmpty { return c.body }
+            if let t = c.transcript, !t.isEmpty { return "[voice] \(t)" }
+            return "[voice note]"
+        }
+        var lines: [String] = []
+        for c in comments where c.parentCommentId == nil {
+            let mark = c.resolved ? " (resolved)" : ""
+            lines.append("- [\(mmss(c.t))] \(c.authorName)\(mark): \(bodyText(c))")
+            for reply in childrenByParent[c.id] ?? [] {
+                lines.append("    - reply \(reply.authorName): \(bodyText(reply))")
+            }
+        }
+        return (lines.joined(separator: "\n"), comments.count)
+    }
+
+    /// Merge a fresh review digest into a clip's notes, replacing any prior
+    /// review block so repeated refreshes don't stack (pure, testable).
+    static func mergeReviewNotes(existing: String?, digest: String) -> String {
+        let marker = "<!-- clipx:review -->"
+        var base = existing ?? ""
+        if let r = base.range(of: marker) {
+            base = String(base[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let block = "\(marker)\nReview comments:\n\(digest)"
+        return base.isEmpty ? block : base + "\n\n" + block
+    }
+
+    private static func getComments(base: URL, projectID: String, ownerKey: String, stintClipID: String) async throws -> [StintComment] {
+        var req = URLRequest(url: base.appendingPathComponent("api/clips/\(stintClipID)/comments"))
+        req.setValue(ownerCookieHeader(projectID: projectID, ownerKey: ownerKey), forHTTPHeaderField: "Cookie")
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(resp)
+        return try JSONDecoder().decode(CommentsResponse.self, from: data).comments
+    }
+
+    /// Pulls review comments back from Stint for the given clips (or every
+    /// review-linked clip when `clipIDs` is empty), merging them into each
+    /// clip's notes and caching the count. Visible in the Inspector's notes.
+    @MainActor
+    static func refreshComments(clipIDs: [Int64]) async {
+        guard let db = AppEnvironment.shared.database else { return }
+        struct Linked { let clipID: Int64; let stintClipID: String; let projectID: String }
+        let linked: [Linked] = (try? db.read { dbc -> [Linked] in
+            let sql: String
+            var args: [DatabaseValueConvertible] = []
+            if clipIDs.isEmpty {
+                sql = "SELECT id, stint_clip_id, stint_project_id FROM clips WHERE stint_clip_id IS NOT NULL"
+            } else {
+                let ph = clipIDs.map { _ in "?" }.joined(separator: ",")
+                sql = "SELECT id, stint_clip_id, stint_project_id FROM clips WHERE stint_clip_id IS NOT NULL AND id IN (\(ph))"
+                args = clipIDs.map { $0 as DatabaseValueConvertible }
+            }
+            let rows = try Row.fetchAll(dbc, sql: sql, arguments: StatementArguments(args))
+            return rows.compactMap { r in
+                guard let cid: Int64 = r["id"],
+                      let scid: String = r["stint_clip_id"],
+                      let pid: String = r["stint_project_id"] else { return nil }
+                return Linked(clipID: cid, stintClipID: scid, projectID: pid)
+            }
+        }) ?? []
+
+        guard !linked.isEmpty else {
+            AppState.shared.showToast("No clips have been sent for review yet", level: .warning)
+            return
+        }
+
+        func creds(forProject pid: String) -> (ownerKey: String, baseURL: URL)? {
+            try? db.read { dbc -> (String, URL)? in
+                guard let row = try Row.fetchOne(dbc, sql: "SELECT owner_key, base_url FROM stint_projects WHERE project_id = ?", arguments: [pid]),
+                      let ok: String = row["owner_key"],
+                      let burl: String = row["base_url"],
+                      let u = URL(string: burl) else { return nil }
+                return (ok, u)
+            } ?? nil
+        }
+
+        var total = 0
+        do {
+            for item in linked {
+                guard let c = creds(forProject: item.projectID) else { continue }
+                let comments = try await getComments(base: c.baseURL, projectID: item.projectID, ownerKey: c.ownerKey, stintClipID: item.stintClipID)
+                let digest = formatComments(comments)
+                total += digest.count
+                let existing: String? = try? db.read { try Clip.fetchOne($0, key: item.clipID)?.notes }
+                let merged = digest.count > 0 ? mergeReviewNotes(existing: existing, digest: digest.text) : existing
+                try? db.write { dbc in
+                    try dbc.execute(
+                        sql: "UPDATE clips SET notes = ?, review_comment_count = ? WHERE id = ?",
+                        arguments: [merged, digest.count, item.clipID]
+                    )
+                }
+            }
+            AppState.shared.libraryRevision &+= 1
+            AppState.shared.showToast("Pulled \(total) review comment(s) from Stint", level: .success)
+        } catch {
+            AppState.shared.showToast("Couldn't fetch comments: \(error.localizedDescription)", level: .error)
         }
     }
 }

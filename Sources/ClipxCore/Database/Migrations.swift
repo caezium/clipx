@@ -214,6 +214,25 @@ enum Migrations {
             }
         }
 
+        // v6: full linkage so review comments can be pulled BACK from Stint —
+        // the stint clip/project ids per clip, a cached comment count, and a
+        // table holding each Stint project's owner key + base URL (needed for
+        // owner-authenticated comment fetches).
+        migrator.registerMigration("v6_stint_review_linkage") { db in
+            try db.alter(table: "clips") { t in
+                t.add(column: "stint_clip_id", .text)
+                t.add(column: "stint_project_id", .text)
+                t.add(column: "review_comment_count", .integer)
+            }
+            try db.create(table: "stint_projects") { t in
+                t.column("project_id", .text).primaryKey()
+                t.column("owner_key", .text).notNull()
+                t.column("share_token", .text).notNull()
+                t.column("base_url", .text).notNull()
+                t.column("created_at", .integer).notNull()
+            }
+        }
+
         return migrator
     }
 }

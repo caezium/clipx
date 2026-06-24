@@ -177,6 +177,10 @@ struct CommandPaletteView: View {
             let ids = Array(appState.selectedClipIDs)
             Task { await StintBridge.sendToReview(clipIDs: ids, projectName: "Clipx review") }
         })
+        items.append(PaletteItem(id: "refresh-stint", title: "Refresh Review Comments (Stint)", icon: "arrow.triangle.2.circlepath") {
+            let ids = Array(appState.selectedClipIDs)
+            Task { await StintBridge.refreshComments(clipIDs: ids) }
+        })
         items.append(PaletteItem(id: "settings", title: "Settings…", icon: "gearshape", shortcut: "⌘,") {
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         })

@@ -25,6 +25,12 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
     /// Public Stint review share link this clip was sent to, if any (the
     /// Clipx → Stint collaboration bridge).
     var reviewUrl: String?
+    /// The Stint clip / project ids this clip was uploaded as, used to pull
+    /// review comments back. Nil until sent for review.
+    var stintClipId: String?
+    var stintProjectId: String?
+    /// Cached count of review comments pulled back from Stint.
+    var reviewCommentCount: Int?
 
     static let databaseTableName = "clips"
 
@@ -45,6 +51,9 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case usedCount = "used_count"
         case purpose
         case reviewUrl = "review_url"
+        case stintClipId = "stint_clip_id"
+        case stintProjectId = "stint_project_id"
+        case reviewCommentCount = "review_comment_count"
     }
 
     enum Columns: String, ColumnExpression {
@@ -64,6 +73,9 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case usedCount = "used_count"
         case purpose
         case reviewUrl = "review_url"
+        case stintClipId = "stint_clip_id"
+        case stintProjectId = "stint_project_id"
+        case reviewCommentCount = "review_comment_count"
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
