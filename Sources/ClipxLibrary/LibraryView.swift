@@ -7,8 +7,6 @@ struct LibraryView: View {
     @State private var clips: [Clip] = []
     @State private var loading = false
     @State private var hitLimit = false
-    /// Keyboard focus for the search field so ⌘F can move focus to it. (#27)
-    @FocusState private var searchFocused: Bool
 
     /// True when a query or filter is narrowing the library — distinguishes a
     /// "no results" state from a genuinely empty library. (#38)
@@ -33,101 +31,13 @@ struct LibraryView: View {
             content
         }
         .background(Theme.bg)
-        .toolbar { toolbarContent }
         .onAppear(perform: reload)
-        // ⌘F / menu "Search Clips" focuses the field. (#27)
-        .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
-            searchFocused = true
-        }
         // Search debounced — every other change reloads immediately.
         .onChange(of: appState.searchQuery) { _, _ in scheduleDebouncedReload() }
         .onChange(of: appState.activeFilters) { _, _ in reload() }
         .onChange(of: appState.sortOption) { _, _ in reload() }
         .onChange(of: appState.libraryRevision) { _, _ in reload() }
         .onChange(of: appState.bootstrapped) { _, ready in if ready { reload() } }
-    }
-
-    /// The app's controls live in the window's unified toolbar — search in the
-    /// center, sort / view-mode / inspector on the trailing side — so they share
-    /// the title-bar row with the traffic lights instead of forming a second top
-    /// row under an empty title bar. (removes the "empty grey topbar")
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItemGroup(placement: .principal) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                TextField("Search clips, tags, notes…", text: $appState.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($searchFocused)
-                    .onExitCommand { appState.searchQuery = "" }   // Esc clears (#38)
-                    .frame(minWidth: 180)
-                if !appState.searchQuery.isEmpty {
-                    Button { appState.searchQuery = "" } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5)
-            .background(Theme.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-            .frame(width: 340)
-
-            // Multi-selection actions — batch export is reachable here. (#29)
-            if appState.selectedClipIDs.count > 1 {
-                Text("\(appState.selectedClipIDs.count) selected")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                Menu {
-                    Button("Export as Reels") { ExportActions.exportSelected(.reels) }
-                    Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
-                    Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
-                } label: {
-                    Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
-                }
-                .fixedSize()
-                Button { appState.selectedClipIDs = [] } label: {
-                    Text("Clear").font(.system(size: 12))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.textTertiary)
-            }
-        }
-
-        ToolbarItemGroup(placement: .primaryAction) {
-            Picker("", selection: $appState.sortOption) {
-                ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
-                    Text(opt.label).tag(opt)
-                }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(Theme.textSecondary)
-            .frame(width: 160)
-
-            Picker("", selection: $appState.viewMode) {
-                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
-                Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
-                Image(systemName: "list.bullet").tag(LibraryViewMode.list)
-                Image(systemName: "tray.full").tag(LibraryViewMode.lightTable)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 152)
-            .help("Calendar · Grid · List · Light Table")
-
-            Button {
-                appState.inspectorVisible.toggle()
-            } label: {
-                Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
-            }
-            .help("Toggle Inspector (⌥⌘I)")
-            .keyboardShortcut("i", modifiers: [.command, .option])
-        }
     }
 
     @ViewBuilder
