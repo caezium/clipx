@@ -18,6 +18,10 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
     var notes: String?
     var createdAt: Int64
     var usedCount: Int = 0
+    /// Comma-separated "purpose" keys — the intent/destination(s) this clip is
+    /// marked for (e.g. "coach,reel"). Drives the Light Table grouping. The
+    /// label vocabulary is user-configurable; see `Purposes`.
+    var purpose: String?
 
     static let databaseTableName = "clips"
 
@@ -36,6 +40,7 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case notes
         case createdAt = "created_at"
         case usedCount = "used_count"
+        case purpose
     }
 
     enum Columns: String, ColumnExpression {
@@ -53,6 +58,7 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case notes
         case createdAt = "created_at"
         case usedCount = "used_count"
+        case purpose
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -64,6 +70,12 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
     var moodList: [String] {
         guard let mood, !mood.isEmpty else { return [] }
         return mood.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// The clip's purpose keys, parsed from the CSV `purpose` field.
+    var purposeList: [String] {
+        guard let purpose, !purpose.isEmpty else { return [] }
+        return purpose.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 }
 

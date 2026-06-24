@@ -192,6 +192,19 @@ enum Migrations {
             }
         }
 
+        // v4: general-purpose "purpose" labels per clip (CSV of purpose keys,
+        // e.g. "coach,reel") replacing the film-school taxonomy on the fast
+        // path, plus a per-source `reviewed_at` timestamp that powers the Cut
+        // Room session rail's progress (reviewed / in-progress / not-seen).
+        migrator.registerMigration("v4_purpose_and_review") { db in
+            try db.alter(table: "clips") { t in
+                t.add(column: "purpose", .text)
+            }
+            try db.alter(table: "sources") { t in
+                t.add(column: "reviewed_at", .integer)
+            }
+        }
+
         return migrator
     }
 }

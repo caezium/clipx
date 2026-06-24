@@ -28,6 +28,10 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
     /// Display rotation in degrees clockwise (0/90/180/270). Applied to the
     /// player preview and baked into exports.
     var rotation: Int = 0
+    /// Unix seconds when the user marked this source fully reviewed (done going
+    /// through it). Nil = not yet reviewed. Powers the Cut Room session rail's
+    /// reviewed / in-progress / not-seen progress.
+    var reviewedAt: Int64?
 
     static let databaseTableName = "sources"
 
@@ -41,6 +45,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         case importedAt = "imported_at"
         case thumbPath = "thumb_path"
         case online, notes, rotation
+        case reviewedAt = "reviewed_at"
     }
 
     enum Columns: String, ColumnExpression {
@@ -53,6 +58,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         case importedAt = "imported_at"
         case thumbPath = "thumb_path"
         case online, notes, rotation
+        case reviewedAt = "reviewed_at"
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -80,4 +86,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         guard let w = width, let h = height, h > 0 else { return nil }
         return Double(w) / Double(h)
     }
+
+    /// True once the user has marked this source fully reviewed.
+    var isReviewed: Bool { (reviewedAt ?? 0) > 0 }
 }
