@@ -113,10 +113,11 @@ struct LibraryView: View {
                 Image(systemName: "calendar").tag(LibraryViewMode.calendar)
                 Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
                 Image(systemName: "list.bullet").tag(LibraryViewMode.list)
+                Image(systemName: "tray.full").tag(LibraryViewMode.lightTable)
             }
             .pickerStyle(.segmented)
-            .frame(width: 120)
-            .help("Calendar · Grid · List")
+            .frame(width: 152)
+            .help("Calendar · Grid · List · Light Table")
 
             Button {
                 appState.inspectorVisible.toggle()
@@ -134,7 +135,11 @@ struct LibraryView: View {
 
     @ViewBuilder
     private var content: some View {
-        if loading {
+        if appState.viewMode == .lightTable {
+            // The Light Table harvests all purposed clips itself, independent of
+            // the current search/filter narrowing.
+            LightTableView()
+        } else if loading {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if sources.isEmpty && clips.isEmpty {
             if isFiltering {
@@ -154,6 +159,8 @@ struct LibraryView: View {
                     ClipListView(sources: sources, clips: clips)
                 case .calendar:
                     CalendarBrowseView(sources: sources)
+                case .lightTable:
+                    EmptyView()   // handled above, before the empty-state guard
                 }
                 if hitLimit {
                     pageFooter

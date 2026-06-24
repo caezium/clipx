@@ -145,6 +145,9 @@ struct CommandPaletteView: View {
         items.append(PaletteItem(id: "view-list", title: "List View", icon: "list.bullet") {
             appState.playerSourceID = nil; appState.viewMode = .list
         })
+        items.append(PaletteItem(id: "view-lighttable", title: "Light Table — clips by purpose", icon: "tray.full") {
+            appState.playerSourceID = nil; appState.viewMode = .lightTable
+        })
         items.append(PaletteItem(id: "toggle-inspector", title: "Toggle Inspector", icon: "sidebar.trailing", shortcut: "⌥⌘I") {
             appState.inspectorVisible.toggle()
         })
