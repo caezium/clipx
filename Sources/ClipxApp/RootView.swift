@@ -196,52 +196,48 @@ private struct PlayerWorkspace: View {
 
             Divider().overlay(Theme.border)
 
-            VStack(spacing: 0) {
-                // Header bar
-                HStack(spacing: 12) {
-                    Button {
-                        appState.playerSourceID = nil
-                        appState.playerInMs = nil
-                        appState.playerOutMs = nil
-                    } label: {
-                        Label("Library", systemImage: "chevron.left")
-                            .labelStyle(.titleAndIcon)
-                    }
-                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
-                    .keyboardShortcut(.escape, modifiers: [])
-
-                    Text(sourceName)
-                        .font(.system(size: 14, weight: .semibold))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    if appState.selectedClipIDs.first != nil {
-                        Button {
-                            appState.inspectorVisible.toggle()
-                        } label: {
-                            Image(systemName: "sidebar.trailing")
-                        }
-                        .buttonStyle(.plain)
-                        .clipxIconButton(active: appState.inspectorVisible)
-                        .keyboardShortcut("i", modifiers: [.command, .option])
-                        .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Theme.bgRaised)
-
-                Divider().overlay(Theme.border)
-
-                // Player fills the rest; the inspector is a framework-managed
-                // trailing column owned by RootView (see .inspector above).
-                PlayerView(sourceID: sourceID)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            // Player fills the rest; the inspector is a framework-managed
+            // trailing column owned by RootView (see .inspector above).
+            PlayerView(sourceID: sourceID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        // Header controls live in the unified toolbar (shared row with the
+        // traffic lights), not a custom row under an empty title bar.
+        .toolbar { playerToolbar }
         .onAppear(perform: loadName)
         .onChange(of: sourceID) { _, _ in loadName() }
+    }
+
+    @ToolbarContentBuilder
+    private var playerToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button {
+                appState.playerSourceID = nil
+                appState.playerInMs = nil
+                appState.playerOutMs = nil
+            } label: {
+                Label("Library", systemImage: "chevron.left")
+            }
+            .keyboardShortcut(.escape, modifiers: [])
+        }
+        ToolbarItem(placement: .principal) {
+            Text(sourceName)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(Theme.textPrimary)
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            if appState.selectedClipIDs.first != nil {
+                Button {
+                    appState.inspectorVisible.toggle()
+                } label: {
+                    Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
+                }
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+            }
+        }
     }
 
     private func loadName() {

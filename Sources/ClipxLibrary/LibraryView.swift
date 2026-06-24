@@ -26,14 +26,14 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Divider().overlay(Theme.border)
             if let pid = appState.selectedProjectID {
                 ProjectHeaderView(projectID: pid)
+                Divider().overlay(Theme.border)
             }
             content
         }
         .background(Theme.bg)
+        .toolbar { toolbarContent }
         .onAppear(perform: reload)
         // ⌘F / menu "Search Clips" focuses the field. (#27)
         .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
@@ -47,9 +47,13 @@ struct LibraryView: View {
         .onChange(of: appState.bootstrapped) { _, ready in if ready { reload() } }
     }
 
-    @ViewBuilder
-    private var toolbar: some View {
-        HStack(spacing: 10) {
+    /// The app's controls live in the window's unified toolbar — search in the
+    /// center, sort / view-mode / inspector on the trailing side — so they share
+    /// the title-bar row with the traffic lights instead of forming a second top
+    /// row under an empty title bar. (removes the "empty grey topbar")
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItemGroup(placement: .principal) {
             HStack(spacing: 7) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13))
@@ -59,6 +63,7 @@ struct LibraryView: View {
                     .font(.system(size: 13))
                     .focused($searchFocused)
                     .onExitCommand { appState.searchQuery = "" }   // Esc clears (#38)
+                    .frame(minWidth: 180)
                 if !appState.searchQuery.isEmpty {
                     Button { appState.searchQuery = "" } label: {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 12))
@@ -68,37 +73,33 @@ struct LibraryView: View {
                 }
             }
             .padding(.horizontal, 11)
-            .padding(.vertical, 7)
+            .padding(.vertical, 5)
             .background(Theme.surface, in: Capsule())
             .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-            .frame(maxWidth: 380)
+            .frame(width: 340)
 
             // Multi-selection actions — batch export is reachable here. (#29)
             if appState.selectedClipIDs.count > 1 {
-                HStack(spacing: 8) {
-                    Text("\(appState.selectedClipIDs.count) selected")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                    Menu {
-                        Button("Export as Reels") { ExportActions.exportSelected(.reels) }
-                        Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
-                        Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
-                    } label: {
-                        Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    Button { appState.selectedClipIDs = [] } label: {
-                        Text("Clear").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
+                Text("\(appState.selectedClipIDs.count) selected")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Menu {
+                    Button("Export as Reels") { ExportActions.exportSelected(.reels) }
+                    Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
+                    Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
+                } label: {
+                    Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
                 }
-                .padding(.leading, 4)
+                .fixedSize()
+                Button { appState.selectedClipIDs = [] } label: {
+                    Text("Clear").font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textTertiary)
             }
+        }
 
-            Spacer()
-
+        ToolbarItemGroup(placement: .primaryAction) {
             Picker("", selection: $appState.sortOption) {
                 ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
                     Text(opt.label).tag(opt)
@@ -107,7 +108,7 @@ struct LibraryView: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .tint(Theme.textSecondary)
-            .frame(width: 170)
+            .frame(width: 160)
 
             Picker("", selection: $appState.viewMode) {
                 Image(systemName: "calendar").tag(LibraryViewMode.calendar)
@@ -124,13 +125,9 @@ struct LibraryView: View {
             } label: {
                 Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
             }
-            .buttonStyle(.plain)
-            .clipxIconButton(active: appState.inspectorVisible)
             .help("Toggle Inspector (⌥⌘I)")
             .keyboardShortcut("i", modifiers: [.command, .option])
         }
-        .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(Theme.bgRaised)
     }
 
     @ViewBuilder
