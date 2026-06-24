@@ -58,6 +58,15 @@ struct LightTableView: View {
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
                 Button {
+                    let ids = clips.compactMap(\.id)
+                    Task { await StintBridge.sendToReview(clipIDs: ids, projectName: "\(Purposes.title(forKey: key)) — Clipx") }
+                } label: {
+                    Label("Send to review", systemImage: "paperplane")
+                }
+                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                .fixedSize()
+                .help("Render these clips into a Stint project and copy a share link for frame-pinned comments")
+                Button {
                     appState.selectedClipIDs = Set(clips.compactMap(\.id))
                     ExportActions.exportSelected(preset)
                 } label: {

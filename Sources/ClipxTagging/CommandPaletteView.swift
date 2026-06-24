@@ -173,6 +173,10 @@ struct CommandPaletteView: View {
         items.append(PaletteItem(id: "export-obsidian", title: "Write Obsidian Sidecars…", icon: "doc.text.below.ecg") {
             ExportActions.exportObsidian()
         })
+        items.append(PaletteItem(id: "send-stint", title: "Send Selected to Review (Stint)", icon: "paperplane") {
+            let ids = Array(appState.selectedClipIDs)
+            Task { await StintBridge.sendToReview(clipIDs: ids, projectName: "Clipx review") }
+        })
         items.append(PaletteItem(id: "settings", title: "Settings…", icon: "gearshape", shortcut: "⌘,") {
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         })

@@ -22,6 +22,9 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
     /// marked for (e.g. "coach,reel"). Drives the Light Table grouping. The
     /// label vocabulary is user-configurable; see `Purposes`.
     var purpose: String?
+    /// Public Stint review share link this clip was sent to, if any (the
+    /// Clipx → Stint collaboration bridge).
+    var reviewUrl: String?
 
     static let databaseTableName = "clips"
 
@@ -41,6 +44,7 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case createdAt = "created_at"
         case usedCount = "used_count"
         case purpose
+        case reviewUrl = "review_url"
     }
 
     enum Columns: String, ColumnExpression {
@@ -59,6 +63,7 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case createdAt = "created_at"
         case usedCount = "used_count"
         case purpose
+        case reviewUrl = "review_url"
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {

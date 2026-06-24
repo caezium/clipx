@@ -1,0 +1,245 @@
+import Foundation
+import AppKit
+import AVFoundation
+
+/// Bridges a Clipx clip into a Stint review project — the review half of the
+/// Clipx ⇄ Stint merge. It renders the clip, creates a Stint project + clip,
+/// uploads the rendered video, and returns a public share link the reviewer
+/// (coach, teammate, client) opens to leave frame-pinned comments. Closes the
+/// loop: find → mark → tag → **review** → re-cut.
+///
+/// The request-construction helpers (`shareURL`, `multipartVideoBody`,
+/// `ownerCookieHeader`) are pure and unit-tested. The live round-trip is
+/// validated against a running Stint server (configured in Settings → Bridges).
+enum StintBridge {
+
+    // MARK: - Config
+
+    struct Config {
+        var baseURL: URL
+
+        /// Reads the Stint server URL from Settings; nil if unset/invalid.
+        static var current: Config? {
+            let raw = (UserDefaults.standard.string(forKey: "stintServerURL") ?? "")
+                .trimmingCharacters(in: .whitespaces)
+            guard !raw.isEmpty,
+                  let url = URL(string: raw),
+                  url.scheme != nil, url.host != nil else { return nil }
+            return Config(baseURL: url)
+        }
+    }
+
+    enum StintError: LocalizedError {
+        case notConfigured, notReady, renderFailed, http(Int), badResponse
+        var errorDescription: String? {
+            switch self {
+            case .notConfigured: return "Set your Stint server URL in Settings → Bridges"
+            case .notReady:      return "Library not ready"
+            case .renderFailed:  return "Couldn't render the clip for review"
+            case .http(let c):   return "Stint server returned HTTP \(c)"
+            case .badResponse:   return "Unexpected response from the Stint server"
+            }
+        }
+    }
+
+    // MARK: - Pure request construction (unit-tested)
+
+    /// The public project share link a guest opens — `<base>/p/:id?t=<token>`,
+    /// matching Stint's web route + share-token auth.
+    static func shareURL(base: URL, projectID: String, shareToken: String) -> URL {
+        let target = base.appendingPathComponent("p").appendingPathComponent(projectID)
+        var comps = URLComponents(url: target, resolvingAgainstBaseURL: false)
+        comps?.queryItems = [URLQueryItem(name: "t", value: shareToken)]
+        return comps?.url ?? target
+    }
+
+    /// Stint authenticates the owner by an `owner_<projectId>` cookie equal to
+    /// the project's owner key (returned at creation).
+    static func ownerCookieHeader(projectID: String, ownerKey: String) -> String {
+        "owner_\(projectID)=\(ownerKey)"
+    }
+
+    /// A `multipart/form-data` body for a single file field plus text fields.
+    static func multipartVideoBody(
+        fieldName: String,
+        filename: String,
+        mimeType: String,
+        fileData: Data,
+        extraFields: [String: String],
+        boundary: String
+    ) -> Data {
+        var body = Data()
+        func append(_ s: String) { body.append(Data(s.utf8)) }
+        for (key, value) in extraFields {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
+            append("\(value)\r\n")
+        }
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(filename)\"\r\n")
+        append("Content-Type: \(mimeType)\r\n\r\n")
+        body.append(fileData)
+        append("\r\n--\(boundary)--\r\n")
+        return body
+    }
+
+    // MARK: - Network (validated against a running Stint server)
+
+    private struct CreatedProject: Decodable {
+        struct ProjectInfo: Decodable { let id: String }
+        let project: ProjectInfo
+        let ownerKey: String
+        let shareToken: String
+    }
+    private struct CreatedClip: Decodable {
+        struct ClipInfo: Decodable { let id: String }
+        let clip: ClipInfo
+    }
+
+    private static func createProject(base: URL, name: String) async throws -> CreatedProject {
+        var req = URLRequest(url: base.appendingPathComponent("api/projects"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["name": name])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(resp)
+        return try JSONDecoder().decode(CreatedProject.self, from: data)
+    }
+
+    private static func createClip(base: URL, projectID: String, ownerKey: String, name: String) async throws -> String {
+        var req = URLRequest(url: base.appendingPathComponent("api/projects/\(projectID)/clips"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(ownerCookieHeader(projectID: projectID, ownerKey: ownerKey), forHTTPHeaderField: "Cookie")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["name": name])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        try check(resp)
+        return try JSONDecoder().decode(CreatedClip.self, from: data).clip.id
+    }
+
+    private static func uploadVideo(
+        base: URL, projectID: String, ownerKey: String,
+        stintClipID: String, fileURL: URL, durationSeconds: Double
+    ) async throws {
+        let boundary = "clipx-\(UUID().uuidString)"
+        let fileData = try Data(contentsOf: fileURL)
+        let body = multipartVideoBody(
+            fieldName: "video",
+            filename: fileURL.lastPathComponent,
+            mimeType: "video/mp4",
+            fileData: fileData,
+            extraFields: ["durationSeconds": String(format: "%.3f", durationSeconds)],
+            boundary: boundary
+        )
+        var req = URLRequest(url: base.appendingPathComponent("api/clips/\(stintClipID)/video"))
+        req.httpMethod = "POST"
+        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        req.setValue(ownerCookieHeader(projectID: projectID, ownerKey: ownerKey), forHTTPHeaderField: "Cookie")
+        req.httpBody = body
+        let (_, resp) = try await URLSession.shared.upload(for: req, from: body)
+        try check(resp)
+    }
+
+    private static func check(_ resp: URLResponse) throws {
+        guard let http = resp as? HTTPURLResponse else { throw StintError.badResponse }
+        guard (200..<300).contains(http.statusCode) else { throw StintError.http(http.statusCode) }
+    }
+
+    // MARK: - Render
+
+    /// Renders a clip's in/out range to a temp mp4 using the same backend the
+    /// export pipeline uses, so the reviewer gets exactly the cut.
+    private static func renderClip(clipID: Int64) async throws -> (fileURL: URL, durationSeconds: Double, name: String) {
+        guard let db = AppEnvironment.shared.database else { throw StintError.notReady }
+        guard let clip: Clip = try db.read({ try Clip.fetchOne($0, key: clipID) }),
+              let source: Source = try db.read({ try Source.fetchOne($0, key: clip.sourceID) }) else {
+            throw StintError.notReady
+        }
+        let fps = Double(source.fps ?? 0)
+        let inMs = fps > 0 ? FrameMath.snapToFrame(ms: clip.inMs, fps: fps) : clip.inMs
+        let outMs = fps > 0 ? FrameMath.snapToFrame(ms: clip.outMs, fps: fps) : clip.outMs
+        let preset = ExportPreset.youtube1080p
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipx-review-\(clipID)-\(UUID().uuidString).mp4")
+        #if DIRECT_BUILD
+        let args = FFmpegBackend.buildArguments(
+            sourcePath: source.path, inMs: inMs, outMs: outMs,
+            preset: preset, outputPath: tmp.path, rotation: source.rotation
+        )
+        let code = try await FFmpegBackend.run(
+            arguments: args, durationSec: Double(outMs - inMs) / 1000,
+            onCancellerRegistered: { _ in }, onProgress: { _ in }
+        )
+        if code != 0 { throw StintError.renderFailed }
+        #else
+        try await AVFoundationBackend.export(
+            sourcePath: source.path, inMs: inMs, outMs: outMs,
+            preset: preset, outputPath: tmp.path, rotation: source.rotation,
+            onCancellerRegistered: { _ in }, onProgress: { _ in }
+        )
+        #endif
+        return (tmp, Double(outMs - inMs) / 1000, clip.name ?? "Clip \(clipID)")
+    }
+
+    // MARK: - Orchestration
+
+    /// Renders the given clips, pushes them into a fresh Stint review project,
+    /// stores the share link on each clip, copies it to the clipboard, and
+    /// offers to open it. Toasts narrate progress + failures.
+    @MainActor
+    static func sendToReview(clipIDs: [Int64], projectName: String) async {
+        guard let config = Config.current else {
+            AppState.shared.showToast(StintError.notConfigured.localizedDescription, level: .warning)
+            return
+        }
+        let ids = clipIDs.filter { $0 > 0 }
+        guard !ids.isEmpty else {
+            AppState.shared.showToast("No clips to send", level: .warning)
+            return
+        }
+        AppState.shared.showToast("Rendering \(ids.count) clip(s) for review…", level: .info)
+        do {
+            let project = try await createProject(base: config.baseURL, name: projectName)
+            for cid in ids {
+                let render = try await renderClip(clipID: cid)
+                let stintClipID = try await createClip(
+                    base: config.baseURL, projectID: project.project.id,
+                    ownerKey: project.ownerKey, name: render.name
+                )
+                try await uploadVideo(
+                    base: config.baseURL, projectID: project.project.id,
+                    ownerKey: project.ownerKey, stintClipID: stintClipID,
+                    fileURL: render.fileURL, durationSeconds: render.durationSeconds
+                )
+                try? FileManager.default.removeItem(at: render.fileURL)
+            }
+            let link = shareURL(
+                base: config.baseURL, projectID: project.project.id,
+                shareToken: project.shareToken
+            )
+            if let db = AppEnvironment.shared.database {
+                try? db.write { dbc in
+                    for cid in ids {
+                        try dbc.execute(
+                            sql: "UPDATE clips SET review_url = ? WHERE id = ?",
+                            arguments: [link.absoluteString, cid]
+                        )
+                    }
+                }
+            }
+            AppState.shared.libraryRevision &+= 1
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(link.absoluteString, forType: .string)
+            AppState.shared.showToast(
+                "Review link copied — share it for frame-pinned comments",
+                level: .success,
+                actionLabel: "Open"
+            ) {
+                NSWorkspace.shared.open(link)
+            }
+        } catch {
+            AppState.shared.showToast("Send to review failed: \(error.localizedDescription)", level: .error)
+        }
+    }
+}

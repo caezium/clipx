@@ -205,6 +205,15 @@ enum Migrations {
             }
         }
 
+        // v5: the public Stint review share link a clip was sent to (the
+        // Clipx → Stint collaboration bridge), so the Light Table can show
+        // "shared for review" and reopen the link.
+        migrator.registerMigration("v5_stint_review_url") { db in
+            try db.alter(table: "clips") { t in
+                t.add(column: "review_url", .text)
+            }
+        }
+
         return migrator
     }
 }

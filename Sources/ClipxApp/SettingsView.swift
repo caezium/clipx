@@ -331,9 +331,14 @@ struct ExportSettingsView: View {
 
 struct BridgesSettingsView: View {
     @AppStorage("obsidianVaultPath") private var obsidianVaultPath: String = ""
+    @AppStorage("stintServerURL") private var stintServerURL: String = ""
 
     var body: some View {
         SettingsScaffold {
+            SettingsCard("Stint review") {
+                SettingsField(placeholder: "http://your-stint-host:4040", text: $stintServerURL)
+                SettingsDesc("Send clips to a Stint project for collaborative, frame-pinned review — your coach or teammates open one share link and comment, no account needed. Set the base URL of your running Stint server, then use “Send to review” in the Light Table.")
+            }
             SettingsCard("Obsidian") {
                 HStack(spacing: 8) {
                     SettingsField(placeholder: "Vault folder…", text: $obsidianVaultPath)
