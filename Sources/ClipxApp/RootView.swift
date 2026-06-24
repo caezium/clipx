@@ -6,6 +6,15 @@ struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didCompleteOnboarding")
     @State private var dropTargeted = false
+    /// Drives the library sidebar's visibility. In the Cut Room (a source open
+    /// in the player) the session rail *replaces* the library sidebar instead of
+    /// stacking beside it — two left columns + the player + inspector overflow
+    /// the window and clip both edges offscreen. Collapsing it keeps everything
+    /// on screen and keeps the marking workspace focused.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    /// True while a source is open in the player (the Cut Room).
+    private var inPlayer: Bool { appState.playerSourceID != nil }
 
     /// The inspector column shows only when toggled on AND a clip is selected,
     /// preserving the prior behavior while letting AppKit own the column width.
@@ -17,7 +26,7 @@ struct RootView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
@@ -43,6 +52,14 @@ struct RootView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // Collapse the library sidebar in the Cut Room so the session rail is the
+        // only left column; restore it back in the library. (sidebar-clip fix)
+        .onChange(of: appState.playerSourceID) { _, sourceID in
+            withAnimation(.easeInOut(duration: 0.18)) {
+                columnVisibility = (sourceID != nil) ? .detailOnly : .all
+            }
+        }
+        .onAppear { columnVisibility = inPlayer ? .detailOnly : .all }
         .background(Theme.bg)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
