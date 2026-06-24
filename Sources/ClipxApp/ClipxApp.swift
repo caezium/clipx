@@ -17,7 +17,9 @@ struct ClipxApp: App {
                 .frame(minWidth: 900, idealWidth: 1320, minHeight: 700, idealHeight: 820)
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: true))
+        // No title text in the toolbar — the sidebar wordmark is the brand, so
+        // a duplicate "Clipx" label just crowds the top bar. (showsTitle: false)
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1320, height: 820)
         .commands {
             ClipxCommands(appState: appState)
