@@ -136,49 +136,61 @@ private struct PlayerWorkspace: View {
     @State private var sourceName: String = ""
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header bar
-            HStack(spacing: 12) {
-                Button {
-                    appState.playerSourceID = nil
-                    appState.playerInMs = nil
-                    appState.playerOutMs = nil
-                } label: {
-                    Label("Library", systemImage: "chevron.left")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
-                .keyboardShortcut(.escape, modifiers: [])
-
-                Text(sourceName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                if appState.selectedClipIDs.first != nil {
-                    Button {
-                        appState.inspectorVisible.toggle()
-                    } label: {
-                        Image(systemName: "sidebar.trailing")
-                    }
-                    .buttonStyle(.plain)
-                    .clipxIconButton(active: appState.inspectorVisible)
-                    .keyboardShortcut("i", modifiers: [.command, .option])
-                    .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-                }
+        HStack(spacing: 0) {
+            // Session rail: the day's footage as a working stack with per-source
+            // review progress. Picking a row switches the player in place.
+            SessionRailView(currentSourceID: sourceID) { id in
+                appState.playerSourceID = id
+                appState.playerInMs = nil
+                appState.playerOutMs = nil
+                appState.selectedClipIDs = []
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Theme.bgRaised)
 
             Divider().overlay(Theme.border)
 
-            // Player fills the detail area; the inspector is a framework-managed
-            // trailing column owned by RootView (see .inspector above), so the
-            // player no longer competes with a fixed-width sibling panel.
-            PlayerView(sourceID: sourceID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            VStack(spacing: 0) {
+                // Header bar
+                HStack(spacing: 12) {
+                    Button {
+                        appState.playerSourceID = nil
+                        appState.playerInMs = nil
+                        appState.playerOutMs = nil
+                    } label: {
+                        Label("Library", systemImage: "chevron.left")
+                            .labelStyle(.titleAndIcon)
+                    }
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                    .keyboardShortcut(.escape, modifiers: [])
+
+                    Text(sourceName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    if appState.selectedClipIDs.first != nil {
+                        Button {
+                            appState.inspectorVisible.toggle()
+                        } label: {
+                            Image(systemName: "sidebar.trailing")
+                        }
+                        .buttonStyle(.plain)
+                        .clipxIconButton(active: appState.inspectorVisible)
+                        .keyboardShortcut("i", modifiers: [.command, .option])
+                        .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Theme.bgRaised)
+
+                Divider().overlay(Theme.border)
+
+                // Player fills the rest; the inspector is a framework-managed
+                // trailing column owned by RootView (see .inspector above).
+                PlayerView(sourceID: sourceID)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .onAppear(perform: loadName)
         .onChange(of: sourceID) { _, _ in loadName() }
