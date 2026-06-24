@@ -16,11 +16,14 @@ struct RootView: View {
     /// True while a source is open in the player (the Cut Room).
     private var inPlayer: Bool { appState.playerSourceID != nil }
 
-    /// The inspector column shows only when toggled on AND a clip is selected,
-    /// preserving the prior behavior while letting AppKit own the column width.
+    /// The inspector column follows the toggle directly. It used to also require
+    /// a selected clip, so toggling it on in the library (where nothing is
+    /// selected) lit the button but showed no panel — it looked broken. Now the
+    /// column always opens when toggled and shows a "No clip selected"
+    /// placeholder until you pick a clip.
     private var inspectorPresented: Binding<Bool> {
         Binding(
-            get: { appState.inspectorVisible && appState.selectedClipIDs.first != nil },
+            get: { appState.inspectorVisible },
             set: { appState.inspectorVisible = $0 }
         )
     }
@@ -45,10 +48,14 @@ struct RootView: View {
                 }
             }
             .inspector(isPresented: inspectorPresented) {
-                if let clipID = appState.selectedClipIDs.first {
-                    InspectorView(clipID: clipID)
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
+                Group {
+                    if let clipID = appState.selectedClipIDs.first {
+                        InspectorView(clipID: clipID)
+                    } else {
+                        InspectorEmptyState()
+                    }
                 }
+                .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -141,6 +148,30 @@ extension RootView {
         let folder = isDir.boolValue ? url : url.deletingLastPathComponent()
         AppEnvironment.shared.watcher?.add(folder: folder)
         AppState.shared.showToast("Added \(folder.lastPathComponent) to library", level: .success)
+    }
+}
+
+/// Placeholder shown in the inspector column when it's open but nothing is
+/// selected — so toggling the inspector always reveals a panel (instead of
+/// lighting the button with no visible change).
+private struct InspectorEmptyState: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 30, weight: .ultraLight))
+                .foregroundStyle(Theme.textTertiary)
+            Text("No clip selected")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            Text("Select a clip to see its rating, tags, attributes, and export options.")
+                .font(.system(size: 12))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bgRaised)
     }
 }
 
