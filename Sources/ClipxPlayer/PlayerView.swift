@@ -42,8 +42,13 @@ struct PlayerView: View {
                 }
             }
 
-            TimelineStripView(
+            // Skimmable filmstrip timeline: the source's sampled frames drawn
+            // across the width so a long source is visually scannable, with the
+            // in/out band, saved-clip pins, and playhead over it.
+            FilmstripTimelineView(
                 controller: controller,
+                sourceHash: source?.hash,
+                sourceURL: source?.url,
                 savedClips: savedClips,
                 onSelectClip: { clip in
                     appState.playerInMs = clip.inMs
@@ -51,7 +56,7 @@ struct PlayerView: View {
                     controller.seek(toMs: clip.inMs)
                 }
             )
-            .frame(height: 60)
+            .frame(height: 76)
             controlBar
             if !savedClips.isEmpty {
                 savedClipsStrip
@@ -302,7 +307,7 @@ struct PlayerView: View {
 
     /// Persist the captured clip with its name / rating / tags, then park the
     /// playhead past the out point and ready the next cut.
-    private func commitCapture(name: String, rating: Int, tags: [String]) {
+    private func commitCapture(name: String, rating: Int, tags: [String], purposes: [String]) {
         guard let inMs = appState.playerInMs, let outMs = appState.playerOutMs,
               let markerStore = AppEnvironment.shared.markerStore else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -313,6 +318,9 @@ struct PlayerView: View {
             )
             if let id = clip.id {
                 if rating > 0 { try? markerStore.updateRating(id, rating: rating) }
+                if !purposes.isEmpty {
+                    try? markerStore.updatePurpose(id, purpose: purposes.joined(separator: ","))
+                }
                 if let tagStore = AppEnvironment.shared.tagStore {
                     for tag in tags { try? tagStore.addTag(tag, toClip: id) }
                 }
@@ -346,7 +354,9 @@ struct PlayerView: View {
         ClipCaptureCard(
             durationMs: (appState.playerOutMs ?? 0) - (appState.playerInMs ?? 0),
             suggestions: captureSuggestions,
-            onCommit: { name, rating, tags in commitCapture(name: name, rating: rating, tags: tags) },
+            onCommit: { name, rating, tags, purposes in
+                commitCapture(name: name, rating: rating, tags: tags, purposes: purposes)
+            },
             onCancel: { cancelCapture() }
         )
         // Fresh state each time a new range is captured.
@@ -517,12 +527,13 @@ final class PlayerSurfaceView: NSView {
 struct ClipCaptureCard: View {
     let durationMs: Int64
     let suggestions: [String]
-    let onCommit: (String, Int, [String]) -> Void
+    let onCommit: (String, Int, [String], [String]) -> Void
     let onCancel: () -> Void
 
     @State private var name = ""
     @State private var rating = 0
     @State private var selectedTags: Set<String> = []
+    @State private var selectedPurposes: Set<String> = []
     @State private var newTag = ""
     @FocusState private var nameFocused: Bool
 
@@ -550,7 +561,7 @@ struct ClipCaptureCard: View {
                 .background(Theme.bg, in: RoundedRectangle(cornerRadius: Theme.r1))
                 .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.borderStrong, lineWidth: 1))
 
-            // Rating — for "the parts where I do well".
+            // Rating — the quality / keeper signal.
             HStack(spacing: 4) {
                 ForEach(1...5, id: \.self) { i in
                     Button { rating = (rating == i) ? 0 : i } label: {
@@ -563,7 +574,31 @@ struct ClipCaptureCard: View {
                 Spacer()
             }
 
-            // Quick tags — one-tap the labels you already use, plus free entry.
+            // Purpose — what this clip is FOR (Coach, Reel, Publish…). The
+            // primary fast-path axis; the vocabulary is user-configurable
+            // (Settings → Labels) so it fits any kind of content.
+            if !Purposes.active.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("for").clipxSectionLabel()
+                    FlowLayout(spacing: 5) {
+                        ForEach(Purposes.active) { label in
+                            Button {
+                                if selectedPurposes.contains(label.key) { selectedPurposes.remove(label.key) }
+                                else { selectedPurposes.insert(label.key) }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: label.symbol).font(.system(size: 10))
+                                    Text(label.title)
+                                }
+                                .clipxChip(selected: selectedPurposes.contains(label.key))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            // Quick tags — what it's ABOUT. One-tap labels you already use, plus free entry.
             if !suggestions.isEmpty || !selectedTags.isEmpty {
                 FlowLayout(spacing: 5) {
                     ForEach(tagPalette, id: \.self) { tag in
@@ -624,6 +659,6 @@ struct ClipCaptureCard: View {
 
     private func commit() {
         addCurrentTag() // fold any half-typed tag in
-        onCommit(name, rating, Array(selectedTags))
+        onCommit(name, rating, Array(selectedTags), Array(selectedPurposes))
     }
 }
