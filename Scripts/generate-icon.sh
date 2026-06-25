@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Generates a placeholder app icon for Clipx from an inline SVG.
+# Generates the Clipx app icon from an inline SVG ("trim grips" mark:
+# two pink trimmer grips framing a white X on a dark navy squircle).
 # Uses macOS built-in `sips` and `iconutil` so no extra deps required.
-# Replace SOURCE_PNG with your designed icon for a real release.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -18,19 +18,18 @@ cat > "$SVG" <<'SVGEOF'
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0a0a1a"/>
-      <stop offset="1" stop-color="#1e1b3a"/>
+      <stop offset="0" stop-color="#0c0c1e"/>
+      <stop offset="1" stop-color="#201c40"/>
     </linearGradient>
   </defs>
   <rect x="0" y="0" width="1024" height="1024" rx="224" fill="url(#g)"/>
-  <g fill="none" stroke="#ff3366" stroke-width="48" stroke-linecap="round">
-    <path d="M 280 350 L 280 674"/>
-    <path d="M 744 350 L 744 674"/>
+  <g fill="#ff3366">
+    <rect x="212" y="302" width="96" height="420" rx="34"/>
+    <rect x="716" y="302" width="96" height="420" rx="34"/>
   </g>
-  <g fill="#fafafa">
-    <circle cx="512" cy="430" r="32"/>
-    <circle cx="512" cy="594" r="32"/>
-    <rect x="380" y="498" width="264" height="28" rx="14"/>
+  <g fill="none" stroke="#fafafa" stroke-width="80" stroke-linecap="round">
+    <path d="M 380 380 L 644 644"/>
+    <path d="M 644 380 L 380 644"/>
   </g>
 </svg>
 SVGEOF
