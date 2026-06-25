@@ -1,13 +1,20 @@
 import Foundation
 import GRDB
 
-/// Thin wrapper around a GRDB `DatabaseQueue` that owns schema migrations
+/// Thin wrapper around a GRDB `DatabaseWriter` that owns schema migrations
 /// and provides a single point of construction for the app database.
+///
+/// Backed by a `DatabasePool` on disk so UI reads (per-card thumbnail lookups,
+/// the library reload) run concurrently with indexer writes instead of
+/// serializing behind them — the previous `DatabaseQueue` funneled every
+/// access through one connection, so a scroll-time read could stall behind a
+/// watcher write. WAL (already enabled below) is what makes the pool's
+/// concurrent readers safe. Tests still use an in-memory `DatabaseQueue`.
 final class Database {
-    let dbQueue: DatabaseQueue
+    let dbWriter: any DatabaseWriter
 
-    private init(queue: DatabaseQueue) {
-        self.dbQueue = queue
+    private init(writer: any DatabaseWriter) {
+        self.dbWriter = writer
     }
 
     /// Opens (or creates) the app database at the canonical Application Support
@@ -43,25 +50,28 @@ final class Database {
         var config = Configuration()
         config.label = "clipx.db"
         config.foreignKeysEnabled = true
-        // WAL improves concurrent read/write throughput for our mixed
-        // indexer-writes-while-UI-reads workload. Busy timeout avoids
-        // SQLITE_BUSY when the watcher fires while the user is searching.
+        // Busy timeout avoids SQLITE_BUSY when the watcher fires while the user
+        // is searching. (WAL itself is enabled by DatabasePool automatically —
+        // re-asserting `journal_mode = WAL` here would run on the pool's
+        // read-only reader connections too, so we leave it to GRDB and only
+        // tune synchronous, which is safe to set per-connection.)
         config.busyMode = .timeout(5)
         config.prepareDatabase { db in
-            try db.execute(sql: "PRAGMA journal_mode = WAL")
             try db.execute(sql: "PRAGMA synchronous = NORMAL")
         }
-        let queue = try DatabaseQueue(path: url.path, configuration: config)
+        // DatabasePool keeps a pool of reader connections alongside the single
+        // writer, so reads run concurrently with writes under WAL.
+        let pool = try DatabasePool(path: url.path, configuration: config)
         // Catch corruption before migrating into a damaged page set. (#24)
-        try queue.read { db in
+        try pool.read { db in
             let result = try String.fetchOne(db, sql: "PRAGMA integrity_check")
             if result != "ok" {
                 throw NSError(domain: "clipx.db", code: -100,
                               userInfo: [NSLocalizedDescriptionKey: "integrity_check: \(result ?? "nil")"])
             }
         }
-        try Migrations.register().migrate(queue)
-        return Database(queue: queue)
+        try Migrations.register().migrate(pool)
+        return Database(writer: pool)
     }
 
     /// Move a corrupt DB (and its WAL/SHM siblings) aside, timestamped, so the
@@ -84,17 +94,18 @@ final class Database {
         let dest = url.deletingLastPathComponent().appendingPathComponent("clipx.backup.sqlite")
         do {
             let target = try DatabaseQueue(path: dest.path)
-            try dbQueue.backup(to: target)
+            try dbWriter.backup(to: target)
         } catch {
             ClipxLog.app.debug("DB backup skipped: \(String(describing: error), privacy: .public)")
         }
     }
 
-    /// In-memory database for tests.
+    /// In-memory database for tests. Uses a `DatabaseQueue` — DatabasePool
+    /// requires an on-disk WAL file, and tests want isolation, not concurrency.
     static func inMemory() throws -> Database {
         let queue = try DatabaseQueue()
         try Migrations.register().migrate(queue)
-        return Database(queue: queue)
+        return Database(writer: queue)
     }
 
     static func defaultDatabaseURL() throws -> URL {
@@ -115,11 +126,11 @@ final class Database {
     // MARK: Convenience
 
     func read<T>(_ block: (GRDB.Database) throws -> T) throws -> T {
-        try dbQueue.read(block)
+        try dbWriter.read(block)
     }
 
     func write<T>(_ block: (GRDB.Database) throws -> T) throws -> T {
-        try dbQueue.write(block)
+        try dbWriter.write(block)
     }
 }
 

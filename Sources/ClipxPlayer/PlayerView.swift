@@ -57,6 +57,7 @@ struct PlayerView: View {
             // in/out band, saved-clip pins, and playhead over it.
             FilmstripTimelineView(
                 controller: controller,
+                totalMs: controller.durationMs,
                 sourceHash: source?.hash,
                 sourceURL: source?.url,
                 savedClips: savedClips,
@@ -185,12 +186,11 @@ struct PlayerView: View {
                 .help("Forward 5s (L or ⇧→)")
             }
 
-            // Time display
+            // Time display. The current-time read-out observes the playback
+            // clock directly (a leaf view) so it can update every frame without
+            // re-rendering the whole control bar / player on each tick.
             HStack(spacing: 4) {
-                Text(controller.currentTimeLabel)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize()
+                PlaybackTimeLabel(clock: controller.clock)
                 Text("/").foregroundStyle(Theme.textTertiary)
                 Text(controller.durationLabel)
                     .font(.system(size: 12, design: .monospaced))
@@ -849,5 +849,19 @@ struct ClipCaptureCard: View {
     private func commit() {
         addCurrentTag() // fold any half-typed tag in
         onCommit(name, rating, Array(selectedTags), Array(selectedPurposes))
+    }
+}
+
+/// The current-time read-out in the control bar. A leaf that observes only the
+/// `PlaybackClock`, so its 24–60Hz updates don't drag the whole player body
+/// through a re-render on every frame.
+struct PlaybackTimeLabel: View {
+    @ObservedObject var clock: PlaybackClock
+
+    var body: some View {
+        Text(PlayerController.formatMs(clock.currentMs))
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(Theme.textPrimary)
+            .fixedSize()
     }
 }

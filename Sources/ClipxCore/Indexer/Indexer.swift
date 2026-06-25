@@ -17,6 +17,20 @@ actor Indexer {
     private let database: Database
     private let thumbnailEngine: ThumbnailEngine
     private var pendingRevisionBump: Task<Void, Never>?
+    /// How many bulk scans are in flight. While > 0 a slow per-file heartbeat
+    /// drives the UI instead of one debounced reload per written file.
+    private var scanDepth = 0
+    /// Set whenever a scan actually writes something. The heartbeat only fires a
+    /// refresh when this is set, so a "Rescan All" over an unchanged folder
+    /// (zero new rows) stays quiet instead of reloading every view every tick.
+    private var scanDirty = false
+    /// Periodic library-refresh while a bulk scan runs.
+    private var scanHeartbeat: Task<Void, Never>?
+    /// Refresh cadence during a bulk scan. On a low-spec machine each file can
+    /// take longer than the interactive 250ms debounce, which previously turned
+    /// "one reload per file" into a continuous full-library re-query during an
+    /// import. A coarse heartbeat caps that to one reload per interval.
+    private static let scanHeartbeatNs: UInt64 = 1_500_000_000   // 1.5s
 
     init(database: Database, thumbnailEngine: ThumbnailEngine) {
         self.database = database
@@ -29,6 +43,8 @@ actor Indexer {
     /// callers like "Rescan All" can report a meaningful result.
     @discardableResult
     func index(folder: URL, progress: ((Int, Int) -> Void)? = nil) async -> (scanned: Int, indexed: Int) {
+        beginScan()
+        defer { endScan() }
         let urls = collectVideoFiles(at: folder)
         let total = urls.count
         var processed = 0
@@ -39,6 +55,44 @@ actor Indexer {
             progress?(processed, total)
         }
         return (scanned: total, indexed: indexed)
+    }
+
+    // MARK: - Scan lifecycle (controls UI-refresh cadence)
+
+    private func beginScan() {
+        scanDepth += 1
+        guard scanDepth == 1 else { return }
+        // The heartbeat owns the cadence now — drop any pending interactive bump.
+        pendingRevisionBump?.cancel()
+        pendingRevisionBump = nil
+        scanDirty = false
+        scanHeartbeat = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Indexer.scanHeartbeatNs)
+                if Task.isCancelled { break }
+                // Only refresh if something was written since the last tick.
+                guard let self, await self.consumeScanDirty() else { continue }
+                await MainActor.run { AppState.shared.libraryRevision &+= 1 }
+            }
+        }
+    }
+
+    private func endScan() {
+        scanDepth = max(0, scanDepth - 1)
+        guard scanDepth == 0 else { return }
+        scanHeartbeat?.cancel()
+        scanHeartbeat = nil
+        // Final refresh only if files were indexed since the last heartbeat.
+        if scanDirty {
+            scanDirty = false
+            Task { @MainActor in AppState.shared.libraryRevision &+= 1 }
+        }
+    }
+
+    /// Reads and clears the scan-dirty flag in one actor-isolated step.
+    private func consumeScanDirty() -> Bool {
+        defer { scanDirty = false }
+        return scanDirty
     }
 
     /// Indexes a single file. Returns `true` if it wrote a new/updated row,
@@ -128,6 +182,10 @@ actor Indexer {
                 ) ?? 0
             }
 
+            // A re-index may have changed the hash — drop the memoized identity
+            // so cards re-resolve to the new hash / freshly generated thumb.
+            thumbnailEngine.invalidateSourceMeta(insertedID)
+
             // Kick off background thumbnail generation. Re-fetch the row so
             // the engine sees the latest hash without us juggling Source state.
             if let source: Source = try? database.read({ db in
@@ -168,7 +226,17 @@ actor Indexer {
 
     /// Coalesces many per-file revisions into one MainActor bump per ~250ms.
     /// Without this, indexing a 5k folder fired 5k SwiftUI re-renders.
+    ///
+    /// During a bulk scan (`scanDepth > 0`) the heartbeat owns the refresh
+    /// cadence, so per-file bumps are suppressed — otherwise a slow machine
+    /// whose per-file work exceeds 250ms reloads the whole library once per file.
     private func scheduleRevisionBump() {
+        guard scanDepth == 0 else {
+            // A scan is running — record that there's something to show and let
+            // the heartbeat fire the refresh on its own cadence.
+            scanDirty = true
+            return
+        }
         pendingRevisionBump?.cancel()
         pendingRevisionBump = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)

@@ -2,6 +2,7 @@ import Foundation
 import AVFoundation
 import AppKit
 import CryptoKit
+import ImageIO
 import GRDB
 
 /// One-shot box to hand an async-loaded value back across a semaphore bridge.
@@ -20,6 +21,14 @@ private final class DurationResultBox: @unchecked Sendable {
 /// existing request instead of dispatching a duplicate Task. Without this,
 /// scrolling a long list could queue hundreds of redundant generations and
 /// flood main with completion handlers.
+/// Minimal source identity a card needs to show a thumbnail, without decoding
+/// the whole `Source` row. Memoized by `ThumbnailEngine.sourceThumbMeta`.
+struct SourceThumbMeta {
+    let hash: String
+    let path: String
+    let displayName: String
+}
+
 final class ThumbnailEngine {
     private let database: Database
     private let cacheDir: URL
@@ -28,13 +37,32 @@ final class ThumbnailEngine {
         qos: .userInitiated,
         attributes: .concurrent
     )
-    private let semaphore = DispatchSemaphore(value: 4)
+    /// Concurrency cap on AVAssetImageGenerator work. Scaled to the machine so a
+    /// dual-core laptop isn't oversubscribed by 4 simultaneous video decodes
+    /// while an 8-core desktop still parallelises. Was a fixed `4`.
+    private let semaphore = DispatchSemaphore(
+        value: max(2, ProcessInfo.processInfo.activeProcessorCount - 2)
+    )
     /// Hash → pending completion handlers. Protected by `inFlightLock`.
     private var inFlight: [String: [(URL?) -> Void]] = [:]
     private let inFlightLock = NSLock()
 
+    /// In-memory decoded-thumbnail cache, keyed by source hash. Lets a card that
+    /// scrolls back into view paint instantly instead of re-reading the JPEG off
+    /// disk and re-decoding it every time LazyVGrid recycles the view. NSCache
+    /// is thread-safe and self-evicts under memory pressure.
+    private let imageCache = NSCache<NSString, NSImage>()
+    /// sourceID → (hash, path, name), so a clip card doesn't run a SQLite query
+    /// on every `onAppear`. Many clips share one source, so this collapses
+    /// N-per-scroll reads to one read per distinct source. Protected by `metaLock`.
+    private var metaCache: [Int64: SourceThumbMeta] = [:]
+    private let metaLock = NSLock()
+
     init(database: Database) {
         self.database = database
+        // Bound the cache so a huge library can't grow it without limit; NSCache
+        // also drops entries automatically when the system needs memory.
+        imageCache.countLimit = 600
         let caches = (try? FileManager.default.url(
             for: .cachesDirectory,
             in: .userDomainMask,
@@ -53,6 +81,124 @@ final class ThumbnailEngine {
     /// Path where a hover sprite strip should be cached for a hash.
     func spritePath(for hash: String) -> URL {
         cacheDir.appendingPathComponent("\(hash)-sprite.jpg")
+    }
+
+    // MARK: - Display image cache (memory-cached, downsampled)
+
+    /// Memoized minimal source identity for a clip card. First call hits SQLite
+    /// for just `hash` + `path`; subsequent calls (incl. scroll recycles and the
+    /// many clips sharing one source) return from memory.
+    func sourceThumbMeta(for sourceID: Int64) -> SourceThumbMeta? {
+        metaLock.lock()
+        if let cached = metaCache[sourceID] {
+            metaLock.unlock()
+            return cached
+        }
+        metaLock.unlock()
+
+        guard let row = try? database.read({ db in
+            try Row.fetchOne(
+                db, sql: "SELECT hash, path FROM sources WHERE id = ?", arguments: [sourceID]
+            )
+        }), let hash: String = row["hash"], let path: String = row["path"] else {
+            return nil
+        }
+        let meta = SourceThumbMeta(
+            hash: hash, path: path,
+            displayName: URL(fileURLWithPath: path).lastPathComponent
+        )
+        metaLock.lock()
+        metaCache[sourceID] = meta
+        metaLock.unlock()
+        return meta
+    }
+
+    /// Synchronous in-memory cache probe — nil on miss. Safe from any thread.
+    func cachedImage(forHash hash: String) -> NSImage? {
+        imageCache.object(forKey: hash as NSString)
+    }
+
+    /// Drops the memoized identity for a source — call after re-indexing so a
+    /// card picks up a changed hash (and thus a freshly generated thumbnail)
+    /// instead of the stale cached one.
+    func invalidateSourceMeta(_ sourceID: Int64) {
+        metaLock.lock()
+        metaCache[sourceID] = nil
+        metaLock.unlock()
+    }
+
+    /// Returns a display-ready thumbnail: decoded at `maxPixel` (the card's pixel
+    /// size, not the full 480px cache file) and held in an in-memory cache.
+    /// Generates the on-disk thumb first if it's missing. Completion always
+    /// fires on the main queue.
+    ///
+    /// This is the path card views should use — it removes the per-appear disk
+    /// read + full-size JPEG decode that made scrolling a big grid stutter on
+    /// low-spec machines.
+    func displayThumbnail(
+        forHash hash: String, sourcePath: String, maxPixel: Int,
+        completion: @escaping (NSImage?) -> Void
+    ) {
+        if let cached = imageCache.object(forKey: hash as NSString) {
+            DispatchQueue.main.async { completion(cached) }
+            return
+        }
+        let cacheURL = thumbPath(for: hash)
+        queue.async { [weak self] in
+            guard let self else { DispatchQueue.main.async { completion(nil) }; return }
+            // Fast path: thumb already on disk — decode it downsampled and cache.
+            if let img = Self.downsampledImage(at: cacheURL, maxPixel: maxPixel) {
+                self.imageCache.setObject(img, forKey: hash as NSString)
+                DispatchQueue.main.async { completion(img) }
+                return
+            }
+            // Disk miss (never generated, or cache purged by macOS) — generate,
+            // then load the result downsampled.
+            let stub = Source(
+                id: nil, path: sourcePath, bookmark: nil, hash: hash, mtime: 0,
+                durationMs: nil, width: nil, height: nil, fps: nil, codec: nil,
+                audioChannels: nil, colorSpace: nil, createdAt: nil,
+                importedAt: 0, thumbPath: nil, online: true, notes: nil
+            )
+            self.generateThumbnail(source: stub) { [weak self] resultURL in
+                guard let self, let resultURL else { completion(nil); return }
+                // generateThumbnail de-dupes concurrent requests for one hash, so
+                // many cards sharing a source wake here together — re-probe the
+                // cache so only the first decodes the freshly generated JPEG.
+                if let warm = self.imageCache.object(forKey: hash as NSString) {
+                    DispatchQueue.main.async { completion(warm) }
+                    return
+                }
+                self.queue.async {
+                    if let warm = self.imageCache.object(forKey: hash as NSString) {
+                        DispatchQueue.main.async { completion(warm) }
+                        return
+                    }
+                    let img = Self.downsampledImage(at: resultURL, maxPixel: maxPixel)
+                    if let img { self.imageCache.setObject(img, forKey: hash as NSString) }
+                    DispatchQueue.main.async { completion(img) }
+                }
+            }
+        }
+    }
+
+    /// Decodes an image file directly to a thumbnail no larger than `maxPixel` on
+    /// its longest edge, using ImageIO so we never materialize the full-size
+    /// bitmap. Returns nil if the file is missing or undecodable.
+    static func downsampledImage(at url: URL, maxPixel: Int) -> NSImage? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let srcOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithURL(url as CFURL, srcOptions) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else {
+            return nil
+        }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 
     /// Generates a single representative thumbnail at ~10% into the source.
@@ -235,6 +381,7 @@ final class ThumbnailEngine {
 
     /// Removes cached thumbnails — used by Settings "Clear cache" button.
     func clearCache() throws {
+        imageCache.removeAllObjects()
         try FileManager.default.removeItem(at: cacheDir)
         try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
     }

@@ -11,6 +11,11 @@ struct LightTableView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 12)]
 
+    /// Cap on harvested clips — matches the grid/search paging (500-ish) so a
+    /// power user with thousands of tagged clips doesn't load and spawn a
+    /// thumbnail task for every one at once. Highest-rated/newest win the cap.
+    private static let clipLimit = 1000
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
@@ -147,7 +152,7 @@ struct LightTableView: View {
                 args.append(collectionID)
             }
             let sql = "SELECT * FROM clips WHERE \(clauses.joined(separator: " AND ")) "
-                + "ORDER BY rating DESC, created_at DESC"
+                + "ORDER BY rating DESC, created_at DESC LIMIT \(Self.clipLimit)"
             let clips: [Clip] = (try? db.read { dbc in
                 try Clip.fetchAll(dbc, sql: sql, arguments: StatementArguments(args))
             }) ?? []

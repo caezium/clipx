@@ -3,6 +3,19 @@ import AVFoundation
 import SwiftUI
 import Combine
 
+/// High-frequency playback clock, deliberately split out of `PlayerController`.
+///
+/// During playback the time observer fires 24–60×/second. If `currentMs` lived
+/// on `PlayerController` (which the whole player UI observes), every tick would
+/// invalidate the control bar, the filmstrip, and every saved-clip pin on the
+/// timeline. Views that only need the moving time (the playhead, the time
+/// read-out) observe *just this* object instead, so the heavy, static parts of
+/// the UI render once and stay put.
+@MainActor
+final class PlaybackClock: ObservableObject {
+    @Published var currentMs: Int64 = 0
+}
+
 /// Observable AVPlayer wrapper with frame-accurate seek + frame-stepping.
 ///
 /// All UI-mutating state writes happen on the main actor. Background metadata
@@ -13,7 +26,10 @@ import Combine
 final class PlayerController: ObservableObject {
     @Published private(set) var player: AVPlayer?
     @Published private(set) var isPlaying = false
-    @Published private(set) var currentMs: Int64 = 0
+    /// The moving playhead time, on its own observable so per-frame updates
+    /// don't re-render the rest of the player UI. Read `currentMs` for the value.
+    let clock = PlaybackClock()
+    var currentMs: Int64 { clock.currentMs }
     @Published private(set) var durationMs: Int64 = 0
     @Published var aspectRatio: CGFloat = 16.0 / 9.0
     /// Display rotation (degrees CW) applied to the preview via a video composition.
@@ -83,7 +99,7 @@ final class PlayerController: ObservableObject {
         speed = 1.0
         heldMultiplier = 1.0
         isPlaying = false
-        currentMs = 0
+        clock.currentMs = 0
         durationMs = 0
     }
 
@@ -269,7 +285,7 @@ final class PlayerController: ObservableObject {
         let timescale = CMTimeScale(min(60, max(24, Int(fps.rounded()))))
         let interval = CMTime(value: 1, timescale: timescale)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] t in
-            self?.currentMs = Int64(CMTimeGetSeconds(t) * 1000)
+            self?.clock.currentMs = Int64(CMTimeGetSeconds(t) * 1000)
         }
     }
 

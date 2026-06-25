@@ -1,6 +1,20 @@
 import SwiftUI
 import AppKit
 
+/// Shared ms→pixel mapping for the timeline so the static pins and the moving
+/// playhead/leaf can't drift apart. One formula, one place.
+enum TimelineMath {
+    static func x(forMs ms: Int64, total: Int64, width: CGFloat) -> CGFloat {
+        guard total > 0 else { return 0 }
+        return CGFloat(Double(max(0, ms)) / Double(total)) * width
+    }
+
+    static func width(forMs ms: Int64, total: Int64, fullWidth: CGFloat) -> CGFloat {
+        guard total > 0, ms > 0 else { return 0 }
+        return max(0, CGFloat(Double(ms) / Double(total)) * fullWidth)
+    }
+}
+
 /// A skimmable filmstrip timeline. Instead of a thin scrubber line, it draws
 /// the source's sampled sprite strip across the full width — so a 20-minute
 /// source is visually scannable and you can *see* where the action is — with
@@ -10,7 +24,15 @@ import AppKit
 /// frames), so there's no new media pipeline: the filmstrip is that strip
 /// stretched to the timeline width.
 struct FilmstripTimelineView: View {
-    @ObservedObject var controller: PlayerController
+    /// Plain reference, *not* `@ObservedObject` — observing the controller would
+    /// re-run this whole body (incl. the saved-clip `ForEach` geometry) on every
+    /// playhead tick. We only need `controller` for seek actions; the duration is
+    /// passed in as `totalMs` and the moving playhead lives in a leaf that
+    /// observes the clock. (See PlaybackClock.)
+    let controller: PlayerController
+    /// Source duration, passed from the player so this view reacts to it loading
+    /// without subscribing to the per-frame clock.
+    let totalMs: Int64
     @EnvironmentObject private var appState: AppState
     let sourceHash: String?
     let sourceURL: URL?
@@ -22,8 +44,7 @@ struct FilmstripTimelineView: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
-            let total = controller.durationMs
-            let playX = x(forMs: controller.currentMs, total: total, geo: geo)
+            let total = totalMs
             ZStack(alignment: .topLeading) {
                 // Filmstrip background (sampled frames) or a calm placeholder.
                 Group {
@@ -56,8 +77,8 @@ struct FilmstripTimelineView: View {
 
                 // Already-saved clips as slim accent pins along the bottom edge.
                 ForEach(savedClips, id: \.id) { clip in
-                    let xStart = x(forMs: clip.inMs, total: total, geo: geo)
-                    let w = width(forMs: clip.outMs - clip.inMs, total: total, geo: geo)
+                    let xStart = TimelineMath.x(forMs: clip.inMs, total: total, width: geo.size.width)
+                    let w = TimelineMath.width(forMs: clip.outMs - clip.inMs, total: total, fullWidth: geo.size.width)
                     let visW = max(3, w)
                     let hitWidth = max(10, w)
                     RoundedRectangle(cornerRadius: 2)
@@ -74,34 +95,23 @@ struct FilmstripTimelineView: View {
                         .accessibilityLabel(Text(clip.name ?? "Saved clip"))
                 }
 
-                // Active in/out range — a full-height green frame on the strip.
-                if let inMs = appState.playerInMs {
-                    let endMs = max(inMs, appState.playerOutMs ?? controller.currentMs)
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Theme.success.opacity(0.22))
-                        .frame(width: width(forMs: endMs - inMs, total: total, geo: geo), height: h)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 3)
-                                .strokeBorder(Theme.success, lineWidth: 1.5)
-                        )
-                        .offset(x: x(forMs: inMs, total: total, geo: geo), y: 0)
-                        .allowsHitTesting(false)
-                }
-
-                // Playhead — thin white line, full height, with a knob on top.
-                ZStack(alignment: .top) {
-                    Rectangle().fill(.white).frame(width: 2, height: h)
-                    Circle().fill(.white).frame(width: 9, height: 9)
-                        .shadow(color: .black.opacity(0.5), radius: 2)
-                        .offset(y: -3)
-                }
-                .offset(x: playX - 1, y: 0)
-                .allowsHitTesting(false)
+                // Moving parts (in/out band + playhead) isolated in a leaf that
+                // observes the clock — so only this thin overlay redraws per
+                // frame, not the filmstrip or the saved-clip pins above.
+                FilmstripPlayhead(
+                    clock: controller.clock,
+                    totalMs: total,
+                    size: geo.size,
+                    inMs: appState.playerInMs,
+                    outMs: appState.playerOutMs
+                )
             }
         }
         .background(Theme.bgRaised)
         .task(id: sourceHash) { loadStrip() }
     }
+
+    // (ms→pixel mapping lives in TimelineMath, shared with the playhead leaf.)
 
     private func loadStrip() {
         strip = nil
@@ -126,14 +136,47 @@ struct FilmstripTimelineView: View {
             self.strip = img
         }
     }
+}
 
-    private func x(forMs ms: Int64, total: Int64, geo: GeometryProxy) -> CGFloat {
-        guard total > 0 else { return 0 }
-        return CGFloat(Double(max(0, ms)) / Double(total)) * geo.size.width
-    }
+/// The only per-frame-updating part of the filmstrip: the playhead, plus the
+/// active in/out band (whose right edge tracks the playhead while marking).
+/// Observes just the `PlaybackClock`, so the filmstrip image and the saved-clip
+/// pins around it render once and stay static during playback.
+private struct FilmstripPlayhead: View {
+    @ObservedObject var clock: PlaybackClock
+    let totalMs: Int64
+    let size: CGSize
+    let inMs: Int64?
+    let outMs: Int64?
 
-    private func width(forMs ms: Int64, total: Int64, geo: GeometryProxy) -> CGFloat {
-        guard total > 0, ms > 0 else { return 0 }
-        return max(0, CGFloat(Double(ms) / Double(total)) * geo.size.width)
+    var body: some View {
+        let cur = clock.currentMs
+        let h = size.height
+        ZStack(alignment: .topLeading) {
+            // Active in/out range — a full-height green frame on the strip.
+            if let inMs {
+                let endMs = max(inMs, outMs ?? cur)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Theme.success.opacity(0.22))
+                    .frame(width: TimelineMath.width(forMs: endMs - inMs, total: totalMs, fullWidth: size.width), height: h)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .strokeBorder(Theme.success, lineWidth: 1.5)
+                    )
+                    .offset(x: TimelineMath.x(forMs: inMs, total: totalMs, width: size.width), y: 0)
+                    .allowsHitTesting(false)
+            }
+
+            // Playhead — thin white line, full height, with a knob on top.
+            ZStack(alignment: .top) {
+                Rectangle().fill(.white).frame(width: 2, height: h)
+                Circle().fill(.white).frame(width: 9, height: 9)
+                    .shadow(color: .black.opacity(0.5), radius: 2)
+                    .offset(y: -3)
+            }
+            .offset(x: TimelineMath.x(forMs: cur, total: totalMs, width: size.width) - 1, y: 0)
+            .allowsHitTesting(false)
+        }
+        .frame(width: size.width, height: h, alignment: .topLeading)
     }
 }
