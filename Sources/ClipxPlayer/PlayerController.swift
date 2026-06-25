@@ -18,6 +18,15 @@ final class PlayerController: ObservableObject {
     @Published var aspectRatio: CGFloat = 16.0 / 9.0
     /// Display rotation (degrees CW) applied to the preview via a video composition.
     @Published private(set) var rotation: Int = 0
+    /// Permanent per-source playback speed (e.g. 4× for slow-mo footage). Applied
+    /// to the preview and baked into exports. 1.0 = original speed.
+    @Published private(set) var speed: Double = 1.0
+    /// Playback volume 0…1 (preview only; persists across sources).
+    @Published private(set) var volume: Double = 1.0
+    @Published private(set) var muted: Bool = false
+
+    /// Transient multiplier for hold-to-speed (Space / click-hold). 1.0 = off.
+    private var heldMultiplier: Double = 1.0
 
     private var timeObserver: Any?
     private var statusCancellable: AnyCancellable?
@@ -33,6 +42,7 @@ final class PlayerController: ObservableObject {
         let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         self.player = player
+        applyVolume()   // handles boost (>1) via audio mix once the item exists
         installPeriodicObserver(player: player, fps: fps)
 
         Task { [weak self] in
@@ -70,6 +80,8 @@ final class PlayerController: ObservableObject {
         player = nil
         asset = nil
         rotation = 0
+        speed = 1.0
+        heldMultiplier = 1.0
         isPlaying = false
         currentMs = 0
         durationMs = 0
@@ -118,14 +130,89 @@ final class PlayerController: ObservableObject {
     }
 
     func togglePlayPause() {
-        guard let player else { return }
-        if isPlaying { player.pause() } else { player.play() }
+        guard player != nil else { return }
         isPlaying.toggle()
+        applyRate()
     }
 
     func pause() {
-        player?.pause()
         isPlaying = false
+        applyRate()
+    }
+
+    /// Apply the effective playback rate: speed × any held multiplier while
+    /// playing, or 0 while paused. All play/pause/speed paths funnel here so
+    /// rate stays consistent.
+    private func applyRate() {
+        guard let player else { return }
+        player.rate = isPlaying ? Float(max(0.05, speed * heldMultiplier)) : 0
+    }
+
+    // MARK: - Permanent per-source speed
+
+    /// Max playback speed — high enough for very-high-fps slow-mo (e.g. 960fps
+    /// → ~32×, but capped to a sane preview/export ceiling).
+    static let maxSpeed: Double = 16.0
+
+    /// Set the permanent playback speed (also baked into exports by the caller).
+    func setSpeed(_ newSpeed: Double) {
+        speed = max(0.1, min(Self.maxSpeed, newSpeed))
+        applyRate()
+    }
+
+    // MARK: - Hold-to-speed (Space / click-hold)
+
+    /// Engage a transient speed multiplier and ensure playback (idempotent).
+    func beginHoldSpeed(_ multiplier: Double = 2.0) {
+        guard heldMultiplier == 1.0 else { return }
+        heldMultiplier = max(1.0, multiplier)
+        isPlaying = true
+        applyRate()
+    }
+
+    /// Release the transient multiplier, returning to the permanent speed.
+    func endHoldSpeed() {
+        guard heldMultiplier != 1.0 else { return }
+        heldMultiplier = 1.0
+        applyRate()
+    }
+
+    // MARK: - Volume
+
+    /// Max volume — above 1.0 boosts the source gain (can clip loud material).
+    static let maxVolume: Double = 2.0
+
+    func setVolume(_ v: Double) {
+        volume = max(0, min(Self.maxVolume, v))
+        muted = false
+        applyVolume()
+    }
+
+    func toggleMute() {
+        muted.toggle()
+        applyVolume()
+    }
+
+    /// Apply volume. AVPlayer.volume caps at 1.0, so gains above source use an
+    /// audio mix on the current item (its input gain multiplies player.volume).
+    private func applyVolume() {
+        guard let player else { return }
+        let v = muted ? 0 : volume
+        player.volume = Float(min(1.0, v))
+        guard let item = player.currentItem else { return }
+        guard v > 1.0, let asset else { item.audioMix = nil; return }
+        Task { [weak self] in
+            guard let track = try? await asset.loadTracks(withMediaType: .audio).first else { return }
+            let params = AVMutableAudioMixInputParameters(track: track)
+            params.setVolume(Float(v), at: .zero)
+            let mix = AVMutableAudioMix()
+            mix.inputParameters = [params]
+            await MainActor.run {
+                guard let self, self.player?.currentItem === item,
+                      !self.muted, self.volume > 1.0 else { return }
+                item.audioMix = mix
+            }
+        }
     }
 
     /// Frame-accurate seek using zero tolerance.

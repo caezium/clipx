@@ -32,6 +32,10 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
     /// through it). Nil = not yet reviewed. Powers the Cut Room session rail's
     /// reviewed / in-progress / not-seen progress.
     var reviewedAt: Int64?
+    /// Permanent playback speed multiplier (e.g. 4.0 to play slow-mo footage at
+    /// normal speed). Applied to the preview and baked into exports. 1.0 =
+    /// original speed.
+    var speed: Double = 1.0
 
     static let databaseTableName = "sources"
 
@@ -46,6 +50,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         case thumbPath = "thumb_path"
         case online, notes, rotation
         case reviewedAt = "reviewed_at"
+        case speed
     }
 
     enum Columns: String, ColumnExpression {
@@ -59,6 +64,7 @@ struct Source: Identifiable, Codable, FetchableRecord, MutablePersistableRecord 
         case thumbPath = "thumb_path"
         case online, notes, rotation
         case reviewedAt = "reviewed_at"
+        case speed
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {

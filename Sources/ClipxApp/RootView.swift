@@ -15,16 +15,19 @@ struct RootView: View {
     /// True while a source is open in the player (the Cut Room).
     private var inPlayer: Bool { appState.playerSourceID != nil }
 
-    /// The inspector column follows the toggle directly. It used to also require
-    /// a selected clip, so toggling it on in the library (where nothing is
-    /// selected) lit the button but showed no panel — it looked broken. Now the
-    /// column always opens when toggled and shows a "No clip selected"
-    /// placeholder until you pick a clip.
-    private var inspectorPresented: Binding<Bool> {
-        Binding(
-            get: { appState.inspectorVisible },
-            set: { appState.inspectorVisible = $0 }
-        )
+    /// The trailing inspector column. Always shows when toggled on (with a
+    /// placeholder when nothing is selected) so the toggle never lights with no
+    /// visible change. `.id` rebuilds it per clip so it reloads on selection.
+    private var inspectorPanel: some View {
+        Group {
+            if let clipID = appState.selectedClipIDs.first {
+                InspectorView(clipID: clipID).id(clipID)
+            } else {
+                InspectorEmptyState()
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .background(Theme.bgRaised)
     }
 
     var body: some View {
@@ -48,41 +51,39 @@ struct RootView: View {
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
         } detail: {
-            // Single detail column: the player takes over when a source is open,
-            // otherwise the library grid. The inspector is a framework-managed
-            // trailing column (not a hand-built fixed-width HStack panel): AppKit
-            // subtracts its width from the content, so sidebar + content +
-            // inspector can never sum past the window and clip offscreen.
-            Group {
-                if let sourceID = appState.playerSourceID {
-                    PlayerView(sourceID: sourceID)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    LibraryView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        // Native toolbar search — one clean system field, no
-                        // custom pill (which doubled inside the toolbar item).
-                        // Only present in the library, not the Cut Room.
-                        .searchable(
-                            text: $appState.searchQuery,
-                            isPresented: $searchPresented,
-                            placement: .toolbar,
-                            prompt: "Search clips, tags, notes…"
-                        )
-                }
-            }
-            .inspector(isPresented: inspectorPresented) {
+            // Detail = content + a hand-built trailing inspector column. The
+            // framework `.inspector` overlapped/clipped/janked when opened with
+            // the sidebar already out; this HStack makes the inspector a real
+            // sibling — content flexes, inspector is a fixed column, so they can
+            // never overlap and nothing draws on top of anything.
+            HStack(spacing: 0) {
                 Group {
-                    if let clipID = appState.selectedClipIDs.first {
-                        InspectorView(clipID: clipID)
+                    if let sourceID = appState.playerSourceID {
+                        PlayerView(sourceID: sourceID)
                     } else {
-                        InspectorEmptyState()
+                        LibraryView()
+                            // Native toolbar search — one clean system field, no
+                            // custom pill (which doubled inside the toolbar item).
+                            // Only present in the library, not the Cut Room.
+                            .searchable(
+                                text: $appState.searchQuery,
+                                isPresented: $searchPresented,
+                                placement: .toolbar,
+                                prompt: "Search clips, tags, notes…"
+                            )
                     }
                 }
-                // Kept modest so sidebar + grid + inspector all stay usable near
-                // the 900pt minimum window width (the grid isn't crushed).
-                .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if appState.inspectorVisible {
+                    Divider().overlay(Theme.border)
+                    inspectorPanel
+                        .frame(width: 300)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
+            .animation(.easeInOut(duration: 0.18), value: appState.inspectorVisible)
+            .animation(.easeInOut(duration: 0.18), value: appState.selectedClipIDs.first)
         }
         .navigationSplitViewStyle(.balanced)
         // ONE window toolbar for the whole app, whose content switches between

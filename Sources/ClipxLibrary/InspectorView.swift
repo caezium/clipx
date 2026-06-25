@@ -328,30 +328,38 @@ struct InspectorView: View {
         }
     }
 
+    /// Loads the clip + its tags/projects/collections off the main thread. The
+    /// six DB reads used to run synchronously in `.onAppear`, which stalled the
+    /// first inspector open on app startup. Results are applied back on main.
     private func load() {
-        guard let database = AppEnvironment.shared.database else { return }
-        let store = AppEnvironment.shared.tagStore
-        do {
-            let c: Clip? = try database.read { try Clip.fetchOne($0, key: clipID) }
-            self.clip = c
-            draftName = c?.name ?? ""
-            draftNotes = c?.notes ?? ""
-            if let c, let s: Source = try database.read({ try Source.fetchOne($0, key: c.sourceID) }) {
-                self.source = s
+        let clipID = self.clipID
+        Task.detached(priority: .userInitiated) {
+            guard let database = AppEnvironment.shared.database else { return }
+            let store = AppEnvironment.shared.tagStore
+            let c: Clip? = try? database.read { try Clip.fetchOne($0, key: clipID) }
+            let s: Source? = c.flatMap { cc in
+                try? database.read { try Source.fetchOne($0, key: cc.sourceID) }
             }
-            tags = (try? store?.tags(forClip: clipID).map(\.name)) ?? []
-            allProjects = (try? database.read { try Project.order(Project.Columns.name).fetchAll($0) }) ?? []
+            let tagList = (try? store?.tags(forClip: clipID).map(\.name)) ?? []
+            let projects = (try? database.read { try Project.order(Project.Columns.name).fetchAll($0) }) ?? []
             let assigned: [Int64] = (try? database.read { db in
                 try Int64.fetchAll(db, sql: "SELECT project_id FROM clip_projects WHERE clip_id = ?", arguments: [clipID])
             }) ?? []
-            assignedProjectIDs = Set(assigned)
-            allCollections = (try? database.read { try Collection.order(Collection.Columns.name).fetchAll($0) }) ?? []
+            let colls = (try? database.read { try Collection.order(Collection.Columns.name).fetchAll($0) }) ?? []
             let assignedC: [Int64] = (try? database.read { db in
                 try Int64.fetchAll(db, sql: "SELECT collection_id FROM clip_collections WHERE clip_id = ?", arguments: [clipID])
             }) ?? []
-            assignedCollectionIDs = Set(assignedC)
-        } catch {
-            ClipxLog.library.error("InspectorView.load failed: \(String(describing: error), privacy: .public)")
+            await MainActor.run {
+                self.clip = c
+                self.draftName = c?.name ?? ""
+                self.draftNotes = c?.notes ?? ""
+                self.source = s
+                self.tags = tagList
+                self.allProjects = projects
+                self.assignedProjectIDs = Set(assigned)
+                self.allCollections = colls
+                self.assignedCollectionIDs = Set(assignedC)
+            }
         }
     }
 

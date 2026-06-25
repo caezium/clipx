@@ -20,13 +20,26 @@ final class FFmpegBackend {
         return candidates.first { FileManager.default.fileExists(atPath: $0) } ?? "ffmpeg"
     }
 
+    /// Decompose a speed multiplier into a chain of `atempo` filters, since each
+    /// atempo only accepts 0.5…2.0. e.g. 4.0 → ["atempo=2.0","atempo=2.0"].
+    static func atempoChain(_ speed: Double) -> [String] {
+        guard speed > 0, speed != 1.0 else { return [] }
+        var remaining = speed
+        var parts: [String] = []
+        while remaining > 2.0 { parts.append("atempo=2.0"); remaining /= 2.0 }
+        while remaining < 0.5 { parts.append("atempo=0.5"); remaining /= 0.5 }
+        parts.append("atempo=\(String(format: "%.4f", remaining))")
+        return parts
+    }
+
     static func buildArguments(
         sourcePath: String,
         inMs: Int64,
         outMs: Int64,
         preset: ExportPreset,
         outputPath: String,
-        rotation: Int = 0
+        rotation: Int = 0,
+        speed: Double = 1.0
     ) -> [String] {
         let durationSec = Double(outMs - inMs) / 1000.0
         let startSec = Double(inMs) / 1000.0
@@ -40,9 +53,11 @@ final class FFmpegBackend {
             "-i", sourcePath,
             "-ss", String(format: "%.3f", min(1, startSec)),
             "-t", String(format: "%.3f", durationSec),
-            // Rotation (if any) THEN shared fill+crop — matches the AVFoundation
-            // backend so Direct and MAS builds frame identically. (#12, rotation)
-            "-vf", [VideoRotation.ffmpegFilter(degrees: rotation),
+            // Speed (setpts, if any) THEN rotation THEN shared fill+crop —
+            // matches the AVFoundation backend so Direct and MAS frame
+            // identically. (#12, rotation, speed)
+            "-vf", [speed != 1.0 ? "setpts=PTS/\(String(format: "%.4f", speed))" : nil,
+                    VideoRotation.ffmpegFilter(degrees: rotation),
                     FramingPolicy.ffmpegFilter(width: preset.width, height: preset.height)]
                 .compactMap { $0 }.joined(separator: ","),
             "-r", String(preset.frameRate),
@@ -53,10 +68,13 @@ final class FFmpegBackend {
             "-color_trc", "bt709",
             "-colorspace", "bt709",
         ]
+        // Audio filter chain: speed (atempo) first, then loudness if targeted.
+        var audioFilters = atempoChain(speed)
         if let lufs = preset.lufsTarget {
-            args.append(contentsOf: [
-                "-af", "loudnorm=I=\(lufs):TP=-1.5:LRA=7"
-            ])
+            audioFilters.append("loudnorm=I=\(lufs):TP=-1.5:LRA=7")
+        }
+        if !audioFilters.isEmpty {
+            args.append(contentsOf: ["-af", audioFilters.joined(separator: ",")])
         }
         args.append(contentsOf: [
             "-c:a", "aac",

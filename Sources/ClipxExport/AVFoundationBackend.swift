@@ -18,6 +18,7 @@ final class AVFoundationBackend {
         preset: ExportPreset,
         outputPath: String,
         rotation: Int = 0,
+        speed: Double = 1.0,
         onCancellerRegistered: ((@Sendable @escaping () -> Void) -> Void)? = nil,
         onProgress: @escaping (Double) -> Void
     ) async throws {
@@ -38,7 +39,25 @@ final class AVFoundationBackend {
                          preset.height >= 1080 ? AVAssetExportPreset1920x1080 :
                                                  AVAssetExportPreset1280x720
 
-        guard let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
+        // Speed (e.g. slow-mo footage at 4×) is baked in by exporting a
+        // time-scaled composition. At 1× we keep the simpler raw-asset path.
+        let exportAsset: AVAsset
+        let exportTimeRange: CMTimeRange
+        if speed != 1.0 {
+            let scaled = try await Self.buildSpeedComposition(
+                asset: asset, inMs: inMs, outMs: clampedOutMs, speed: speed
+            )
+            exportAsset = scaled.composition
+            exportTimeRange = scaled.timeRange
+        } else {
+            exportAsset = asset
+            exportTimeRange = CMTimeRange(
+                start: CMTime(value: inMs, timescale: 1000),
+                duration: CMTime(value: clampedOutMs - inMs, timescale: 1000)
+            )
+        }
+
+        guard let session = AVAssetExportSession(asset: exportAsset, presetName: presetName) else {
             throw NSError(
                 domain: "clipx.export",
                 code: -1,
@@ -50,17 +69,14 @@ final class AVFoundationBackend {
         try? FileManager.default.removeItem(at: outputURL)
         session.outputURL = outputURL
         session.outputFileType = .mp4
-        session.timeRange = CMTimeRange(
-            start: CMTime(value: inMs, timescale: 1000),
-            duration: CMTime(value: clampedOutMs - inMs, timescale: 1000)
-        )
+        session.timeRange = exportTimeRange
 
         // For vertical / square presets, attach a videoComposition that scales
         // + center-crops the source into the target render size. Without this
         // the AV backend just letterboxes inside the source aspect, and Reels
         // output didn't actually fit Reels — divergent from the ffmpeg path.
         if let composition = try? await Self.buildVideoComposition(
-            asset: asset,
+            asset: exportAsset,
             renderWidth: preset.width,
             renderHeight: preset.height,
             frameRate: preset.frameRate,
@@ -98,6 +114,37 @@ final class AVFoundationBackend {
                 userInfo: [NSLocalizedDescriptionKey: "Export ended with status \(session.status.rawValue)"]
             )
         }
+    }
+
+    /// Builds a composition holding just the [in,out] range of the source,
+    /// time-scaled to bake in a permanent speed change. Audio is scaled too.
+    /// Returns the composition and its (scaled) full time range.
+    private static func buildSpeedComposition(
+        asset: AVAsset, inMs: Int64, outMs: Int64, speed: Double
+    ) async throws -> (composition: AVMutableComposition, timeRange: CMTimeRange) {
+        let comp = AVMutableComposition()
+        let srcRange = CMTimeRange(
+            start: CMTime(value: inMs, timescale: 1000),
+            duration: CMTime(value: outMs - inMs, timescale: 1000)
+        )
+        if let vTrack = try await asset.loadTracks(withMediaType: .video).first,
+           let cv = comp.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            try cv.insertTimeRange(srcRange, of: vTrack, at: .zero)
+            // Preserve orientation so the framing composition's transform math
+            // (which reads preferredTransform) still applies.
+            cv.preferredTransform = (try? await vTrack.load(.preferredTransform)) ?? .identity
+        }
+        if let aTrack = try? await asset.loadTracks(withMediaType: .audio).first,
+           let ca = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+            try? ca.insertTimeRange(srcRange, of: aTrack, at: .zero)
+        }
+        let scaledDuration = CMTime(
+            value: Int64(Double(outMs - inMs) / speed), timescale: 1000
+        )
+        comp.scaleTimeRange(
+            CMTimeRange(start: .zero, duration: srcRange.duration), toDuration: scaledDuration
+        )
+        return (comp, CMTimeRange(start: .zero, duration: scaledDuration))
     }
 
     /// Builds a videoComposition that scales-and-pads the source video into a

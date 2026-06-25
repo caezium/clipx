@@ -199,13 +199,17 @@ enum StintBridge {
         let preset = ExportPreset.youtube1080p
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("clipx-review-\(clipID)-\(UUID().uuidString).mp4")
+        let speed = source.speed
+        // The rendered clip is sped up, so its real duration shrinks by `speed`.
+        let renderedSeconds = Double(outMs - inMs) / 1000 / max(0.25, speed)
         #if DIRECT_BUILD
         let args = FFmpegBackend.buildArguments(
             sourcePath: source.path, inMs: inMs, outMs: outMs,
-            preset: preset, outputPath: tmp.path, rotation: source.rotation
+            preset: preset, outputPath: tmp.path, rotation: source.rotation,
+            speed: speed
         )
         let code = try await FFmpegBackend.run(
-            arguments: args, durationSec: Double(outMs - inMs) / 1000,
+            arguments: args, durationSec: renderedSeconds,
             onCancellerRegistered: { _ in }, onProgress: { _ in }
         )
         if code != 0 { throw StintError.renderFailed }
@@ -213,10 +217,11 @@ enum StintBridge {
         try await AVFoundationBackend.export(
             sourcePath: source.path, inMs: inMs, outMs: outMs,
             preset: preset, outputPath: tmp.path, rotation: source.rotation,
+            speed: speed,
             onCancellerRegistered: { _ in }, onProgress: { _ in }
         )
         #endif
-        return (tmp, Double(outMs - inMs) / 1000, clip.name ?? "Clip \(clipID)")
+        return (tmp, renderedSeconds, clip.name ?? "Clip \(clipID)")
     }
 
     // MARK: - Orchestration

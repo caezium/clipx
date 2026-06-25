@@ -15,6 +15,14 @@ struct PlayerView: View {
     // nameless clip and forcing a trip to the Inspector.
     @State private var capturing = false
     @State private var captureSuggestions: [String] = []
+    // Hold-Space → temporary 2× (vs a tap, which toggles play/pause).
+    @State private var spaceHoldTask: Task<Void, Never>?
+    @State private var spaceHoldEngaged = false
+    // Custom playback-speed entry (the speed menu's "Custom…" item).
+    @State private var showCustomSpeed = false
+    @State private var customSpeedText = ""
+    /// Skip step for the double-tap-a-side gesture.
+    private let doubleTapSkipSeconds: Double = 10
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,11 +35,13 @@ struct PlayerView: View {
                 if let player = controller.player {
                     PlayerSurface(player: player)
                         .contentShape(Rectangle())
-                        .onTapGesture { if !capturing { keyboardFocused = true } }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(-1)
+            // Tap to focus, double-tap a side to skip ±, press-and-hold for 2×.
+            // Hidden while the capture card is up so it gets the events.
+            .overlay { if !capturing { videoGestureZones } }
             // The capture card floats over the bottom of the video so marking
             // → naming → tagging never leaves the player.
             .overlay(alignment: .bottom) {
@@ -86,7 +96,29 @@ struct PlayerView: View {
         .onKeyPress("i") { key { markIn() } }
         .onKeyPress("o") { key { markOut() } }
         .onKeyPress("s") { key { saveRange() } }
-        .onKeyPress(.space) { key { controller.togglePlayPause() } }
+        // Space: tap = play/pause; press-and-hold = 2× while held (released
+        // within ~0.2s counts as a tap). Ignored while editing text.
+        .onKeyPress(.space, phases: [.down, .up]) { press in
+            guard !capturing, !PlayerView.isEditingText() else { return .ignored }
+            switch press.phase {
+            case .down:
+                spaceHoldEngaged = false
+                spaceHoldTask?.cancel()
+                spaceHoldTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    guard !Task.isCancelled else { return }
+                    spaceHoldEngaged = true
+                    controller.beginHoldSpeed()
+                }
+            case .up:
+                spaceHoldTask?.cancel()
+                if spaceHoldEngaged { controller.endHoldSpeed(); spaceHoldEngaged = false }
+                else { controller.togglePlayPause() }
+            default:
+                break
+            }
+            return .handled
+        }
         // Plain arrows: frame-accurate single-frame step.
         // Shift+arrow: 5-second jump for fast scrubbing.
         // J / L (industry-standard transport keys): also 5s jump.
@@ -192,6 +224,9 @@ struct PlayerView: View {
 
             Spacer()
 
+            volumeControl
+            speedMenu
+
             // Rotate 90° — persists per source and is baked into exports.
             Button { rotate() } label: {
                 Image(systemName: "rotate.right").font(.system(size: 14))
@@ -241,6 +276,7 @@ struct PlayerView: View {
             self.source = src
             controller.load(url: src.url)
             controller.setRotation(src.rotation)   // restore the source's rotation
+            controller.setSpeed(src.speed)         // restore the source's permanent speed
             if let inMs = appState.playerInMs {
                 controller.seek(toMs: inMs)
             }
@@ -277,6 +313,148 @@ struct PlayerView: View {
             try db.execute(sql: "UPDATE sources SET rotation = ? WHERE id = ?", arguments: [newRotation, id])
         }
         AppState.shared.libraryRevision &+= 1
+    }
+
+    // MARK: - Speed & volume controls
+
+    private static let speedChoices: [Double] = [0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0]
+
+    private func speedLabel(_ s: Double) -> String { String(format: "%g×", s) }
+
+    /// Set the permanent per-source speed, persist it, and apply to the preview.
+    /// Mirrors `rotate()`; baked into exports via `Source.speed`.
+    private func setSpeed(_ newSpeed: Double) {
+        controller.setSpeed(newSpeed)
+        guard var src = source, let id = src.id else { return }
+        src.speed = controller.speed
+        source = src
+        try? AppEnvironment.shared.database?.write { db in
+            try db.execute(sql: "UPDATE sources SET speed = ? WHERE id = ?", arguments: [controller.speed, id])
+        }
+        AppState.shared.libraryRevision &+= 1
+    }
+
+    /// True when the current speed isn't one of the presets (a custom value).
+    private var speedIsCustom: Bool {
+        !Self.speedChoices.contains { abs(controller.speed - $0) < 0.001 }
+    }
+
+    private var speedMenu: some View {
+        Menu {
+            ForEach(Self.speedChoices, id: \.self) { s in
+                Button {
+                    setSpeed(s)
+                } label: {
+                    if abs(controller.speed - s) < 0.001 {
+                        Label(speedLabel(s), systemImage: "checkmark")
+                    } else {
+                        Text(speedLabel(s))
+                    }
+                }
+            }
+            Divider()
+            Button {
+                customSpeedText = String(format: "%g", controller.speed)
+                showCustomSpeed = true
+            } label: {
+                // A checkmark when the active speed is a custom (non-preset) value.
+                if speedIsCustom {
+                    Label("Custom: \(speedLabel(controller.speed))", systemImage: "checkmark")
+                } else {
+                    Text("Custom…")
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "speedometer").font(.system(size: 12))
+                Text(speedLabel(controller.speed)).font(.system(size: 12).monospacedDigit())
+            }
+            .foregroundStyle(controller.speed == 1.0 ? Theme.textSecondary : Theme.accent)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Playback speed — also baked into exports (e.g. 4× for slow-mo footage)")
+        .alert("Custom speed", isPresented: $showCustomSpeed) {
+            TextField("e.g. 3 or 0.75", text: $customSpeedText)
+                .onSubmit(applyCustomSpeed)
+            Button("Set", action: applyCustomSpeed)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Multiplier between \(speedLabel(0.1)) and \(speedLabel(PlayerController.maxSpeed)). Baked into exports.")
+        }
+    }
+
+    /// Parse the typed multiplier (tolerating a trailing "x"/"×") and apply it.
+    private func applyCustomSpeed() {
+        let cleaned = customSpeedText
+            .replacingOccurrences(of: "×", with: "")
+            .replacingOccurrences(of: "x", with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespaces)
+        if let v = Double(cleaned), v > 0 { setSpeed(v) }
+    }
+
+    private var volumeIcon: String {
+        if controller.muted || controller.volume <= 0.001 { return "speaker.slash.fill" }
+        if controller.volume < 0.5 { return "speaker.wave.1.fill" }
+        if controller.volume > 1.0 { return "speaker.wave.3.fill" }   // boosted above source
+        return "speaker.wave.2.fill"
+    }
+
+    private var volumeControl: some View {
+        HStack(spacing: 5) {
+            Button { controller.toggleMute() } label: {
+                Image(systemName: volumeIcon).font(.system(size: 13)).frame(width: 16)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(controller.muted ? Theme.accent : Theme.textSecondary)
+            .help(controller.muted ? "Unmute" : "Mute")
+            Slider(
+                value: Binding(
+                    get: { controller.muted ? 0 : controller.volume },
+                    set: { controller.setVolume($0) }
+                ),
+                in: 0...PlayerController.maxVolume
+            )
+            .controlSize(.mini)
+            .frame(width: 64)
+            .help("Volume — above the midpoint boosts gain above the source")
+        }
+    }
+
+    // MARK: - Video gestures (tap focus / double-tap skip / hold 2×)
+
+    private var videoGestureZones: some View {
+        HStack(spacing: 0) {
+            gestureZone(forward: false)
+            gestureZone(forward: true)
+        }
+    }
+
+    private func gestureZone(forward: Bool) -> some View {
+        Color.clear
+            .contentShape(Rectangle())
+            // Double-tap a side to skip ±; single tap plays/pauses (and focuses
+            // for hotkeys). The single tap resolves after the double-tap window.
+            .onTapGesture(count: 2) {
+                if forward { controller.jumpForward(seconds: doubleTapSkipSeconds) }
+                else { controller.jumpBackward(seconds: doubleTapSkipSeconds) }
+            }
+            .onTapGesture {
+                keyboardFocused = true
+                controller.togglePlayPause()
+            }
+            // Press-and-hold anywhere on the video for temporary 2×.
+            .simultaneousGesture(holdSpeedGesture)
+    }
+
+    private var holdSpeedGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.2)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                if case .second = value { controller.beginHoldSpeed() }  // idempotent
+            }
+            .onEnded { _ in controller.endHoldSpeed() }
     }
 
     private func markIn() {

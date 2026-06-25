@@ -233,6 +233,15 @@ enum Migrations {
             }
         }
 
+        // v7: permanent per-source playback speed (e.g. 4× to play slow-mo
+        // footage at normal speed), applied to the preview and baked into
+        // exports. Defaults to 1.0 so existing sources are unchanged.
+        migrator.registerMigration("v7_source_speed") { db in
+            try db.alter(table: "sources") { t in
+                t.add(column: "speed", .double).defaults(to: 1.0)
+            }
+        }
+
         return migrator
     }
 }
