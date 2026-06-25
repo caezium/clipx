@@ -123,22 +123,59 @@ enum StintBridge {
         stintClipID: String, fileURL: URL, durationSeconds: Double
     ) async throws {
         let boundary = "clipx-\(UUID().uuidString)"
-        let fileData = try Data(contentsOf: fileURL)
-        let body = multipartVideoBody(
+        // Assemble the multipart body on disk and upload from the file, so a
+        // large render is never held wholesale in memory (it's streamed in
+        // chunks through both the writer and URLSession).
+        let bodyURL = try writeMultipartVideoBodyFile(
             fieldName: "video",
             filename: fileURL.lastPathComponent,
             mimeType: "video/mp4",
-            fileData: fileData,
+            videoFileURL: fileURL,
             extraFields: ["durationSeconds": String(format: "%.3f", durationSeconds)],
             boundary: boundary
         )
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
         var req = URLRequest(url: base.appendingPathComponent("api/clips/\(stintClipID)/video"))
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         req.setValue(ownerCookieHeader(projectID: projectID, ownerKey: ownerKey), forHTTPHeaderField: "Cookie")
-        req.httpBody = body
-        let (_, resp) = try await URLSession.shared.upload(for: req, from: body)
+        let (_, resp) = try await URLSession.shared.upload(for: req, fromFile: bodyURL)
         try check(resp)
+    }
+
+    /// Writes a `multipart/form-data` body to a temp file, streaming the video
+    /// in chunks rather than loading it into a `Data`. Returns the temp URL; the
+    /// caller is responsible for deleting it. Mirrors `multipartVideoBody`'s wire
+    /// format (which stays as the pure, unit-tested reference).
+    private static func writeMultipartVideoBodyFile(
+        fieldName: String,
+        filename: String,
+        mimeType: String,
+        videoFileURL: URL,
+        extraFields: [String: String],
+        boundary: String
+    ) throws -> URL {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clipx-upload-\(UUID().uuidString).multipart")
+        FileManager.default.createFile(atPath: tmp.path, contents: nil)
+        let out = try FileHandle(forWritingTo: tmp)
+        defer { try? out.close() }
+        func write(_ s: String) { out.write(Data(s.utf8)) }
+        for (key, value) in extraFields {
+            write("--\(boundary)\r\n")
+            write("Content-Disposition: form-data; name=\"\(key)\"\r\n\r\n")
+            write("\(value)\r\n")
+        }
+        write("--\(boundary)\r\n")
+        write("Content-Disposition: form-data; name=\"\(fieldName)\"; filename=\"\(filename)\"\r\n")
+        write("Content-Type: \(mimeType)\r\n\r\n")
+        let input = try FileHandle(forReadingFrom: videoFileURL)
+        defer { try? input.close() }
+        while let chunk = try input.read(upToCount: 1 << 20), !chunk.isEmpty {
+            out.write(chunk)
+        }
+        write("\r\n--\(boundary)--\r\n")
+        return tmp
     }
 
     private static func check(_ resp: URLResponse) throws {

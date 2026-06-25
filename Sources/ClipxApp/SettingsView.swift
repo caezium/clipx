@@ -159,8 +159,12 @@ struct GeneralSettingsView: View {
 struct LabelsSettingsView: View {
     @State private var presetID: String = Purposes.activePresetID
 
+    /// The labels actually used by capture/Light Table. Reading `Purposes.active`
+    /// (not just the picked preset) keeps the preview honest if a custom set is
+    /// in effect; selecting a preset clears any custom set, so they reconverge.
     private var activeLabels: [PurposeLabel] {
-        (Purposes.all.first { $0.id == presetID } ?? Purposes.creator).labels
+        _ = presetID   // re-evaluate when the picker changes
+        return Purposes.active
     }
 
     var body: some View {

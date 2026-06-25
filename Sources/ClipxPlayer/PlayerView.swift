@@ -105,6 +105,9 @@ struct PlayerView: View {
         .onKeyPress("j") { key { controller.jumpBackward(seconds: 5) } }
         .onKeyPress("l") { key { controller.jumpForward(seconds: 5) } }
         .onKeyPress("k") { key { controller.togglePlayPause() } }
+        // Esc leaves the Cut Room — but `key {}` returns .ignored while the
+        // capture card is up, so its Cancel (.cancelAction) keeps Esc instead.
+        .onKeyPress(.escape) { key { exitToLibrary() } }
         // Menu commands and command palette post these notifications. We observe
         // them here so the menu drives whichever player is currently visible.
         .onReceive(NotificationCenter.default.publisher(for: .markIn)) { _ in markIn() }
@@ -348,6 +351,14 @@ struct PlayerView: View {
         // Keep the in/out marks so the user can re-scrub and try again.
         withAnimation(.easeOut(duration: 0.16)) { capturing = false }
         keyboardFocused = true
+    }
+
+    /// Leave the Cut Room and return to the library, clearing the pending
+    /// in/out range. Bound to Esc via `onKeyPress` (only when not capturing).
+    private func exitToLibrary() {
+        appState.playerSourceID = nil
+        appState.playerInMs = nil
+        appState.playerOutMs = nil
     }
 
     private var captureCard: some View {

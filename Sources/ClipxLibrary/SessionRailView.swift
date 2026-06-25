@@ -65,7 +65,9 @@ struct SessionRailView: View {
             .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
             .padding(10)
         }
-        .frame(width: 188)
+        // No fixed width: as the Cut Room's left column it fills the
+        // NavigationSplitView sidebar width set in RootView.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Theme.bgRaised)
         .onAppear(perform: load)
         .onChange(of: currentSourceID) { _, _ in load() }
@@ -78,7 +80,7 @@ struct SessionRailView: View {
         let count = src.id.flatMap { clipCounts[$0] } ?? 0
         Button { if let id = src.id { onPick(id) } } label: {
             HStack(spacing: 8) {
-                SessionThumb(hash: src.hash)
+                SessionThumb(source: src)
                     .frame(width: 46, height: 27)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                     .overlay(alignment: .bottomTrailing) {
@@ -123,12 +125,17 @@ struct SessionRailView: View {
 
     private func markReviewedAndNext() {
         try? AppEnvironment.shared.markerStore?.markSourceReviewed(currentSourceID, reviewed: true)
+        // Reflect the change locally right away so the next-pick and progress
+        // label don't depend on the async reload landing first.
+        if let i = sources.firstIndex(where: { $0.id == currentSourceID }) {
+            sources[i].reviewedAt = Int64(Date().timeIntervalSince1970)
+        }
         // Advance to the next not-yet-reviewed source after the current one,
-        // wrapping to any remaining unreviewed source if we're at the end.
+        // wrapping to any earlier unreviewed source if we're at the end.
         if let idx = sources.firstIndex(where: { $0.id == currentSourceID }) {
             let after = sources[(idx + 1)...].first { !$0.isReviewed }
-            let anyRemaining = sources.first { !$0.isReviewed && $0.id != currentSourceID }
-            if let next = (after ?? anyRemaining)?.id { onPick(next) }
+            let before = sources[..<idx].first { !$0.isReviewed }
+            if let next = (after ?? before)?.id { onPick(next) }
         }
     }
 
@@ -187,9 +194,11 @@ struct SessionRailView: View {
     }
 }
 
-/// Tiny cached thumbnail for a session-rail row.
+/// Tiny cached thumbnail for a session-rail row. Generates the thumbnail on
+/// demand if it isn't cached yet (e.g. a freshly imported source), so the rail
+/// doesn't sit on the film placeholder forever.
 private struct SessionThumb: View {
-    let hash: String
+    let source: Source
     @State private var img: NSImage?
 
     var body: some View {
@@ -206,10 +215,18 @@ private struct SessionThumb: View {
             }
         }
         .clipped()
-        .onAppear {
-            guard img == nil, let engine = AppEnvironment.shared.thumbnailEngine else { return }
-            let p = engine.thumbPath(for: hash)
-            if let i = NSImage(contentsOf: p) { img = i }
+        .task(id: source.hash) { loadThumb() }
+    }
+
+    private func loadThumb() {
+        guard img == nil, let engine = AppEnvironment.shared.thumbnailEngine else { return }
+        let p = engine.thumbPath(for: source.hash)
+        if let i = NSImage(contentsOf: p) { img = i; return }
+        // Missing (never generated, or cache purged) — build it on demand. The
+        // engine de-dupes concurrent requests internally.
+        engine.generateThumbnail(source: source) { resultURL in
+            guard let resultURL, let i = NSImage(contentsOf: resultURL) else { return }
+            DispatchQueue.main.async { self.img = i }
         }
     }
 }

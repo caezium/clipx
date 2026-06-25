@@ -29,6 +29,9 @@ struct LightTableView: View {
         .background(Theme.bg)
         .onAppear(perform: load)
         .onChange(of: appState.libraryRevision) { _, _ in load() }
+        // Honour the sidebar's library scope, like the grid/list views do.
+        .onChange(of: appState.selectedProjectID) { _, _ in load() }
+        .onChange(of: appState.selectedCollectionID) { _, _ in load() }
     }
 
     /// Active labels first (in preset order), then any leftover keys that exist
@@ -67,8 +70,9 @@ struct LightTableView: View {
                 .fixedSize()
                 .help("Render these clips into a Stint project and copy a share link for frame-pinned comments")
                 Button {
-                    appState.selectedClipIDs = Set(clips.compactMap(\.id))
-                    ExportActions.exportSelected(preset)
+                    // Export this group directly without hijacking the user's
+                    // current selection (which exportSelected would read).
+                    ExportActions.export(clipIDs: clips.compactMap(\.id), preset: preset)
                 } label: {
                     Label("Export \(clips.count) · \(preset.displayName)", systemImage: "square.and.arrow.up")
                 }
@@ -127,13 +131,25 @@ struct LightTableView: View {
     }
 
     private func load() {
+        // Read the sidebar scope on the main actor before detaching.
+        let projectID = appState.selectedProjectID
+        let collectionID = appState.selectedCollectionID
         Task.detached(priority: .userInitiated) {
             guard let db = AppEnvironment.shared.database else { return }
+            var clauses = ["purpose IS NOT NULL", "purpose != ''"]
+            var args: [DatabaseValueConvertible] = []
+            if let projectID {
+                clauses.append("id IN (SELECT clip_id FROM clip_projects WHERE project_id = ?)")
+                args.append(projectID)
+            }
+            if let collectionID {
+                clauses.append("id IN (SELECT clip_id FROM clip_collections WHERE collection_id = ?)")
+                args.append(collectionID)
+            }
+            let sql = "SELECT * FROM clips WHERE \(clauses.joined(separator: " AND ")) "
+                + "ORDER BY rating DESC, created_at DESC"
             let clips: [Clip] = (try? db.read { dbc in
-                try Clip.fetchAll(
-                    dbc,
-                    sql: "SELECT * FROM clips WHERE purpose IS NOT NULL AND purpose != '' ORDER BY rating DESC, created_at DESC"
-                )
+                try Clip.fetchAll(dbc, sql: sql, arguments: StatementArguments(args))
             }) ?? []
             var buckets: [String: [Clip]] = [:]
             for clip in clips {

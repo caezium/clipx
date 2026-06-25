@@ -6,14 +6,9 @@ struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didCompleteOnboarding")
     @State private var dropTargeted = false
-    /// Drives the library sidebar's visibility. In the Cut Room (a source open
-    /// in the player) the session rail *replaces* the library sidebar instead of
-    /// stacking beside it — two left columns + the player + inspector overflow
-    /// the window and clip both edges offscreen. Collapsing it keeps everything
-    /// on screen and keeps the marking workspace focused.
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    /// Keyboard focus for the toolbar search field (⌘F).
-    @FocusState private var searchFocused: Bool
+    /// Drives the native search field's active state so ⌘F can focus it
+    /// (macOS 14-compatible; `.searchFocused` is 15+).
+    @State private var searchPresented = false
     /// Display name of the source open in the player, shown in the toolbar.
     @State private var playerSourceName: String = ""
 
@@ -33,22 +28,47 @@ struct RootView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
-        } detail: {
-            // Single-column content area. The player takes over when active so
-            // it gets real horizontal space; library grid shows otherwise. The
-            // inspector is a framework-managed trailing column (not a hand-built
-            // fixed-width HStack panel): AppKit subtracts its width from the
-            // content, so sidebar + library + inspector can never sum past the
-            // window and clip offscreen. (recurring sidebar-clip root-cause fix)
+        NavigationSplitView {
+            // ONE left column. It shows the library sidebar normally and the Cut
+            // Room session rail while a source is open — a content swap *inside the
+            // same column*, so we never stack two left columns (the recurring
+            // sidebar-clip bug) and never have to force-collapse anything. The
+            // framework sidebar toggle works in both modes to hide/show it.
             Group {
                 if let sourceID = appState.playerSourceID {
-                    PlayerWorkspace(sourceID: sourceID)
+                    SessionRailView(currentSourceID: sourceID) { id in
+                        appState.playerSourceID = id
+                        appState.playerInMs = nil
+                        appState.playerOutMs = nil
+                        appState.selectedClipIDs = []
+                    }
+                } else {
+                    SidebarView()
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+        } detail: {
+            // Single detail column: the player takes over when a source is open,
+            // otherwise the library grid. The inspector is a framework-managed
+            // trailing column (not a hand-built fixed-width HStack panel): AppKit
+            // subtracts its width from the content, so sidebar + content +
+            // inspector can never sum past the window and clip offscreen.
+            Group {
+                if let sourceID = appState.playerSourceID {
+                    PlayerView(sourceID: sourceID)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     LibraryView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        // Native toolbar search — one clean system field, no
+                        // custom pill (which doubled inside the toolbar item).
+                        // Only present in the library, not the Cut Room.
+                        .searchable(
+                            text: $appState.searchQuery,
+                            isPresented: $searchPresented,
+                            placement: .toolbar,
+                            prompt: "Search clips, tags, notes…"
+                        )
                 }
             }
             .inspector(isPresented: inspectorPresented) {
@@ -59,34 +79,29 @@ struct RootView: View {
                         InspectorEmptyState()
                     }
                 }
-                .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
+                // Kept modest so sidebar + grid + inspector all stay usable near
+                // the 900pt minimum window width (the grid isn't crushed).
+                .inspectorColumnWidth(min: 240, ideal: 280, max: 340)
             }
         }
         .navigationSplitViewStyle(.balanced)
         // ONE window toolbar for the whole app, whose content switches between
-        // library and Cut Room. Previously LibraryView and PlayerWorkspace each
-        // declared their own .toolbar; swapping those sibling views left the
-        // shared toolbar with stale/dropped items (esp. the .principal slot).
+        // library and Cut Room. A single declaration (rather than one per child
+        // view) keeps the shared toolbar from dropping items — especially the
+        // .principal slot — when the detail view swaps.
         .toolbar { unifiedToolbar }
-        // Drop the framework sidebar-toggle: the library sidebar's visibility is
-        // driven here (collapsed in the Cut Room), and an exposed toggle let the
-        // user re-stack the sidebar beside the session rail and clip offscreen.
-        .toolbar(removing: .sidebarToggle)
         .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
-            searchFocused = true
+            // The search field only exists in the library toolbar; ignore ⌘F in
+            // the Cut Room rather than activating a field that's gone.
+            if !inPlayer { searchPresented = true }
         }
-        // Collapse the library sidebar in the Cut Room so the session rail is the
-        // only left column; restore it back in the library. (sidebar-clip fix)
+        // Keep the toolbar's source-name label in sync with the open source, and
+        // dismiss any active search when entering the Cut Room.
         .onChange(of: appState.playerSourceID) { _, sourceID in
-            withAnimation(.easeInOut(duration: 0.18)) {
-                columnVisibility = (sourceID != nil) ? .detailOnly : .all
-            }
+            if sourceID != nil { searchPresented = false }
             loadPlayerSourceName()
         }
-        .onAppear {
-            columnVisibility = inPlayer ? .detailOnly : .all
-            loadPlayerSourceName()
-        }
+        .onAppear { loadPlayerSourceName() }
         .background(Theme.bg)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
@@ -159,34 +174,12 @@ struct RootView: View {
 
     @ToolbarContentBuilder
     private var libraryToolbar: some ToolbarContent {
-        ToolbarItemGroup(placement: .principal) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                TextField("Search clips, tags, notes…", text: $appState.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($searchFocused)
-                    .onExitCommand { appState.searchQuery = "" }   // Esc clears (#38)
-                    .frame(minWidth: 110)
-                if !appState.searchQuery.isEmpty {
-                    Button { appState.searchQuery = "" } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5)
-            .background(Theme.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-            // Flexible (not a hard width) so the toolbar can compress on narrow
-            // windows instead of pushing controls into the » overflow menu.
-            .frame(maxWidth: 340)
-
-            if appState.selectedClipIDs.count > 1 {
+        // The search field is the native `.searchable` on the library view
+        // (see `body`) — a single system field, no custom pill inside the
+        // toolbar item (which read as a doubled bar). The principal slot now
+        // holds only the multi-select batch actions, when several are selected.
+        if appState.selectedClipIDs.count > 1 {
+            ToolbarItemGroup(placement: .principal) {
                 Text("\(appState.selectedClipIDs.count) selected")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
@@ -215,7 +208,7 @@ struct RootView: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .tint(Theme.textSecondary)
-            .frame(width: 150)
+            .frame(width: 140)
 
             Picker("", selection: $appState.viewMode) {
                 Image(systemName: "calendar").tag(LibraryViewMode.calendar)
@@ -242,7 +235,8 @@ struct RootView: View {
                 Label("Library", systemImage: "chevron.left")
                     .labelStyle(.titleAndIcon)
             }
-            .keyboardShortcut(.escape, modifiers: [])
+            // Esc is handled in PlayerView (gated on !capturing) so it doesn't
+            // fight the capture card's Cancel (.cancelAction) for the key.
             .help("Back to library (Esc)")
         }
         ToolbarItem(placement: .principal) {
@@ -327,35 +321,5 @@ private struct InspectorEmptyState: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bgRaised)
-    }
-}
-
-/// Full-area player mode: header with back button, big player, optional
-/// docked inspector on the right. Replaces the library while active so the
-/// player gets real horizontal space.
-private struct PlayerWorkspace: View {
-    let sourceID: Int64
-    @EnvironmentObject private var appState: AppState
-
-    var body: some View {
-        // The toolbar (back, source name, inspector toggle) lives in RootView's
-        // single unified toolbar — this view is just the session rail + player.
-        HStack(spacing: 0) {
-            // Session rail: the day's footage as a working stack with per-source
-            // review progress. Picking a row switches the player in place.
-            SessionRailView(currentSourceID: sourceID) { id in
-                appState.playerSourceID = id
-                appState.playerInMs = nil
-                appState.playerOutMs = nil
-                appState.selectedClipIDs = []
-            }
-
-            Divider().overlay(Theme.border)
-
-            // Player fills the rest; the inspector is a framework-managed
-            // trailing column owned by RootView (see .inspector above).
-            PlayerView(sourceID: sourceID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
     }
 }
