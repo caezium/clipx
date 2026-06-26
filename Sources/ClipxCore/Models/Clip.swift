@@ -84,11 +84,6 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
 
     var durationMs: Int64 { max(0, outMs - inMs) }
 
-    var moodList: [String] {
-        guard let mood, !mood.isEmpty else { return [] }
-        return mood.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-    }
-
     /// The clip's purpose keys, parsed from the CSV `purpose` field.
     var purposeList: [String] {
         guard let purpose, !purpose.isEmpty else { return [] }

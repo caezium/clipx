@@ -24,20 +24,3 @@ struct Collection: Identifiable, Codable, FetchableRecord, MutablePersistableRec
         id = inserted.rowID
     }
 }
-
-struct ClipCollection: Codable, FetchableRecord, PersistableRecord {
-    var clipID: Int64
-    var collectionID: Int64
-
-    static let databaseTableName = "clip_collections"
-
-    enum CodingKeys: String, CodingKey {
-        case clipID = "clip_id"
-        case collectionID = "collection_id"
-    }
-
-    enum Columns: String, ColumnExpression {
-        case clipID = "clip_id"
-        case collectionID = "collection_id"
-    }
-}

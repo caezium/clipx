@@ -379,13 +379,6 @@ final class ThumbnailEngine {
         }
     }
 
-    /// Removes cached thumbnails — used by Settings "Clear cache" button.
-    func clearCache() throws {
-        imageCache.removeAllObjects()
-        try FileManager.default.removeItem(at: cacheDir)
-        try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-    }
-
     /// One-shot background pass that generates thumbnails for every source
     /// that doesn't have a cache file yet. Called from
     /// `AppEnvironment.bootstrap()` after the watcher resumes so the user

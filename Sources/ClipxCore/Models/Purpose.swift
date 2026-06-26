@@ -83,16 +83,6 @@ enum Purposes {
         }
     }
 
-    /// Persist a hand-edited label set (Settings). Passing an empty array
-    /// clears the override and falls back to the active preset.
-    static func setCustom(_ labels: [PurposeLabel]) {
-        if labels.isEmpty {
-            UserDefaults.standard.removeObject(forKey: customKey)
-        } else if let data = try? JSONEncoder().encode(labels) {
-            UserDefaults.standard.set(data, forKey: customKey)
-        }
-    }
-
     /// Display title for a stored key, falling back to a capitalized key for
     /// labels that have since been removed from the active set.
     static func title(forKey key: String) -> String {
