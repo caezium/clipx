@@ -39,39 +39,42 @@ struct ShortcutOverlay: View {
                 .onTapGesture { visible = false }
             VStack(alignment: .leading, spacing: 18) {
                 HStack {
-                    Image(systemName: "command")
-                    Text("Keyboard shortcuts").font(.title2.bold())
+                    Image(systemName: "command").foregroundStyle(Theme.textSecondary)
+                    Text("Keyboard shortcuts")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
                     Spacer()
                     Button { visible = false } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
                 }
                 ForEach(groups, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(group.title).font(.headline).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(group.title).clipxSectionLabel()
                         ForEach(group.items, id: \.0) { item in
                             HStack(spacing: 12) {
                                 Text(item.0)
-                                    .font(.system(.body, design: .monospaced))
-                                    .padding(.horizontal, 8).padding(.vertical, 2)
-                                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
-                                    .frame(minWidth: 100, alignment: .leading)
-                                Text(item.1).foregroundStyle(.primary)
+                                    .clipxKeycap()
+                                    .frame(width: 110, alignment: .leading)
+                                Text(item.1).foregroundStyle(Theme.textSecondary)
                                 Spacer()
                             }
                         }
                     }
                 }
                 Spacer()
-                Text("Esc to dismiss")
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("Esc").clipxKeycap()
+                    Text("to dismiss").font(.caption).foregroundStyle(Theme.textTertiary)
+                }
             }
             .padding(28)
             .frame(width: 580, height: 600)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .shadow(radius: 30)
+            .background(Theme.bgRaised, in: RoundedRectangle(cornerRadius: Theme.r3))
+            .overlay(RoundedRectangle(cornerRadius: Theme.r3).strokeBorder(Theme.borderStrong, lineWidth: 1))
+            .shadow(color: .black.opacity(0.5), radius: 24, y: 8)
         }
         // Only consume non-modified keys; let ⌘Q etc. through so the user can
         // always quit / switch even while the overlay is up.

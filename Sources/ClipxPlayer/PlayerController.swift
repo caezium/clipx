@@ -45,7 +45,6 @@ final class PlayerController: ObservableObject {
     private var heldMultiplier: Double = 1.0
 
     private var timeObserver: Any?
-    private var statusCancellable: AnyCancellable?
     private var asset: AVURLAsset?
     private(set) var fps: Float = 30.0
 
@@ -268,7 +267,6 @@ final class PlayerController: ObservableObject {
         seek(toMs: max(0, prev))
     }
 
-    var currentTimeLabel: String { Self.formatMs(currentMs) }
     var durationLabel: String { Self.formatMs(durationMs) }
 
     /// (Re)installs the periodic time observer at the source's frame rate, so

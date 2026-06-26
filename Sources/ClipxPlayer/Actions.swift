@@ -60,6 +60,5 @@ extension Notification.Name {
     static let playerStepBack       = Notification.Name("clipx.player.stepBack")
     static let playerStepForward    = Notification.Name("clipx.player.stepForward")
     static let focusSearchField     = Notification.Name("clipx.focusSearchField")
-    static let playerDidLoadSource  = Notification.Name("clipx.playerDidLoadSource")
     static let markerDidChange      = Notification.Name("clipx.markerDidChange")
 }

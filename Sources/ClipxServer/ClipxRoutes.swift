@@ -561,15 +561,4 @@ enum ClipxRoutes {
         ClipxLog.app.error("web route \(context, privacy: .public) failed: \(String(describing: error), privacy: .public)")
         return .serverError("Internal server error")
     }
-
-    private static func mimeType(for ext: String) -> String {
-        switch ext.lowercased() {
-        case "mp4", "m4v": return "video/mp4"
-        case "mov":        return "video/quicktime"
-        case "mkv":        return "video/x-matroska"
-        case "webm":       return "video/webm"
-        case "avi":        return "video/x-msvideo"
-        default:           return "application/octet-stream"
-        }
-    }
 }
