@@ -107,6 +107,8 @@ enum LibraryViewMode: String, CaseIterable {
     case grid
     case list
     case calendar
+    /// The harvest surface — marked clips grouped by purpose, goal-first export.
+    case lightTable
 }
 
 enum ClipSortOption: String, CaseIterable {

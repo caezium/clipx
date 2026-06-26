@@ -6,43 +6,103 @@ struct RootView: View {
     @EnvironmentObject private var appState: AppState
     @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didCompleteOnboarding")
     @State private var dropTargeted = false
+    /// Drives the native search field's active state so ⌘F can focus it
+    /// (macOS 14-compatible; `.searchFocused` is 15+).
+    @State private var searchPresented = false
+    /// Display name of the source open in the player, shown in the toolbar.
+    @State private var playerSourceName: String = ""
 
-    /// The inspector column shows only when toggled on AND a clip is selected,
-    /// preserving the prior behavior while letting AppKit own the column width.
-    private var inspectorPresented: Binding<Bool> {
-        Binding(
-            get: { appState.inspectorVisible && appState.selectedClipIDs.first != nil },
-            set: { appState.inspectorVisible = $0 }
-        )
+    /// True while a source is open in the player (the Cut Room).
+    private var inPlayer: Bool { appState.playerSourceID != nil }
+
+    /// The trailing inspector column. Always shows when toggled on (with a
+    /// placeholder when nothing is selected) so the toggle never lights with no
+    /// visible change. `.id` rebuilds it per clip so it reloads on selection.
+    private var inspectorPanel: some View {
+        Group {
+            if let clipID = appState.selectedClipIDs.first {
+                InspectorView(clipID: clipID).id(clipID)
+            } else {
+                InspectorEmptyState()
+            }
+        }
+        .frame(maxHeight: .infinity)
+        .background(Theme.bgRaised)
     }
 
     var body: some View {
         NavigationSplitView {
-            SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
-        } detail: {
-            // Single-column content area. The player takes over when active so
-            // it gets real horizontal space; library grid shows otherwise. The
-            // inspector is a framework-managed trailing column (not a hand-built
-            // fixed-width HStack panel): AppKit subtracts its width from the
-            // content, so sidebar + library + inspector can never sum past the
-            // window and clip offscreen. (recurring sidebar-clip root-cause fix)
+            // ONE left column. It shows the library sidebar normally and the Cut
+            // Room session rail while a source is open — a content swap *inside the
+            // same column*, so we never stack two left columns (the recurring
+            // sidebar-clip bug) and never have to force-collapse anything. The
+            // framework sidebar toggle works in both modes to hide/show it.
             Group {
                 if let sourceID = appState.playerSourceID {
-                    PlayerWorkspace(sourceID: sourceID)
+                    SessionRailView(currentSourceID: sourceID) { id in
+                        appState.playerSourceID = id
+                        appState.playerInMs = nil
+                        appState.playerOutMs = nil
+                        appState.selectedClipIDs = []
+                    }
                 } else {
-                    LibraryView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    SidebarView()
                 }
             }
-            .inspector(isPresented: inspectorPresented) {
-                if let clipID = appState.selectedClipIDs.first {
-                    InspectorView(clipID: clipID)
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
+            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+        } detail: {
+            // Detail = content + a hand-built trailing inspector column. The
+            // framework `.inspector` overlapped/clipped/janked when opened with
+            // the sidebar already out; this HStack makes the inspector a real
+            // sibling — content flexes, inspector is a fixed column, so they can
+            // never overlap and nothing draws on top of anything.
+            HStack(spacing: 0) {
+                Group {
+                    if let sourceID = appState.playerSourceID {
+                        PlayerView(sourceID: sourceID)
+                    } else {
+                        LibraryView()
+                            // Native toolbar search — one clean system field, no
+                            // custom pill (which doubled inside the toolbar item).
+                            // Only present in the library, not the Cut Room.
+                            .searchable(
+                                text: $appState.searchQuery,
+                                isPresented: $searchPresented,
+                                placement: .toolbar,
+                                prompt: "Search clips, tags, notes…"
+                            )
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                if appState.inspectorVisible {
+                    Divider().overlay(Theme.border)
+                    inspectorPanel
+                        .frame(width: 300)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
+            .animation(.easeInOut(duration: 0.18), value: appState.inspectorVisible)
+            .animation(.easeInOut(duration: 0.18), value: appState.selectedClipIDs.first)
         }
         .navigationSplitViewStyle(.balanced)
+        // ONE window toolbar for the whole app, whose content switches between
+        // library and Cut Room. A single declaration (rather than one per child
+        // view) keeps the shared toolbar from dropping items — especially the
+        // .principal slot — when the detail view swaps.
+        .toolbar { unifiedToolbar }
+        .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
+            // The search field only exists in the library toolbar; ignore ⌘F in
+            // the Cut Room rather than activating a field that's gone.
+            if !inPlayer { searchPresented = true }
+        }
+        // Keep the toolbar's source-name label in sync with the open source, and
+        // dismiss any active search when entering the Cut Room.
+        .onChange(of: appState.playerSourceID) { _, sourceID in
+            if sourceID != nil { searchPresented = false }
+            loadPlayerSourceName()
+        }
+        .onAppear { loadPlayerSourceName() }
         .background(Theme.bg)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
@@ -100,6 +160,120 @@ struct RootView: View {
             Text(error)
         }
     }
+
+    // MARK: - Unified window toolbar
+
+    /// Switches the single window toolbar between the library and the Cut Room.
+    @ToolbarContentBuilder
+    private var unifiedToolbar: some ToolbarContent {
+        if inPlayer {
+            playerToolbar
+        } else {
+            libraryToolbar
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var libraryToolbar: some ToolbarContent {
+        // The search field is the native `.searchable` on the library view
+        // (see `body`) — a single system field, no custom pill inside the
+        // toolbar item (which read as a doubled bar). The principal slot now
+        // holds only the multi-select batch actions, when several are selected.
+        if appState.selectedClipIDs.count > 1 {
+            ToolbarItemGroup(placement: .principal) {
+                Text("\(appState.selectedClipIDs.count) selected")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                Menu {
+                    Button("Export as Reels") { ExportActions.exportSelected(.reels) }
+                    Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
+                    Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
+                } label: {
+                    Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
+                }
+                .fixedSize()
+                Button { appState.selectedClipIDs = [] } label: {
+                    Text("Clear").font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.textTertiary)
+            }
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            Picker("", selection: $appState.sortOption) {
+                ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
+                    Text(opt.label).tag(opt)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .tint(Theme.textSecondary)
+            .frame(width: 140)
+
+            Picker("", selection: $appState.viewMode) {
+                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
+                Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
+                Image(systemName: "list.bullet").tag(LibraryViewMode.list)
+                Image(systemName: "tray.full").tag(LibraryViewMode.lightTable)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+            .help("Calendar · Grid · List · Light Table")
+
+            inspectorToggle
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var playerToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button {
+                appState.playerSourceID = nil
+                appState.playerInMs = nil
+                appState.playerOutMs = nil
+            } label: {
+                Label("Library", systemImage: "chevron.left")
+                    .labelStyle(.titleAndIcon)
+            }
+            // Esc is handled in PlayerView (gated on !capturing) so it doesn't
+            // fight the capture card's Cancel (.cancelAction) for the key.
+            .help("Back to library (Esc)")
+        }
+        ToolbarItem(placement: .principal) {
+            Text(playerSourceName)
+                .font(.system(size: 13, weight: .semibold))
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(Theme.textPrimary)
+        }
+        ToolbarItemGroup(placement: .primaryAction) {
+            inspectorToggle
+        }
+    }
+
+    /// Shared inspector toggle — tinted when active so its on/off state reads at
+    /// a glance (two near-identical SF Symbols alone don't).
+    private var inspectorToggle: some View {
+        Button {
+            appState.inspectorVisible.toggle()
+        } label: {
+            Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
+                .foregroundStyle(appState.inspectorVisible ? Theme.accent : Theme.textSecondary)
+        }
+        .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
+        .keyboardShortcut("i", modifiers: [.command, .option])
+    }
+
+    private func loadPlayerSourceName() {
+        guard let id = appState.playerSourceID, let db = AppEnvironment.shared.database else {
+            playerSourceName = ""
+            return
+        }
+        if let src: Source = try? db.read({ try Source.fetchOne($0, key: id) }) {
+            playerSourceName = src.displayName
+        }
+    }
 }
 
 extension RootView {
@@ -127,67 +301,26 @@ extension RootView {
     }
 }
 
-/// Full-area player mode: header with back button, big player, optional
-/// docked inspector on the right. Replaces the library while active so the
-/// player gets real horizontal space.
-private struct PlayerWorkspace: View {
-    let sourceID: Int64
-    @EnvironmentObject private var appState: AppState
-    @State private var sourceName: String = ""
-
+/// Placeholder shown in the inspector column when it's open but nothing is
+/// selected — so toggling the inspector always reveals a panel (instead of
+/// lighting the button with no visible change).
+private struct InspectorEmptyState: View {
     var body: some View {
-        VStack(spacing: 0) {
-            // Header bar
-            HStack(spacing: 12) {
-                Button {
-                    appState.playerSourceID = nil
-                    appState.playerInMs = nil
-                    appState.playerOutMs = nil
-                } label: {
-                    Label("Library", systemImage: "chevron.left")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
-                .keyboardShortcut(.escape, modifiers: [])
-
-                Text(sourceName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(Theme.textPrimary)
-                Spacer()
-                if appState.selectedClipIDs.first != nil {
-                    Button {
-                        appState.inspectorVisible.toggle()
-                    } label: {
-                        Image(systemName: "sidebar.trailing")
-                    }
-                    .buttonStyle(.plain)
-                    .clipxIconButton(active: appState.inspectorVisible)
-                    .keyboardShortcut("i", modifiers: [.command, .option])
-                    .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
-                }
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(Theme.bgRaised)
-
-            Divider().overlay(Theme.border)
-
-            // Player fills the detail area; the inspector is a framework-managed
-            // trailing column owned by RootView (see .inspector above), so the
-            // player no longer competes with a fixed-width sibling panel.
-            PlayerView(sourceID: sourceID)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 10) {
+            Image(systemName: "sidebar.right")
+                .font(.system(size: 30, weight: .ultraLight))
+                .foregroundStyle(Theme.textTertiary)
+            Text("No clip selected")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textSecondary)
+            Text("Select a clip to see its rating, tags, attributes, and export options.")
+                .font(.system(size: 12))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 20)
         }
-        .onAppear(perform: loadName)
-        .onChange(of: sourceID) { _, _ in loadName() }
-    }
-
-    private func loadName() {
-        guard let db = AppEnvironment.shared.database else { return }
-        if let src: Source = try? db.read({ try Source.fetchOne($0, key: sourceID) }) {
-            sourceName = src.displayName
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bgRaised)
     }
 }

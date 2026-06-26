@@ -145,6 +145,9 @@ struct CommandPaletteView: View {
         items.append(PaletteItem(id: "view-list", title: "List View", icon: "list.bullet") {
             appState.playerSourceID = nil; appState.viewMode = .list
         })
+        items.append(PaletteItem(id: "view-lighttable", title: "Light Table — clips by purpose", icon: "tray.full") {
+            appState.playerSourceID = nil; appState.viewMode = .lightTable
+        })
         items.append(PaletteItem(id: "toggle-inspector", title: "Toggle Inspector", icon: "sidebar.trailing", shortcut: "⌥⌘I") {
             appState.inspectorVisible.toggle()
         })
@@ -169,6 +172,14 @@ struct CommandPaletteView: View {
         })
         items.append(PaletteItem(id: "export-obsidian", title: "Write Obsidian Sidecars…", icon: "doc.text.below.ecg") {
             ExportActions.exportObsidian()
+        })
+        items.append(PaletteItem(id: "send-stint", title: "Send Selected to Review (Stint)", icon: "paperplane") {
+            let ids = Array(appState.selectedClipIDs)
+            Task { await StintBridge.sendToReview(clipIDs: ids, projectName: "Clipx review") }
+        })
+        items.append(PaletteItem(id: "refresh-stint", title: "Refresh Review Comments (Stint)", icon: "arrow.triangle.2.circlepath") {
+            let ids = Array(appState.selectedClipIDs)
+            Task { await StintBridge.refreshComments(clipIDs: ids) }
         })
         items.append(PaletteItem(id: "settings", title: "Settings…", icon: "gearshape", shortcut: "⌘,") {
             NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)

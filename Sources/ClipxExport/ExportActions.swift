@@ -5,7 +5,16 @@ import AppKit
 enum ExportActions {
     static func exportSelected(_ preset: ExportPreset) {
         Task { @MainActor in
-            let ids = AppState.shared.selectedClipIDs
+            export(clipIDs: Array(AppState.shared.selectedClipIDs), preset: preset)
+        }
+    }
+
+    /// Export an explicit set of clips without touching the global selection —
+    /// used by surfaces (e.g. the Light Table) that export a group the user
+    /// hasn't selected. `exportSelected` is the selection-driven wrapper.
+    static func export(clipIDs: [Int64], preset: ExportPreset) {
+        Task { @MainActor in
+            let ids = clipIDs
             guard !ids.isEmpty else {
                 AppState.shared.showToast("No clips selected", level: .warning)
                 return

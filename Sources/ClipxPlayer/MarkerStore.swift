@@ -113,6 +113,55 @@ final class MarkerStore {
         Self.bumpRevision()
     }
 
+    /// Set (or clear, with nil) a clip's CSV purpose field wholesale.
+    func updatePurpose(_ clipID: Int64, purpose: String?) throws {
+        try database.write { db in
+            try db.execute(
+                sql: "UPDATE clips SET purpose = ? WHERE id = ?",
+                arguments: [purpose, clipID]
+            )
+        }
+        Self.bumpRevision()
+    }
+
+    /// Toggle a single purpose key in a clip's CSV set, normalizing to nil when
+    /// the last key is removed. Keeps key order stable for the others.
+    @discardableResult
+    func togglePurpose(_ clipID: Int64, key: String) throws -> [String] {
+        var keys = (try fetchClip(clipID))?.purposeList ?? []
+        if let idx = keys.firstIndex(of: key) {
+            keys.remove(at: idx)
+        } else {
+            keys.append(key)
+        }
+        try updatePurpose(clipID, purpose: keys.isEmpty ? nil : keys.joined(separator: ","))
+        return keys
+    }
+
+    /// How many clips have been marked from a given source. Drives the session
+    /// rail's per-source clip count.
+    func clipCount(forSource sourceID: Int64) throws -> Int {
+        try database.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM clips WHERE source_id = ?",
+                arguments: [sourceID]
+            ) ?? 0
+        }
+    }
+
+    /// Mark a source reviewed (stamps `reviewed_at` now) or clears the flag.
+    func markSourceReviewed(_ sourceID: Int64, reviewed: Bool) throws {
+        let ts: Int64? = reviewed ? Int64(Date().timeIntervalSince1970) : nil
+        try database.write { db in
+            try db.execute(
+                sql: "UPDATE sources SET reviewed_at = ? WHERE id = ?",
+                arguments: [ts, sourceID]
+            )
+        }
+        Self.bumpRevision()
+    }
+
     func deleteClip(_ clipID: Int64) throws {
         try database.write { db in
             try db.execute(sql: "DELETE FROM clips WHERE id = ?", arguments: [clipID])

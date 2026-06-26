@@ -78,6 +78,7 @@ struct OnboardingView: View {
         }
     }
 
+    @State private var contentPreset: String = Purposes.activePresetID
     private var ready: some View {
         VStack(spacing: 16) {
             Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundStyle(.green)
@@ -88,6 +89,18 @@ struct OnboardingView: View {
             Text("Open a video from the calendar to start clipping. The marking keys work **inside the player**, once a video is open.")
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+
+            // Set the quick-label vocabulary to match what you make. Changeable
+            // anytime in Settings → Labels. Keeps Clipx general-purpose.
+            VStack(spacing: 4) {
+                Text("I mostly make").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Picker("", selection: $contentPreset) {
+                    ForEach(Purposes.all) { preset in Text(preset.name).tag(preset.id) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .onChange(of: contentPreset) { _, newValue in Purposes.activePresetID = newValue }
+            }
             VStack(alignment: .leading, spacing: 7) {
                 Text("In the player").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Label("I / O — Mark in / out point", systemImage: "i.square")

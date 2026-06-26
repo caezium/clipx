@@ -117,7 +117,8 @@ final class ExportPipeline: ObservableObject {
                 sourcePath: source.path,
                 inMs: inMs, outMs: outMs,
                 preset: job.preset, outputPath: url.path,
-                rotation: source.rotation
+                rotation: source.rotation,
+                speed: source.speed
             )
             let exitCode = try await FFmpegBackend.run(
                 arguments: args,
@@ -136,6 +137,7 @@ final class ExportPipeline: ObservableObject {
                 inMs: inMs, outMs: outMs,
                 preset: job.preset, outputPath: url.path,
                 rotation: source.rotation,
+                speed: source.speed,
                 onCancellerRegistered: { [cancelBox] c in cancelBox.set(c) },           // synchronous (#10)
                 onProgress: { [weak self] p in Task { @MainActor in self?.setProgress(jobID, p) } } // (#13)
             )

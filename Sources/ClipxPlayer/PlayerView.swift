@@ -15,6 +15,14 @@ struct PlayerView: View {
     // nameless clip and forcing a trip to the Inspector.
     @State private var capturing = false
     @State private var captureSuggestions: [String] = []
+    // Hold-Space → temporary 2× (vs a tap, which toggles play/pause).
+    @State private var spaceHoldTask: Task<Void, Never>?
+    @State private var spaceHoldEngaged = false
+    // Custom playback-speed entry (the speed menu's "Custom…" item).
+    @State private var showCustomSpeed = false
+    @State private var customSpeedText = ""
+    /// Skip step for the double-tap-a-side gesture.
+    private let doubleTapSkipSeconds: Double = 10
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,11 +35,13 @@ struct PlayerView: View {
                 if let player = controller.player {
                     PlayerSurface(player: player)
                         .contentShape(Rectangle())
-                        .onTapGesture { if !capturing { keyboardFocused = true } }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(-1)
+            // Tap to focus, double-tap a side to skip ±, press-and-hold for 2×.
+            // Hidden while the capture card is up so it gets the events.
+            .overlay { if !capturing { videoGestureZones } }
             // The capture card floats over the bottom of the video so marking
             // → naming → tagging never leaves the player.
             .overlay(alignment: .bottom) {
@@ -42,8 +52,14 @@ struct PlayerView: View {
                 }
             }
 
-            TimelineStripView(
+            // Skimmable filmstrip timeline: the source's sampled frames drawn
+            // across the width so a long source is visually scannable, with the
+            // in/out band, saved-clip pins, and playhead over it.
+            FilmstripTimelineView(
                 controller: controller,
+                totalMs: controller.durationMs,
+                sourceHash: source?.hash,
+                sourceURL: source?.url,
                 savedClips: savedClips,
                 onSelectClip: { clip in
                     appState.playerInMs = clip.inMs
@@ -51,7 +67,7 @@ struct PlayerView: View {
                     controller.seek(toMs: clip.inMs)
                 }
             )
-            .frame(height: 60)
+            .frame(height: 76)
             controlBar
             if !savedClips.isEmpty {
                 savedClipsStrip
@@ -81,7 +97,29 @@ struct PlayerView: View {
         .onKeyPress("i") { key { markIn() } }
         .onKeyPress("o") { key { markOut() } }
         .onKeyPress("s") { key { saveRange() } }
-        .onKeyPress(.space) { key { controller.togglePlayPause() } }
+        // Space: tap = play/pause; press-and-hold = 2× while held (released
+        // within ~0.2s counts as a tap). Ignored while editing text.
+        .onKeyPress(.space, phases: [.down, .up]) { press in
+            guard !capturing, !PlayerView.isEditingText() else { return .ignored }
+            switch press.phase {
+            case .down:
+                spaceHoldEngaged = false
+                spaceHoldTask?.cancel()
+                spaceHoldTask = Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    guard !Task.isCancelled else { return }
+                    spaceHoldEngaged = true
+                    controller.beginHoldSpeed()
+                }
+            case .up:
+                spaceHoldTask?.cancel()
+                if spaceHoldEngaged { controller.endHoldSpeed(); spaceHoldEngaged = false }
+                else { controller.togglePlayPause() }
+            default:
+                break
+            }
+            return .handled
+        }
         // Plain arrows: frame-accurate single-frame step.
         // Shift+arrow: 5-second jump for fast scrubbing.
         // J / L (industry-standard transport keys): also 5s jump.
@@ -100,6 +138,9 @@ struct PlayerView: View {
         .onKeyPress("j") { key { controller.jumpBackward(seconds: 5) } }
         .onKeyPress("l") { key { controller.jumpForward(seconds: 5) } }
         .onKeyPress("k") { key { controller.togglePlayPause() } }
+        // Esc leaves the Cut Room — but `key {}` returns .ignored while the
+        // capture card is up, so its Cancel (.cancelAction) keeps Esc instead.
+        .onKeyPress(.escape) { key { exitToLibrary() } }
         // Menu commands and command palette post these notifications. We observe
         // them here so the menu drives whichever player is currently visible.
         .onReceive(NotificationCenter.default.publisher(for: .markIn)) { _ in markIn() }
@@ -145,12 +186,11 @@ struct PlayerView: View {
                 .help("Forward 5s (L or ⇧→)")
             }
 
-            // Time display
+            // Time display. The current-time read-out observes the playback
+            // clock directly (a leaf view) so it can update every frame without
+            // re-rendering the whole control bar / player on each tick.
             HStack(spacing: 4) {
-                Text(controller.currentTimeLabel)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Theme.textPrimary)
-                    .fixedSize()
+                PlaybackTimeLabel(clock: controller.clock)
                 Text("/").foregroundStyle(Theme.textTertiary)
                 Text(controller.durationLabel)
                     .font(.system(size: 12, design: .monospaced))
@@ -183,6 +223,9 @@ struct PlayerView: View {
             }
 
             Spacer()
+
+            volumeControl
+            speedMenu
 
             // Rotate 90° — persists per source and is baked into exports.
             Button { rotate() } label: {
@@ -233,6 +276,7 @@ struct PlayerView: View {
             self.source = src
             controller.load(url: src.url)
             controller.setRotation(src.rotation)   // restore the source's rotation
+            controller.setSpeed(src.speed)         // restore the source's permanent speed
             if let inMs = appState.playerInMs {
                 controller.seek(toMs: inMs)
             }
@@ -271,6 +315,148 @@ struct PlayerView: View {
         AppState.shared.libraryRevision &+= 1
     }
 
+    // MARK: - Speed & volume controls
+
+    private static let speedChoices: [Double] = [0.25, 0.5, 1.0, 1.5, 2.0, 4.0, 8.0, 16.0]
+
+    private func speedLabel(_ s: Double) -> String { String(format: "%g×", s) }
+
+    /// Set the permanent per-source speed, persist it, and apply to the preview.
+    /// Mirrors `rotate()`; baked into exports via `Source.speed`.
+    private func setSpeed(_ newSpeed: Double) {
+        controller.setSpeed(newSpeed)
+        guard var src = source, let id = src.id else { return }
+        src.speed = controller.speed
+        source = src
+        try? AppEnvironment.shared.database?.write { db in
+            try db.execute(sql: "UPDATE sources SET speed = ? WHERE id = ?", arguments: [controller.speed, id])
+        }
+        AppState.shared.libraryRevision &+= 1
+    }
+
+    /// True when the current speed isn't one of the presets (a custom value).
+    private var speedIsCustom: Bool {
+        !Self.speedChoices.contains { abs(controller.speed - $0) < 0.001 }
+    }
+
+    private var speedMenu: some View {
+        Menu {
+            ForEach(Self.speedChoices, id: \.self) { s in
+                Button {
+                    setSpeed(s)
+                } label: {
+                    if abs(controller.speed - s) < 0.001 {
+                        Label(speedLabel(s), systemImage: "checkmark")
+                    } else {
+                        Text(speedLabel(s))
+                    }
+                }
+            }
+            Divider()
+            Button {
+                customSpeedText = String(format: "%g", controller.speed)
+                showCustomSpeed = true
+            } label: {
+                // A checkmark when the active speed is a custom (non-preset) value.
+                if speedIsCustom {
+                    Label("Custom: \(speedLabel(controller.speed))", systemImage: "checkmark")
+                } else {
+                    Text("Custom…")
+                }
+            }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "speedometer").font(.system(size: 12))
+                Text(speedLabel(controller.speed)).font(.system(size: 12).monospacedDigit())
+            }
+            .foregroundStyle(controller.speed == 1.0 ? Theme.textSecondary : Theme.accent)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Playback speed — also baked into exports (e.g. 4× for slow-mo footage)")
+        .alert("Custom speed", isPresented: $showCustomSpeed) {
+            TextField("e.g. 3 or 0.75", text: $customSpeedText)
+                .onSubmit(applyCustomSpeed)
+            Button("Set", action: applyCustomSpeed)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Multiplier between \(speedLabel(0.1)) and \(speedLabel(PlayerController.maxSpeed)). Baked into exports.")
+        }
+    }
+
+    /// Parse the typed multiplier (tolerating a trailing "x"/"×") and apply it.
+    private func applyCustomSpeed() {
+        let cleaned = customSpeedText
+            .replacingOccurrences(of: "×", with: "")
+            .replacingOccurrences(of: "x", with: "", options: [.caseInsensitive])
+            .trimmingCharacters(in: .whitespaces)
+        if let v = Double(cleaned), v > 0 { setSpeed(v) }
+    }
+
+    private var volumeIcon: String {
+        if controller.muted || controller.volume <= 0.001 { return "speaker.slash.fill" }
+        if controller.volume < 0.5 { return "speaker.wave.1.fill" }
+        if controller.volume > 1.0 { return "speaker.wave.3.fill" }   // boosted above source
+        return "speaker.wave.2.fill"
+    }
+
+    private var volumeControl: some View {
+        HStack(spacing: 5) {
+            Button { controller.toggleMute() } label: {
+                Image(systemName: volumeIcon).font(.system(size: 13)).frame(width: 16)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(controller.muted ? Theme.accent : Theme.textSecondary)
+            .help(controller.muted ? "Unmute" : "Mute")
+            Slider(
+                value: Binding(
+                    get: { controller.muted ? 0 : controller.volume },
+                    set: { controller.setVolume($0) }
+                ),
+                in: 0...PlayerController.maxVolume
+            )
+            .controlSize(.mini)
+            .frame(width: 64)
+            .help("Volume — above the midpoint boosts gain above the source")
+        }
+    }
+
+    // MARK: - Video gestures (tap focus / double-tap skip / hold 2×)
+
+    private var videoGestureZones: some View {
+        HStack(spacing: 0) {
+            gestureZone(forward: false)
+            gestureZone(forward: true)
+        }
+    }
+
+    private func gestureZone(forward: Bool) -> some View {
+        Color.clear
+            .contentShape(Rectangle())
+            // Double-tap a side to skip ±; single tap plays/pauses (and focuses
+            // for hotkeys). The single tap resolves after the double-tap window.
+            .onTapGesture(count: 2) {
+                if forward { controller.jumpForward(seconds: doubleTapSkipSeconds) }
+                else { controller.jumpBackward(seconds: doubleTapSkipSeconds) }
+            }
+            .onTapGesture {
+                keyboardFocused = true
+                controller.togglePlayPause()
+            }
+            // Press-and-hold anywhere on the video for temporary 2×.
+            .simultaneousGesture(holdSpeedGesture)
+    }
+
+    private var holdSpeedGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.2)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                if case .second = value { controller.beginHoldSpeed() }  // idempotent
+            }
+            .onEnded { _ in controller.endHoldSpeed() }
+    }
+
     private func markIn() {
         // Snap to the displayed frame so the mark matches what the user saw. (#14)
         appState.playerInMs = controller.currentFrameMs
@@ -302,7 +488,7 @@ struct PlayerView: View {
 
     /// Persist the captured clip with its name / rating / tags, then park the
     /// playhead past the out point and ready the next cut.
-    private func commitCapture(name: String, rating: Int, tags: [String]) {
+    private func commitCapture(name: String, rating: Int, tags: [String], purposes: [String]) {
         guard let inMs = appState.playerInMs, let outMs = appState.playerOutMs,
               let markerStore = AppEnvironment.shared.markerStore else { return }
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -313,6 +499,9 @@ struct PlayerView: View {
             )
             if let id = clip.id {
                 if rating > 0 { try? markerStore.updateRating(id, rating: rating) }
+                if !purposes.isEmpty {
+                    try? markerStore.updatePurpose(id, purpose: purposes.joined(separator: ","))
+                }
                 if let tagStore = AppEnvironment.shared.tagStore {
                     for tag in tags { try? tagStore.addTag(tag, toClip: id) }
                 }
@@ -342,11 +531,21 @@ struct PlayerView: View {
         keyboardFocused = true
     }
 
+    /// Leave the Cut Room and return to the library, clearing the pending
+    /// in/out range. Bound to Esc via `onKeyPress` (only when not capturing).
+    private func exitToLibrary() {
+        appState.playerSourceID = nil
+        appState.playerInMs = nil
+        appState.playerOutMs = nil
+    }
+
     private var captureCard: some View {
         ClipCaptureCard(
             durationMs: (appState.playerOutMs ?? 0) - (appState.playerInMs ?? 0),
             suggestions: captureSuggestions,
-            onCommit: { name, rating, tags in commitCapture(name: name, rating: rating, tags: tags) },
+            onCommit: { name, rating, tags, purposes in
+                commitCapture(name: name, rating: rating, tags: tags, purposes: purposes)
+            },
             onCancel: { cancelCapture() }
         )
         // Fresh state each time a new range is captured.
@@ -517,12 +716,13 @@ final class PlayerSurfaceView: NSView {
 struct ClipCaptureCard: View {
     let durationMs: Int64
     let suggestions: [String]
-    let onCommit: (String, Int, [String]) -> Void
+    let onCommit: (String, Int, [String], [String]) -> Void
     let onCancel: () -> Void
 
     @State private var name = ""
     @State private var rating = 0
     @State private var selectedTags: Set<String> = []
+    @State private var selectedPurposes: Set<String> = []
     @State private var newTag = ""
     @FocusState private var nameFocused: Bool
 
@@ -550,7 +750,7 @@ struct ClipCaptureCard: View {
                 .background(Theme.bg, in: RoundedRectangle(cornerRadius: Theme.r1))
                 .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.borderStrong, lineWidth: 1))
 
-            // Rating — for "the parts where I do well".
+            // Rating — the quality / keeper signal.
             HStack(spacing: 4) {
                 ForEach(1...5, id: \.self) { i in
                     Button { rating = (rating == i) ? 0 : i } label: {
@@ -563,7 +763,31 @@ struct ClipCaptureCard: View {
                 Spacer()
             }
 
-            // Quick tags — one-tap the labels you already use, plus free entry.
+            // Purpose — what this clip is FOR (Coach, Reel, Publish…). The
+            // primary fast-path axis; the vocabulary is user-configurable
+            // (Settings → Labels) so it fits any kind of content.
+            if !Purposes.active.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("for").clipxSectionLabel()
+                    FlowLayout(spacing: 5) {
+                        ForEach(Purposes.active) { label in
+                            Button {
+                                if selectedPurposes.contains(label.key) { selectedPurposes.remove(label.key) }
+                                else { selectedPurposes.insert(label.key) }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: label.symbol).font(.system(size: 10))
+                                    Text(label.title)
+                                }
+                                .clipxChip(selected: selectedPurposes.contains(label.key))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+
+            // Quick tags — what it's ABOUT. One-tap labels you already use, plus free entry.
             if !suggestions.isEmpty || !selectedTags.isEmpty {
                 FlowLayout(spacing: 5) {
                     ForEach(tagPalette, id: \.self) { tag in
@@ -624,6 +848,20 @@ struct ClipCaptureCard: View {
 
     private func commit() {
         addCurrentTag() // fold any half-typed tag in
-        onCommit(name, rating, Array(selectedTags))
+        onCommit(name, rating, Array(selectedTags), Array(selectedPurposes))
+    }
+}
+
+/// The current-time read-out in the control bar. A leaf that observes only the
+/// `PlaybackClock`, so its 24–60Hz updates don't drag the whole player body
+/// through a re-render on every frame.
+struct PlaybackTimeLabel: View {
+    @ObservedObject var clock: PlaybackClock
+
+    var body: some View {
+        Text(PlayerController.formatMs(clock.currentMs))
+            .font(.system(size: 12, design: .monospaced))
+            .foregroundStyle(Theme.textPrimary)
+            .fixedSize()
     }
 }

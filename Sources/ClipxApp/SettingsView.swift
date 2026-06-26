@@ -5,6 +5,8 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsView()
                 .tabItem { Label("General", systemImage: "gearshape") }
+            LabelsSettingsView()
+                .tabItem { Label("Labels", systemImage: "tag") }
             LibrarySettingsView()
                 .tabItem { Label("Library", systemImage: "folder") }
             ExportSettingsView()
@@ -149,6 +151,52 @@ struct GeneralSettingsView: View {
     }
 }
 
+// MARK: - Labels (purpose presets)
+
+/// Picks the "purpose" vocabulary used on the fast path (capture panel) and in
+/// the Light Table. Clipx is general-purpose, so the label set is swappable to
+/// fit what you make — the default is the neutral Creator set.
+struct LabelsSettingsView: View {
+    @State private var presetID: String = Purposes.activePresetID
+
+    /// The labels actually used by capture/Light Table. Reading `Purposes.active`
+    /// (not just the picked preset) keeps the preview honest if a custom set is
+    /// in effect; selecting a preset clears any custom set, so they reconverge.
+    private var activeLabels: [PurposeLabel] {
+        _ = presetID   // re-evaluate when the picker changes
+        return Purposes.active
+    }
+
+    var body: some View {
+        SettingsScaffold {
+            SettingsCard("Purpose labels") {
+                SettingsDesc("Clips are tagged by purpose on the fast path — what each one is FOR. Pick the starter set that fits what you make; these show up in the capture panel and the Light Table.")
+                Picker("Content type", selection: $presetID) {
+                    ForEach(Purposes.all) { preset in
+                        Text(preset.name).tag(preset.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(Theme.textSecondary)
+                .onChange(of: presetID) { _, newValue in
+                    Purposes.activePresetID = newValue
+                    AppState.shared.libraryRevision &+= 1
+                }
+                Divider().overlay(Theme.border)
+                FlowLayout(spacing: 6) {
+                    ForEach(activeLabels) { label in
+                        HStack(spacing: 4) {
+                            Image(systemName: label.symbol).font(.system(size: 10))
+                            Text(label.title)
+                        }
+                        .clipxChip(selected: true)
+                    }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Library
 
 struct LibrarySettingsView: View {
@@ -287,9 +335,14 @@ struct ExportSettingsView: View {
 
 struct BridgesSettingsView: View {
     @AppStorage("obsidianVaultPath") private var obsidianVaultPath: String = ""
+    @AppStorage("stintServerURL") private var stintServerURL: String = ""
 
     var body: some View {
         SettingsScaffold {
+            SettingsCard("Stint review") {
+                SettingsField(placeholder: "http://your-stint-host:4040", text: $stintServerURL)
+                SettingsDesc("Send clips to a Stint project for collaborative, frame-pinned review — your coach or teammates open one share link and comment, no account needed. Set the base URL of your running Stint server, then use “Send to review” in the Light Table.")
+            }
             SettingsCard("Obsidian") {
                 HStack(spacing: 8) {
                     SettingsField(placeholder: "Vault folder…", text: $obsidianVaultPath)

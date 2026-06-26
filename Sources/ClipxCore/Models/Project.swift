@@ -33,20 +33,3 @@ enum ProjectStatus: String, CaseIterable {
 
     var label: String { rawValue.capitalized }
 }
-
-struct ClipProject: Codable, FetchableRecord, PersistableRecord {
-    var clipID: Int64
-    var projectID: Int64
-
-    static let databaseTableName = "clip_projects"
-
-    enum CodingKeys: String, CodingKey {
-        case clipID = "clip_id"
-        case projectID = "project_id"
-    }
-
-    enum Columns: String, ColumnExpression {
-        case clipID = "clip_id"
-        case projectID = "project_id"
-    }
-}

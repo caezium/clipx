@@ -13,20 +13,3 @@ struct Tag: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         id = inserted.rowID
     }
 }
-
-struct ClipTag: Codable, FetchableRecord, PersistableRecord {
-    var clipID: Int64
-    var tagID: Int64
-
-    static let databaseTableName = "clip_tags"
-
-    enum CodingKeys: String, CodingKey {
-        case clipID = "clip_id"
-        case tagID = "tag_id"
-    }
-
-    enum Columns: String, ColumnExpression {
-        case clipID = "clip_id"
-        case tagID = "tag_id"
-    }
-}

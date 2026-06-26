@@ -192,6 +192,56 @@ enum Migrations {
             }
         }
 
+        // v4: general-purpose "purpose" labels per clip (CSV of purpose keys,
+        // e.g. "coach,reel") replacing the film-school taxonomy on the fast
+        // path, plus a per-source `reviewed_at` timestamp that powers the Cut
+        // Room session rail's progress (reviewed / in-progress / not-seen).
+        migrator.registerMigration("v4_purpose_and_review") { db in
+            try db.alter(table: "clips") { t in
+                t.add(column: "purpose", .text)
+            }
+            try db.alter(table: "sources") { t in
+                t.add(column: "reviewed_at", .integer)
+            }
+        }
+
+        // v5: the public Stint review share link a clip was sent to (the
+        // Clipx → Stint collaboration bridge), so the Light Table can show
+        // "shared for review" and reopen the link.
+        migrator.registerMigration("v5_stint_review_url") { db in
+            try db.alter(table: "clips") { t in
+                t.add(column: "review_url", .text)
+            }
+        }
+
+        // v6: full linkage so review comments can be pulled BACK from Stint —
+        // the stint clip/project ids per clip, a cached comment count, and a
+        // table holding each Stint project's owner key + base URL (needed for
+        // owner-authenticated comment fetches).
+        migrator.registerMigration("v6_stint_review_linkage") { db in
+            try db.alter(table: "clips") { t in
+                t.add(column: "stint_clip_id", .text)
+                t.add(column: "stint_project_id", .text)
+                t.add(column: "review_comment_count", .integer)
+            }
+            try db.create(table: "stint_projects") { t in
+                t.column("project_id", .text).primaryKey()
+                t.column("owner_key", .text).notNull()
+                t.column("share_token", .text).notNull()
+                t.column("base_url", .text).notNull()
+                t.column("created_at", .integer).notNull()
+            }
+        }
+
+        // v7: permanent per-source playback speed (e.g. 4× to play slow-mo
+        // footage at normal speed), applied to the preview and baked into
+        // exports. Defaults to 1.0 so existing sources are unchanged.
+        migrator.registerMigration("v7_source_speed") { db in
+            try db.alter(table: "sources") { t in
+                t.add(column: "speed", .double).defaults(to: 1.0)
+            }
+        }
+
         return migrator
     }
 }

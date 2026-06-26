@@ -7,8 +7,6 @@ struct LibraryView: View {
     @State private var clips: [Clip] = []
     @State private var loading = false
     @State private var hitLimit = false
-    /// Keyboard focus for the search field so ⌘F can move focus to it. (#27)
-    @FocusState private var searchFocused: Bool
 
     /// True when a query or filter is narrowing the library — distinguishes a
     /// "no results" state from a genuinely empty library. (#38)
@@ -26,19 +24,14 @@ struct LibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            toolbar
-            Divider().overlay(Theme.border)
             if let pid = appState.selectedProjectID {
                 ProjectHeaderView(projectID: pid)
+                Divider().overlay(Theme.border)
             }
             content
         }
         .background(Theme.bg)
         .onAppear(perform: reload)
-        // ⌘F / menu "Search Clips" focuses the field. (#27)
-        .onReceive(NotificationCenter.default.publisher(for: .focusSearchField)) { _ in
-            searchFocused = true
-        }
         // Search debounced — every other change reloads immediately.
         .onChange(of: appState.searchQuery) { _, _ in scheduleDebouncedReload() }
         .onChange(of: appState.activeFilters) { _, _ in reload() }
@@ -48,93 +41,12 @@ struct LibraryView: View {
     }
 
     @ViewBuilder
-    private var toolbar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textTertiary)
-                TextField("Search clips, tags, notes…", text: $appState.searchQuery)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($searchFocused)
-                    .onExitCommand { appState.searchQuery = "" }   // Esc clears (#38)
-                if !appState.searchQuery.isEmpty {
-                    Button { appState.searchQuery = "" } label: {
-                        Image(systemName: "xmark.circle.fill").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 7)
-            .background(Theme.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
-            .frame(maxWidth: 380)
-
-            // Multi-selection actions — batch export is reachable here. (#29)
-            if appState.selectedClipIDs.count > 1 {
-                HStack(spacing: 8) {
-                    Text("\(appState.selectedClipIDs.count) selected")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                    Menu {
-                        Button("Export as Reels") { ExportActions.exportSelected(.reels) }
-                        Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
-                        Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
-                    } label: {
-                        Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    Button { appState.selectedClipIDs = [] } label: {
-                        Text("Clear").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.textTertiary)
-                }
-                .padding(.leading, 4)
-            }
-
-            Spacer()
-
-            Picker("", selection: $appState.sortOption) {
-                ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
-                    Text(opt.label).tag(opt)
-                }
-            }
-            .pickerStyle(.menu)
-            .labelsHidden()
-            .tint(Theme.textSecondary)
-            .frame(width: 170)
-
-            Picker("", selection: $appState.viewMode) {
-                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
-                Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
-                Image(systemName: "list.bullet").tag(LibraryViewMode.list)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 120)
-            .help("Calendar · Grid · List")
-
-            Button {
-                appState.inspectorVisible.toggle()
-            } label: {
-                Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
-            }
-            .buttonStyle(.plain)
-            .clipxIconButton(active: appState.inspectorVisible)
-            .help("Toggle Inspector (⌥⌘I)")
-            .keyboardShortcut("i", modifiers: [.command, .option])
-        }
-        .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(Theme.bgRaised)
-    }
-
-    @ViewBuilder
     private var content: some View {
-        if loading {
+        if appState.viewMode == .lightTable {
+            // The Light Table harvests all purposed clips itself, independent of
+            // the current search/filter narrowing.
+            LightTableView()
+        } else if loading {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if sources.isEmpty && clips.isEmpty {
             if isFiltering {
@@ -154,6 +66,8 @@ struct LibraryView: View {
                     ClipListView(sources: sources, clips: clips)
                 case .calendar:
                     CalendarBrowseView(sources: sources)
+                case .lightTable:
+                    EmptyView()   // handled above, before the empty-state guard
                 }
                 if hitLimit {
                     pageFooter

@@ -18,6 +18,19 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
     var notes: String?
     var createdAt: Int64
     var usedCount: Int = 0
+    /// Comma-separated "purpose" keys — the intent/destination(s) this clip is
+    /// marked for (e.g. "coach,reel"). Drives the Light Table grouping. The
+    /// label vocabulary is user-configurable; see `Purposes`.
+    var purpose: String?
+    /// Public Stint review share link this clip was sent to, if any (the
+    /// Clipx → Stint collaboration bridge).
+    var reviewUrl: String?
+    /// The Stint clip / project ids this clip was uploaded as, used to pull
+    /// review comments back. Nil until sent for review.
+    var stintClipId: String?
+    var stintProjectId: String?
+    /// Cached count of review comments pulled back from Stint.
+    var reviewCommentCount: Int?
 
     static let databaseTableName = "clips"
 
@@ -36,6 +49,11 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case notes
         case createdAt = "created_at"
         case usedCount = "used_count"
+        case purpose
+        case reviewUrl = "review_url"
+        case stintClipId = "stint_clip_id"
+        case stintProjectId = "stint_project_id"
+        case reviewCommentCount = "review_comment_count"
     }
 
     enum Columns: String, ColumnExpression {
@@ -53,6 +71,11 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         case notes
         case createdAt = "created_at"
         case usedCount = "used_count"
+        case purpose
+        case reviewUrl = "review_url"
+        case stintClipId = "stint_clip_id"
+        case stintProjectId = "stint_project_id"
+        case reviewCommentCount = "review_comment_count"
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -61,9 +84,10 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
 
     var durationMs: Int64 { max(0, outMs - inMs) }
 
-    var moodList: [String] {
-        guard let mood, !mood.isEmpty else { return [] }
-        return mood.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    /// The clip's purpose keys, parsed from the CSV `purpose` field.
+    var purposeList: [String] {
+        guard let purpose, !purpose.isEmpty else { return [] }
+        return purpose.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 }
 

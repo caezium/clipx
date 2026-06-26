@@ -238,7 +238,7 @@ struct ClipCardView: View {
                     .background(Theme.success.opacity(0.9), in: Capsule())
                     .padding(.bottom, 6)
                 }
-                .clipped()
+                .clipxMediaEdge()
                 .overlay(alignment: .topTrailing) {
                     Text(formatDuration(clip.durationMs))
                         .font(.caption2.monospacedDigit())
@@ -296,31 +296,24 @@ struct ClipCardView: View {
         sourceName.isEmpty ? "Untitled clip" : sourceName
     }
 
+    /// Card pixel size to decode thumbnails at — cards render ~220–280pt wide,
+    /// so ~360px covers normal and most Retina densities without holding the
+    /// full 480px cache bitmap per card. `fileprivate` so `SourceCardView`
+    /// shares the same target size.
+    fileprivate static let thumbMaxPixel = 360
+
     private func loadThumb() {
-        Task.detached(priority: .background) { [clip] in
-            guard let database = AppEnvironment.shared.database,
-                  let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
-            guard let source: Source = try? database.read({ db in
-                try Source.fetchOne(db, key: clip.sourceID)
-            }) else { return }
-            let url = thumbnailEngine.thumbPath(for: source.hash)
-            let name = source.displayName
-            if FileManager.default.fileExists(atPath: url.path),
-               let img = NSImage(contentsOf: url) {
-                await MainActor.run {
-                    self.thumbImage = img
-                    self.sourceName = name
-                }
-                return
-            }
-            // Thumb file missing (likely cache purged by macOS) — regenerate
-            // on demand. ThumbnailEngine de-dupes via internal semaphore so
-            // a flurry of card-loads won't pile up redundant work.
-            await MainActor.run { self.sourceName = name }
-            thumbnailEngine.generateThumbnail(source: source) { resultURL in
-                guard let resultURL,
-                      let img = NSImage(contentsOf: resultURL) else { return }
-                DispatchQueue.main.async { self.thumbImage = img }
+        guard let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
+        // Resolve the source identity from a memoized lookup (no per-card SQLite
+        // query on scroll), then hand off to the memory-cached, downsampled
+        // image loader. Both steps are near-instant once warm.
+        Task.detached(priority: .utility) { [clip] in
+            guard let meta = thumbnailEngine.sourceThumbMeta(for: clip.sourceID) else { return }
+            await MainActor.run { self.sourceName = meta.displayName }
+            thumbnailEngine.displayThumbnail(
+                forHash: meta.hash, sourcePath: meta.path, maxPixel: Self.thumbMaxPixel
+            ) { img in
+                self.thumbImage = img   // completion fires on main
             }
         }
     }
@@ -382,7 +375,7 @@ struct SourceCardView: View {
                         }
                     }
                 )
-                .clipped()
+                .clipxMediaEdge()
                 .overlay(alignment: .center) {
                     if hovering {
                         Image(systemName: "play.circle.fill")
@@ -447,21 +440,19 @@ struct SourceCardView: View {
     }
 
     private func loadThumb() {
-        Task.detached(priority: .background) { [source] in
-            guard let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
-            let url = thumbnailEngine.thumbPath(for: source.hash)
-            if FileManager.default.fileExists(atPath: url.path),
-               let image = NSImage(contentsOf: url) {
-                await MainActor.run { self.thumbImage = image }
-                return
-            }
-            // Cache miss — request regeneration. Engine internally limits
-            // concurrency via a semaphore.
-            thumbnailEngine.generateThumbnail(source: source) { resultURL in
-                guard let resultURL,
-                      let img = NSImage(contentsOf: resultURL) else { return }
-                DispatchQueue.main.async { self.thumbImage = img }
-            }
+        guard let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
+        // Warm hit: paint synchronously so a card scrolling back into view never
+        // flickers a placeholder while a task hops to fetch what's already cached.
+        if let warm = thumbnailEngine.cachedImage(forHash: source.hash) {
+            thumbImage = warm
+            return
+        }
+        // The source row is already in hand, so go straight to the memory-cached,
+        // downsampled loader — no disk read or full-size decode on scroll recycle.
+        thumbnailEngine.displayThumbnail(
+            forHash: source.hash, sourcePath: source.path, maxPixel: ClipCardView.thumbMaxPixel
+        ) { img in
+            self.thumbImage = img   // completion fires on main
         }
     }
 

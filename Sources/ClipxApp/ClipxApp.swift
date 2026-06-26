@@ -17,7 +17,10 @@ struct ClipxApp: App {
                 .frame(minWidth: 900, idealWidth: 1320, minHeight: 700, idealHeight: 820)
         }
         .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified(showsTitle: true))
+        // No title text — the app's controls live in RootView's unified toolbar,
+        // so the title-bar row is filled with search + controls next to the
+        // traffic lights, not an empty strip.
+        .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1320, height: 820)
         .commands {
             ClipxCommands(appState: appState)
