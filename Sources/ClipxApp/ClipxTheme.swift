@@ -1,10 +1,12 @@
 import SwiftUI
 
-/// Clipx design system — a dark, minimal, low-chrome aesthetic translated from
-/// the stint / flask.do reference: near-black surfaces, hairline borders instead
-/// of boxes, pill controls, monochrome palette with a single accent + a success
-/// green for in/out marks. Everything the UI uses lives here so the look stays
-/// consistent across every surface.
+/// Clipx design system — a dark, minimal, low-chrome aesthetic in the spirit of
+/// Raycast's command-palette UI: a near-black canvas with a faint surface
+/// *ladder* (bg → bgRaised → surface → surfaceActive) instead of drop shadows,
+/// hairline 1px borders on every edge, tight 6–14px radii, monospaced keycaps
+/// for shortcuts, and a single accent (+ success green for in/out marks).
+/// Depth comes from the surface ladder and hairlines, never shadows.
+/// Everything the UI uses lives here so the look stays consistent everywhere.
 enum Theme {
 
     // MARK: Surfaces (designed for a dark color scheme)
@@ -79,6 +81,9 @@ struct PillButtonStyle: ButtonStyle {
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
             .opacity(configuration.isPressed ? 0.85 : 1)
+            // Subtle press-in so every button feels physical (feel-better).
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
     }
 
     private var fg: Color {
@@ -153,6 +158,29 @@ extension View {
             .foregroundStyle(selected ? accentColor : Theme.textSecondary)
             .background(selected ? accentColor.opacity(0.16) : Theme.surface, in: Capsule())
             .overlay(Capsule().strokeBorder(selected ? accentColor.opacity(0.45) : Theme.border, lineWidth: 1))
+    }
+
+    /// Raycast-style keycap glyph for keyboard shortcuts (e.g. ⌘K, Esc):
+    /// monospaced, surface-ladder fill, hairline edge, tight 4px radius.
+    func clipxKeycap() -> some View {
+        self
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Theme.surfaceActive, in: RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
+    /// A thin inset hairline + rounded clip for media tiles (thumbnails,
+    /// filmstrips) so they separate from the near-black canvas instead of
+    /// floating (Raycast puts a hairline on every edge).
+    func clipxMediaEdge(radius: CGFloat = Theme.r1) -> some View {
+        self
+            .clipShape(RoundedRectangle(cornerRadius: radius))
+            .overlay(
+                RoundedRectangle(cornerRadius: radius)
+                    .strokeBorder(Theme.border, lineWidth: 1)
+            )
     }
 
     /// Section label: tiny, uppercase, tracked-out, muted.

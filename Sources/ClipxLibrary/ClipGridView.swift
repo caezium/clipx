@@ -238,7 +238,7 @@ struct ClipCardView: View {
                     .background(Theme.success.opacity(0.9), in: Capsule())
                     .padding(.bottom, 6)
                 }
-                .clipped()
+                .clipxMediaEdge()
                 .overlay(alignment: .topTrailing) {
                     Text(formatDuration(clip.durationMs))
                         .font(.caption2.monospacedDigit())
@@ -375,7 +375,7 @@ struct SourceCardView: View {
                         }
                     }
                 )
-                .clipped()
+                .clipxMediaEdge()
                 .overlay(alignment: .center) {
                     if hovering {
                         Image(systemName: "play.circle.fill")

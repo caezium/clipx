@@ -83,6 +83,7 @@ struct SessionRailView: View {
                 SessionThumb(source: src)
                     .frame(width: 46, height: 27)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Theme.border, lineWidth: 1))
                     .overlay(alignment: .bottomTrailing) {
                         if src.isReviewed {
                             Image(systemName: "checkmark.circle.fill")
