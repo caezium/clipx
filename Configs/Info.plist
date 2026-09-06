@@ -32,6 +32,8 @@
 	<string>Clipx needs to read video files stored in Downloads to index and generate thumbnails for your library.</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Clipx connects to your chosen review server and shares your library with paired browsers when you enable Remote.</string>
 	<key>NSNetworkVolumesUsageDescription</key>
 	<string>Clipx reads video files from network volumes so you can clip footage stored on NAS or shared drives.</string>
 	<key>NSPrincipalClass</key>

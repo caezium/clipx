@@ -8,11 +8,14 @@ import GRDB
 struct ProjectHeaderView: View {
     let projectID: Int64
     @EnvironmentObject private var appState: AppState
+    @State private var loadTask: Task<Void, Never>?
+    @State private var loadGeneration = UUID()
     @State private var project: Project?
     @State private var clipCount: Int = 0
     @State private var totalDurationMs: Int64 = 0
     @State private var renaming: Bool = false
     @State private var editedName: String = ""
+    @State private var loadError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -23,14 +26,15 @@ struct ProjectHeaderView: View {
                 if renaming {
                     TextField("Project name", text: $editedName)
                         .textFieldStyle(.roundedBorder)
-                        .font(.title2.weight(.semibold))
+                        .font(.system(size: 17, weight: .semibold))
                         .frame(maxWidth: 320)
                         .onSubmit(commitRename)
                         .onExitCommand { renaming = false }
                 } else {
                     HStack(spacing: 6) {
                         Text(project?.name ?? "Project")
-                            .font(.title2.weight(.semibold))
+                            .font(.system(size: 17, weight: .semibold))
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                             .onTapGesture(count: 2) {
                                 editedName = project?.name ?? ""
                                 renaming = true
@@ -46,12 +50,11 @@ struct ProjectHeaderView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("Rename project")
+                        .help("Rename project").accessibilityLabel("Rename project")
                     }
                 }
+                Spacer(minLength: 8)
                 statusPill
-                Spacer()
-                actionButtons
             }
             // Stats row
             HStack(spacing: 14) {
@@ -59,8 +62,7 @@ struct ProjectHeaderView: View {
                 stat("timer", formatDuration(totalDurationMs))
                 Spacer()
                 Button(action: {
-                    appState.selectedProjectID = nil
-                    appState.activeFilters.projectIDs = []
+                    appState.selectProject(nil)
                 }) {
                     Label("Clear filter", systemImage: "xmark.circle")
                         .font(.caption)
@@ -69,6 +71,12 @@ struct ProjectHeaderView: View {
                 .foregroundStyle(.secondary)
             }
             .font(.caption)
+            actionButtons
+                .disabled(project == nil || clipCount == 0)
+            if let loadError {
+                Text(loadError).font(.caption).foregroundStyle(Theme.danger)
+                Button("Try again", action: load).controlSize(.small)
+            }
         }
         .padding(12)
         .background(
@@ -82,6 +90,7 @@ struct ProjectHeaderView: View {
         .padding(.horizontal, 12)
         .padding(.top, 8)
         .onAppear(perform: load)
+        .onDisappear { loadTask?.cancel(); loadGeneration = UUID() }
         .onChange(of: projectID) { _, _ in load() }
         .onChange(of: appState.libraryRevision) { _, _ in load() }
     }
@@ -156,12 +165,10 @@ struct ProjectHeaderView: View {
                 }
                 Section("Bridges") {
                     Button("FCPXML…") {
-                        selectAllProjectClips()
-                        ExportActions.exportFCPXML()
+                        withProjectClips { ExportActions.exportFCPXML(clipIDs: $0) }
                     }
                     Button("Obsidian Sidecars…") {
-                        selectAllProjectClips()
-                        ExportActions.exportObsidian()
+                        withProjectClips { ExportActions.exportObsidian(clipIDs: $0) }
                     }
                 }
             } label: {
@@ -174,36 +181,32 @@ struct ProjectHeaderView: View {
     }
 
     private func exportAll(_ preset: ExportPreset) {
-        // Selection + export must happen after the DB read returns, so wrap
-        // the chain in a Task. Without this, large project selects stalled
-        // the main thread.
-        Task { @MainActor in
-            await selectAllProjectClipsAsync()
-            ExportActions.exportSelected(preset)
-        }
+        withProjectClips { ExportActions.export(clipIDs: $0, preset: preset) }
     }
 
-    /// Synchronous form for the "Select all" button. Kept for the FCPXML /
-    /// Obsidian sub-menu items where the next call needs the selection ready.
     private func selectAllProjectClips() {
-        Task { @MainActor in
-            await selectAllProjectClipsAsync()
+        let requestedProject = projectID
+        withProjectClips { ids in
+            guard appState.selectedProjectID == requestedProject else { return }
+            appState.selectedClipIDs = Set(ids)
         }
     }
 
-    private func selectAllProjectClipsAsync() async {
+    private func withProjectClips(_ action: @escaping @MainActor ([Int64]) -> Void) {
         guard let db = AppEnvironment.shared.database else { return }
         let pid = projectID
-        let ids: [Int64] = await Task.detached(priority: .userInitiated) {
-            (try? db.read { db in
-                try Int64.fetchAll(
-                    db,
-                    sql: "SELECT clip_id FROM clip_projects WHERE project_id = ?",
-                    arguments: [pid]
-                )
-            }) ?? []
-        }.value
-        appState.selectedClipIDs = Set(ids)
+        Task { @MainActor in
+            do {
+                let ids = try await Task.detached(priority: .userInitiated) {
+                    try db.read { db in
+                        try Int64.fetchAll(db, sql: "SELECT clip_id FROM clip_projects WHERE project_id = ? ORDER BY clip_id", arguments: [pid])
+                    }
+                }.value
+                action(ids)
+            } catch {
+                appState.showToast("Couldn't load project clips: \(error.localizedDescription)", level: .error)
+            }
+        }
     }
 
     private func setStatus(_ s: ProjectStatus) {
@@ -242,33 +245,39 @@ struct ProjectHeaderView: View {
             renaming = false
         } catch {
             AppState.shared.showToast("Rename failed (name in use?)", level: .error)
-            renaming = false
         }
     }
 
     private func load() {
         guard let db = AppEnvironment.shared.database else { return }
-        Task.detached(priority: .userInitiated) { [projectID] in
-            let p: Project? = try? db.read { try Project.fetchOne($0, key: projectID) }
-            let stats: (Int, Int64)? = try? db.read { dbq in
-                let row = try Row.fetchOne(
-                    dbq,
-                    sql: """
-                        SELECT COUNT(*) AS n, COALESCE(SUM(c.out_ms - c.in_ms), 0) AS dur
-                        FROM clips c
-                        JOIN clip_projects cp ON cp.clip_id = c.id
-                        WHERE cp.project_id = ?
-                    """,
-                    arguments: [projectID]
-                )
-                let n: Int = (row?["n"] as Int?) ?? 0
-                let dur: Int64 = (row?["dur"] as Int64?) ?? 0
-                return (n, dur)
-            }
-            await MainActor.run {
-                self.project = p
-                self.clipCount = stats?.0 ?? 0
-                self.totalDurationMs = stats?.1 ?? 0
+        loadTask?.cancel()
+        let generation = UUID()
+        loadGeneration = generation
+        let requestedID = projectID
+        loadTask = Task { @MainActor in
+            do {
+                let result = try await Task.detached(priority: .userInitiated) { [projectID] in
+                    try db.read { dbq -> (Project?, Int, Int64) in
+                        let project = try Project.fetchOne(dbq, key: projectID)
+                        let row = try Row.fetchOne(dbq, sql: """
+                            SELECT COUNT(*) AS n,
+                                   TOTAL(CASE WHEN c.in_ms >= 0 AND c.out_ms > c.in_ms THEN c.out_ms - c.in_ms ELSE 0 END) AS dur
+                            FROM clips c JOIN clip_projects cp ON cp.clip_id = c.id WHERE cp.project_id = ?
+                            """, arguments: [projectID])
+                        let count: Int = row?["n"] ?? 0
+                        let rawDuration: Double = row?["dur"] ?? 0
+                        let duration: Int64 = rawDuration >= Double(Int64.max) ? .max : Int64(max(0, rawDuration))
+                        return (project, count, duration)
+                    }
+                }.value
+                guard !Task.isCancelled, loadGeneration == generation, projectID == requestedID else { return }
+                project = result.0
+                clipCount = result.1
+                totalDurationMs = result.2
+                loadError = result.0 == nil ? "This project is no longer available." : nil
+            } catch {
+                guard !Task.isCancelled, loadGeneration == generation else { return }
+                loadError = "Couldn't load project: \(error.localizedDescription)"
             }
         }
     }
@@ -278,7 +287,7 @@ struct ProjectHeaderView: View {
         let h = totalSec / 3600
         let m = (totalSec % 3600) / 60
         let s = totalSec % 60
-        if h > 0 { return String(format: "%d:%02d:%02d total", h, m, s) }
+        if h > 0 { return "\(h):" + String(format: "%02d:%02d total", m, s) }
         return String(format: "%d:%02d total", m, s)
     }
 }

@@ -6,7 +6,7 @@ import AppKit
 enum TimelineMath {
     static func x(forMs ms: Int64, total: Int64, width: CGFloat) -> CGFloat {
         guard total > 0 else { return 0 }
-        return CGFloat(Double(max(0, ms)) / Double(total)) * width
+        return CGFloat(Double(min(total, max(0, ms))) / Double(total)) * width
     }
 
     static func width(forMs ms: Int64, total: Int64, fullWidth: CGFloat) -> CGFloat {
@@ -40,6 +40,7 @@ struct FilmstripTimelineView: View {
     var onSelectClip: ((Clip) -> Void)? = nil
 
     @State private var strip: NSImage?
+    @State private var stripGeneration = UUID()
 
     var body: some View {
         GeometryReader { geo in
@@ -69,16 +70,25 @@ struct FilmstripTimelineView: View {
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0).onChanged { value in
+                            guard geo.size.width > 0 else { return }
                             let frac = max(0, min(1, value.location.x / geo.size.width))
                             controller.seek(toMs: Int64(frac * Double(controller.durationMs)))
                         }
                     )
                     .accessibilityLabel("Filmstrip scrubber")
+                    .accessibilityValue(PlayerController.formatMs(controller.currentMs))
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: controller.stepForward()
+                        case .decrement: controller.stepBackward()
+                        @unknown default: break
+                        }
+                    }
 
                 // Already-saved clips as slim accent pins along the bottom edge.
                 ForEach(savedClips, id: \.id) { clip in
                     let xStart = TimelineMath.x(forMs: clip.inMs, total: total, width: geo.size.width)
-                    let w = TimelineMath.width(forMs: clip.outMs - clip.inMs, total: total, fullWidth: geo.size.width)
+                    let w = TimelineMath.width(forMs: clip.durationMs, total: total, fullWidth: geo.size.width)
                     let visW = max(3, w)
                     let hitWidth = max(10, w)
                     RoundedRectangle(cornerRadius: 2)
@@ -93,6 +103,8 @@ struct FilmstripTimelineView: View {
                         .highPriorityGesture(TapGesture().onEnded { onSelectClip?(clip) })
                         .help(clip.name ?? "Clip \(clip.id ?? 0)")
                         .accessibilityLabel(Text(clip.name ?? "Saved clip"))
+                        .accessibilityAddTraits(.isButton)
+                        .accessibilityAction { onSelectClip?(clip) }
                 }
 
                 // Moving parts (in/out band + playhead) isolated in a leaf that
@@ -109,11 +121,14 @@ struct FilmstripTimelineView: View {
         }
         .background(Theme.bgRaised)
         .task(id: sourceHash) { loadStrip() }
+        .onDisappear { stripGeneration = UUID() }
     }
 
     // (ms→pixel mapping lives in TimelineMath, shared with the playhead leaf.)
 
     private func loadStrip() {
+        let generation = UUID()
+        stripGeneration = generation
         strip = nil
         guard let hash = sourceHash, let url = sourceURL,
               let engine = AppEnvironment.shared.thumbnailEngine else { return }
@@ -133,7 +148,10 @@ struct FilmstripTimelineView: View {
         )
         engine.generateSprite(source: stub) { resultURL in
             guard let resultURL, let img = NSImage(contentsOf: resultURL) else { return }
-            self.strip = img
+            Task { @MainActor in
+                guard stripGeneration == generation else { return }
+                self.strip = img
+            }
         }
     }
 }

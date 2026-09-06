@@ -6,6 +6,7 @@ import SwiftUI
 /// workflow where you remember a date but not a filename.
 struct CalendarBrowseView: View {
     let sources: [Source]
+    var clips: [Clip] = []
     @EnvironmentObject private var appState: AppState
     /// Months collapsed to a one-line header. Default: every month except the
     /// most recent — so a big library opens calm, showing this month only.
@@ -97,7 +98,7 @@ struct CalendarBrowseView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 16, pinnedViews: [.sectionHeaders]) {
-                if sources.isEmpty {
+                if sources.isEmpty && clips.isEmpty {
                     Text("No footage to browse yet.")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.textSecondary)
@@ -110,6 +111,25 @@ struct CalendarBrowseView: View {
                                 daySection(day: day, monthKey: month.id)
                             }
                         }
+                    }
+                }
+                if !clips.isEmpty {
+                    Section {
+                        LazyVGrid(columns: columns, spacing: 12) {
+                            ForEach(clips) { clip in
+                                ClipCardView(clip: clip,
+                                             isSelected: clip.id.map { appState.selectedClipIDs.contains($0) } ?? false,
+                                             onSelect: {
+                                                 if let id = clip.id { appState.selectedClipIDs = [id] }
+                                                 appState.inspectorVisible = true
+                                             },
+                                             onOpenInPlayer: { appState.openClip(clip) })
+                            }
+                        }
+                    } header: {
+                        Text("Saved clips · \(clips.count)")
+                            .font(.headline).foregroundStyle(Theme.textPrimary)
+                            .padding(.vertical, 8)
                     }
                 }
             }
@@ -130,6 +150,12 @@ struct CalendarBrowseView: View {
         for s in sources {
             hasher.combine(s.id)
             hasher.combine(s.createdAt)
+            hasher.combine(s.path)
+            hasher.combine(s.hash)
+            hasher.combine(s.online)
+            hasher.combine(s.durationMs)
+            hasher.combine(s.fps)
+            hasher.combine(s.thumbPath)
         }
         return hasher.finalize()
     }
@@ -211,7 +237,7 @@ struct CalendarBrowseView: View {
     /// reads as a compact, tappable summary chip (date · count · duration).
     @ViewBuilder
     private func dayHeader(day: DayGroup, isExpanded: Bool) -> some View {
-        let totalMs = day.sources.reduce(Int64(0)) { $0 + ($1.durationMs ?? 0) }
+        let totalMs = FrameMath.totalDuration(day.sources.map { $0.durationMs ?? 0 })
         Button {
             withAnimation(.easeOut(duration: 0.16)) {
                 if isExpanded { expandedDays.remove(day.id) }
@@ -255,7 +281,8 @@ struct CalendarBrowseView: View {
         let totalSec = Int(ms / 1000)
         let h = totalSec / 3600
         let m = (totalSec % 3600) / 60
-        if h > 0 { return String(format: "%dh %dm", h, m) }
+        if totalSec < 60 { return "\(totalSec)s" }
+        if h > 0 { return "\(h)h \(m)m" }
         return String(format: "%dm", m)
     }
 }

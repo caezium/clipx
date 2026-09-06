@@ -1,0 +1,79 @@
+Test Suite 'AppEnvironmentBootstrapTests' passed at 2026-09-06 15:30:54.239.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'BookmarkStoreSandboxTests' passed at 2026-09-06 15:30:54.258.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.018 (0.019) seconds
+Test Suite 'ChipDetectorTests' passed at 2026-09-06 15:30:54.260.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'CoreRepairTests' passed at 2026-09-06 15:31:03.361.
+	 Executed 13 tests, with 0 failures (0 unexpected) in 9.097 (9.101) seconds
+Test Suite 'DatabaseRecoveryTests' passed at 2026-09-06 15:31:03.381.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.019 (0.019) seconds
+Test Suite 'DatabaseTests' passed at 2026-09-06 15:31:03.396.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.014 (0.015) seconds
+Test Suite 'DestinationAccessTests' passed at 2026-09-06 15:31:03.400.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'ExportBackendTests' passed at 2026-09-06 15:31:03.405.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'ExportLifecycleTests' passed at 2026-09-06 15:31:03.513.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.107 (0.108) seconds
+Test Suite 'ExportPipelineTests' passed at 2026-09-06 15:31:03.528.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.011 (0.015) seconds
+Test Suite 'ExportPresetTests' passed at 2026-09-06 15:31:03.530.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'FCPXMLDocumentTests' passed at 2026-09-06 15:31:03.533.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'FCPXMLWriterTests' passed at 2026-09-06 15:31:03.537.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'FileHasherTests' passed at 2026-09-06 15:31:03.716.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.178 (0.178) seconds
+Test Suite 'IndexerCollisionTests' passed at 2026-09-06 15:31:03.731.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.015 (0.015) seconds
+Test Suite 'IndexerReconcileTests' passed at 2026-09-06 15:31:03.736.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.005 (0.005) seconds
+Test Suite 'MarkerStoreTests' passed at 2026-09-06 15:31:03.774.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.036 (0.038) seconds
+Test Suite 'MediaRegressionTests' passed at 2026-09-06 15:31:03.787.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.013 (0.013) seconds
+Test Suite 'NativeMenuActionTests' passed at 2026-09-06 15:31:03.795.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'NativeMutationRegressionTests' passed at 2026-09-06 15:31:03.831.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.035 (0.036) seconds
+Test Suite 'NativePlayerLifecycleTests' passed at 2026-09-06 15:31:05.007.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 1.174 (1.176) seconds
+Test Suite 'NativeSearchRegressionTests' passed at 2026-09-06 15:31:11.376.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 6.366 (6.368) seconds
+Test Suite 'NativeUIRenderTests' passed at 2026-09-06 15:31:43.637.
+	 Executed 1 test, with 0 failures (0 unexpected) in 32.261 (32.262) seconds
+Test Suite 'ObsidianWriterTests' passed at 2026-09-06 15:31:43.640.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'PlayerMathTests' passed at 2026-09-06 15:31:43.673.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.002 (0.034) seconds
+Test Suite 'PurposeAndReviewTests' passed at 2026-09-06 15:31:43.700.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.025 (0.026) seconds
+Test Suite 'SearchEngineTests' passed at 2026-09-06 15:31:43.742.
+	 Executed 10 tests, with 0 failures (0 unexpected) in 0.041 (0.042) seconds
+Test Suite 'ServerProxyRegressionTests' passed at 2026-09-06 15:31:44.344.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.601 (0.602) seconds
+Test Suite 'ServerRequestRegressionTests' passed at 2026-09-06 15:31:44.352.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.006 (0.008) seconds
+Test Suite 'ServerRouteRegressionTests' passed at 2026-09-06 15:31:44.871.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.517 (0.518) seconds
+Test Suite 'ServerSecurityTests' passed at 2026-09-06 15:31:44.904.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 0.023 (0.032) seconds
+Test Suite 'SidecarIdentityTests' passed at 2026-09-06 15:31:44.918.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.012 (0.014) seconds
+Test Suite 'StintBridgeTests' passed at 2026-09-06 15:31:44.923.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.004 (0.005) seconds
+Test Suite 'StintCommentRefreshRegressionTests' passed at 2026-09-06 15:31:45.006.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.082 (0.083) seconds
+Test Suite 'StintTransferRegressionTests' passed at 2026-09-06 15:31:45.053.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.046 (0.047) seconds
+Test Suite 'TagStoreTests' passed at 2026-09-06 15:31:45.072.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.018 (0.019) seconds
+Test Suite 'ThumbnailEngineSpriteTests' passed at 2026-09-06 15:31:45.215.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.142 (0.142) seconds
+Test Suite 'ClipxCoreTests-MAS.xctest' passed at 2026-09-06 15:31:45.215.
+	 Executed 180 tests, with 0 failures (0 unexpected) in 50.892 (50.978) seconds
+Test Suite 'All tests' passed at 2026-09-06 15:31:45.215.
+	 Executed 180 tests, with 0 failures (0 unexpected) in 50.892 (50.978) seconds
+** TEST SUCCEEDED **

@@ -1,56 +1,102 @@
 import SwiftUI
 
-/// List view at parity with the grid: a real Table whose selection is the same
-/// `selectedClipIDs` the grid and export use, with open-in-player, context
-/// actions, and inline rating. (#37)
+/// Sources and saved clips share the same table, with distinct stable identities
+/// so a newly imported library remains usable before any ranges are marked.
 struct ClipListView: View {
     let sources: [Source]
     let clips: [Clip]
     @EnvironmentObject private var appState: AppState
+    @State private var selection: Set<Row.ID> = []
     @State private var pendingDelete: Set<Int64>?
 
-    /// Table selection needs a non-optional row id; Clip.id is Int64?.
-    private struct Row: Identifiable { let id: Int64; let clip: Clip }
-    private var rows: [Row] { clips.compactMap { c in c.id.map { Row(id: $0, clip: c) } } }
+    private struct Row: Identifiable {
+        enum ID: Hashable { case source(Int64), clip(Int64) }
+        let id: ID
+        let name: String
+        let durationMs: Int64
+        var source: Source?
+        var clip: Clip?
+    }
+
+    private var rows: [Row] {
+        sources.compactMap { source in
+            source.id.map { Row(id: .source($0), name: source.displayName,
+                                durationMs: source.durationMs ?? 0, source: source) }
+        } + clips.compactMap { clip in
+            clip.id.map { Row(id: .clip($0), name: clip.name ?? "Untitled clip",
+                              durationMs: clip.durationMs, clip: clip) }
+        }
+    }
 
     var body: some View {
-        Table(rows, selection: $appState.selectedClipIDs) {
+        Table(rows, selection: $selection) {
             TableColumn("Name") { row in
-                Text(row.clip.name ?? "Untitled").foregroundStyle(Theme.textPrimary)
+                Label(row.name, systemImage: row.clip == nil ? "film" : "scissors")
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
             }
+            TableColumn("Type") { row in
+                Text(row.clip == nil ? "Source" : "Saved clip")
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .width(min: 65, ideal: 75, max: 90)
             TableColumn("Duration") { row in
-                Text(format(row.clip.durationMs)).monospacedDigit().foregroundStyle(Theme.textSecondary)
+                Text(PlayerController.formatMs(row.durationMs))
+                    .monospacedDigit().foregroundStyle(Theme.textSecondary)
             }
+            .width(min: 65, ideal: 85, max: 105)
             TableColumn("Rating") { row in
-                HStack(spacing: 2) {
-                    ForEach(1...5, id: \.self) { i in
-                        Image(systemName: i <= row.clip.rating ? "star.fill" : "star")
-                            .font(.caption2)
-                            .foregroundStyle(i <= row.clip.rating ? Theme.star : Theme.textTertiary)
-                            .onTapGesture { setRating(row.id, i) }
+                if let clip = row.clip, let id = clip.id {
+                    HStack(spacing: 2) {
+                        ForEach(1...5, id: \.self) { value in
+                            Button { setRating(id, clip.rating == value ? 0 : value) } label: {
+                                Image(systemName: value <= clip.rating ? "star.fill" : "star")
+                                    .font(.caption2)
+                                    .foregroundStyle(value <= clip.rating ? Theme.star : Theme.textTertiary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Rate \(row.name) \(value) stars")
+                        }
                     }
+                } else {
+                    Text("—").foregroundStyle(Theme.textTertiary)
                 }
             }
-            TableColumn("Mood") { row in Text(row.clip.mood ?? "").foregroundStyle(Theme.textSecondary) }
-            TableColumn("Shot") { row in Text(row.clip.shotType ?? "").foregroundStyle(Theme.textSecondary) }
+            .width(min: 82, ideal: 90, max: 110)
+            TableColumn("Details") { row in
+                Text(row.clip?.mood ?? row.source?.resolutionLabel ?? "")
+                    .foregroundStyle(Theme.textSecondary)
+            }
         }
-        .contextMenu(forSelectionType: Int64.self) { ids in
-            Button("Open in Player") { open(ids.first) }
-            Button("Show Inspector") {
-                if let id = ids.first { appState.selectedClipIDs = [id]; appState.inspectorVisible = true }
+        .contextMenu(forSelectionType: Row.ID.self) { ids in
+            Button("Open") { open(ids.first) }
+                .disabled(ids.isEmpty)
+            let clipIDs = selectedClips(ids)
+            if !clipIDs.isEmpty {
+                Button("Show Inspector") {
+                    appState.selectedClipIDs = clipIDs
+                    appState.inspectorVisible = true
+                }
+                Divider()
+                Menu("Export") {
+                    Button("Reels (9:16 1080p)") { ExportActions.export(clipIDs: Array(clipIDs), preset: .reels) }
+                    Button("YouTube 1080p") { ExportActions.export(clipIDs: Array(clipIDs), preset: .youtube1080p) }
+                    Button("YouTube 4K") { ExportActions.export(clipIDs: Array(clipIDs), preset: .youtube4k) }
+                }
+                Divider()
+                Button("Delete \(clipIDs.count) clip\(clipIDs.count == 1 ? "" : "s")", role: .destructive) {
+                    pendingDelete = clipIDs
+                }
             }
-            Divider()
-            Menu("Export") {
-                Button("Reels (9:16 1080p)") { exportSelected(ids, .reels) }
-                Button("YouTube 1080p") { exportSelected(ids, .youtube1080p) }
-                Button("YouTube 4K") { exportSelected(ids, .youtube4k) }
-            }
-            Divider()
-            Button("Delete \(ids.count) clip\(ids.count == 1 ? "" : "s")", role: .destructive) {
-                pendingDelete = ids
-            }
-        } primaryAction: { ids in
-            open(ids.first)   // double-click opens
+        } primaryAction: { ids in open(ids.first) }
+        .onAppear { syncSelection() }
+        .onChange(of: appState.selectedClipIDs) { _, _ in syncSelection() }
+        .onChange(of: selection) { _, ids in
+            appState.selectedClipIDs = selectedClips(ids)
+            appState.selectedSourceID = ids.compactMap { id in
+                if case .source(let value) = id { return value }
+                return nil
+            }.first
         }
         .background(Theme.bg)
         .confirmationDialog(
@@ -59,42 +105,42 @@ struct ClipListView: View {
             titleVisibility: .visible
         ) {
             Button("Delete", role: .destructive) {
-                if let ids = pendingDelete { deleteClips(ids) }
+                if let ids = pendingDelete { MarkerActions.deleteClips(ids) }
                 pendingDelete = nil
             }
             Button("Cancel", role: .cancel) { pendingDelete = nil }
-        } message: {
-            Text("This removes their marks, tags, ratings, and notes.")
+        } message: { Text("Source files stay in your library. You can undo this deletion from the confirmation message.") }
+    }
+
+    private func selectedClips(_ ids: Set<Row.ID>) -> Set<Int64> {
+        Set(ids.compactMap { id in
+            if case .clip(let value) = id { return value }
+            return nil
+        })
+    }
+
+    private func syncSelection() {
+        let sourceSelection = selection.filter { if case .source = $0 { return true }; return false }
+        let clipSelection = appState.selectedClipIDs.intersection(Set(clips.compactMap(\.id))).map(Row.ID.clip)
+        let updated = sourceSelection.union(clipSelection)
+        if selection != updated { selection = updated }
+    }
+
+    private func open(_ id: Row.ID?) {
+        guard let id else { return }
+        switch id {
+        case .source(let value):
+            appState.selectedSourceID = value
+            appState.playerInMs = nil
+            appState.playerOutMs = nil
+            appState.playerSourceID = value
+        case .clip(let value):
+            if let clip = clips.first(where: { $0.id == value }) { appState.openClip(clip) }
         }
     }
 
-    private func open(_ id: Int64?) {
-        guard let id, let clip = clips.first(where: { $0.id == id }) else { return }
-        appState.selectedClipIDs = [id]
-        appState.playerSourceID = clip.sourceID
-        appState.playerInMs = clip.inMs
-        appState.playerOutMs = clip.outMs
-    }
-
     private func setRating(_ id: Int64, _ rating: Int) {
-        try? AppEnvironment.shared.markerStore?.updateRating(id, rating: rating)
-    }
-
-    private func exportSelected(_ ids: Set<Int64>, _ preset: ExportPreset) {
-        appState.selectedClipIDs = ids
-        ExportActions.exportSelected(preset)
-    }
-
-    private func deleteClips(_ ids: Set<Int64>) {
-        guard let markerStore = AppEnvironment.shared.markerStore else { return }
-        for id in ids { try? markerStore.deleteClip(id) }
-        appState.selectedClipIDs.subtract(ids)
-        AppState.shared.showToast("Deleted \(ids.count) clip\(ids.count == 1 ? "" : "s")", level: .info)
-    }
-
-    private func format(_ ms: Int64) -> String {
-        let totalSec = Int(ms / 1000)
-        let m = totalSec / 60, s = totalSec % 60
-        return String(format: "%d:%02d", m, s)
+        do { try AppEnvironment.shared.markerStore?.updateRating(id, rating: rating) }
+        catch { appState.showToast("Couldn't save rating: \(error.localizedDescription)", level: .error) }
     }
 }

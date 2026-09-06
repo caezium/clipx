@@ -4,7 +4,7 @@ import Sparkle
 
 /// Wraps SPUStandardUpdaterController so menu items and Settings can call
 /// `checkForUpdates()` and let Sparkle manage the rest.
-final class UpdateManager: NSObject {
+final class UpdateManager: NSObject, SPUUpdaterDelegate {
     static let shared = UpdateManager()
     private var updaterController: SPUStandardUpdaterController?
 
@@ -20,7 +20,7 @@ final class UpdateManager: NSObject {
         }
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: self,
             userDriverDelegate: nil
         )
     }
@@ -31,7 +31,21 @@ final class UpdateManager: NSObject {
     }
 
     func checkForUpdates() {
-        updaterController?.checkForUpdates(nil)
+        guard let updaterController else {
+            Task { @MainActor in
+                AppState.shared.showToast("Update delivery isn't configured for this build", level: .info)
+            }
+            return
+        }
+        updaterController.checkForUpdates(nil)
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        AppPreferences.defaults.string(forKey: "updateChannel") == "beta" ? ["beta"] : []
+    }
+
+    func resetUpdateCycle() {
+        updaterController?.updater.resetUpdateCycleAfterShortDelay()
     }
 }
 #endif

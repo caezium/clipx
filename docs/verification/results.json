@@ -1,0 +1,88 @@
+{
+  "date": "2026-09-06",
+  "baseline_commit": "c700be3",
+  "toolchain": {
+    "xcode": "26.6 (17F113)",
+    "swift_compiler": "6.3.3",
+    "xcodegen": "2.45.4",
+    "architecture": "arm64"
+  },
+  "isolation": {
+    "bundle_identifier": "com.clipx.Clipx.Verification",
+    "CLIPX_ISOLATED_TESTS": "1",
+    "real_library_used": false
+  },
+  "suites": {
+    "core": {
+      "command": "CLIPX_BUILD_ROOT=/tmp/clipx-repair-build CLIPX_PACKAGES_DIR=/tmp/clipx-review-sxfatkpo/build/Packages bash Scripts/verify.sh core",
+      "tests": 186,
+      "failures": 0,
+      "status": "PASS",
+      "log": "/tmp/clipx-repair-build/evidence/core.log",
+      "sha256": "e959212437a02ac51e8093e683f537571d2b6cd805de8a02c3309d8877ede3c1",
+      "xcresult": "/tmp/clipx-repair-build/Direct/Logs/Test/Test-Clipx-Direct-2026.09.06_15-32-15-+0800.xcresult"
+    },
+    "mas": {
+      "command": "CLIPX_BUILD_ROOT=/tmp/clipx-repair-build CLIPX_PACKAGES_DIR=/tmp/clipx-review-sxfatkpo/build/Packages bash Scripts/verify.sh mas",
+      "tests": 180,
+      "failures": 0,
+      "status": "PASS",
+      "log": "/tmp/clipx-repair-build/evidence/mas.log",
+      "sha256": "54f66ee461e4138fa50149fabe2aecf5e4b753793c80ea8223c67d3dcd3d0f2e",
+      "xcresult": "/tmp/clipx-repair-build/MAS/Logs/Test/Test-Clipx-MAS-2026.09.06_15-30-45-+0800.xcresult"
+    }
+  },
+  "browser": {
+    "status": "PASS",
+    "checks": [
+      "saved clip playback",
+      "source and clip pagination",
+      "search clear and request ownership",
+      "detail request ownership",
+      "phone modal close on error",
+      "closed proxy polling cancellation",
+      "permanent speed with source-time marks",
+      "save response ownership",
+      "failed sprite retry and blob disposal",
+      "320\u20131280px layout"
+    ],
+    "artifacts": "/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-browser-regression-LBIbMO",
+    "command": "CLIPX_PLAYWRIGHT_MODULE=/tmp/stint-review-tools/node_modules/playwright-core CLIPX_BROWSER_EXECUTABLE=/tmp/stint-playwright/chromium_headless_shell-1243/chrome-headless-shell-mac-arm64/chrome-headless-shell bash Scripts/verify.sh browser",
+    "sha256": "2655f44309fbbe5318da66ab08c53714d5359d46690003092dca453bdaa46ac2"
+  },
+  "http": {
+    "command": "python3 Tests/ClipxCoreTests/ServerHTTPRegression.py",
+    "status": "PASS",
+    "observed_output": "PASS: actual loopback HTTP parser rejection, subsequent auth response, full/suffix/large explicit streaming, server shutdown connection and handler cancellation"
+  },
+  "native_render": {
+    "states": 29,
+    "status": "PASS",
+    "capture": "AppKit bitmap fallback",
+    "composited_window_capture": "unavailable"
+  },
+  "native_click_workflow": {
+    "status": "NOT_PASSED",
+    "reason": "XCUITest runner stalled before app code; DevToolsSecurity disabled"
+  },
+  "external_checks_not_established": [
+    "Signed MAS runtime",
+    "Live Stint service",
+    "Final Cut import/full Apple DTD validation",
+    "Physical phone/Wi-Fi",
+    "Release signing and notarization"
+  ],
+  "retained_image_sha256": {
+    "native-capture-900.png": "c9751ac7915366a56d541d8272a37153362b59d94c63941d83631d2cfbc59bf3",
+    "native-multiple-selection.png": "0df9d536bb7098e80ebb2d1e5b3ea16e6d2eaaefc0ff022767e74f80927726f4",
+    "native-onboarding-ready.png": "9568d371dcb1e473154845ee3fb0ad32369cb9ec81f2540d64a0516663863380",
+    "native-player-900.png": "88f71d7e7c58afb22faddb0d2941f931d62da651152884899e123fd6edc33fa9",
+    "native-project-900.png": "2eeda4b1c1e43120f8b151b6f004ba3de05141f161aaec11f6369755cf068b67",
+    "native-remote-settings.png": "e89f1aa6c64b6bf604e609986b51030556b2723efb12c92f9f8fc56d252d4eea",
+    "native-shortcuts.png": "563150f2146b6ea31b46d06dfd6f6b47b5f865d7e4b4dbe597827d4365615380",
+    "native-sidebar.png": "0b758057f58f06591c269d36cea9c982612b7c42620bdf6d75491c6f1020d936",
+    "remote-desktop.png": "3d99f10d4ad472303c39acd1824819197af078fff2ca13ff50a5205f62fd6e5a",
+    "remote-phone-clips.png": "36266334131fd2044113501ecc7a54e5a1b3d847c3f3ce9002cbd5cb11076ae7",
+    "remote-phone-error.png": "b0b9fb7bf4bc966a08838b86dbc3fbd2308aae908816fcff3e4faa0aeeedf0fb"
+  }
+}

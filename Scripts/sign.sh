@@ -15,6 +15,8 @@ if [ ! -d "$APP_PATH" ]; then
     exit 1
 fi
 
+bash Scripts/validate-ffmpeg.sh "$APP_PATH/Contents/Helpers/ffmpeg"
+
 # Sign nested helpers bottom-up (per TN2206)
 if [ -f "$APP_PATH/Contents/Helpers/ffmpeg" ]; then
     echo "✓ Signing ffmpeg helper…"
@@ -32,10 +34,11 @@ codesign --force --options runtime --timestamp --deep \
 
 echo "✓ Verifying…"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH"
-spctl --assess --verbose "$APP_PATH" || true
+# Gatekeeper assessment belongs after notarization, not before it.
 
 echo ""
 echo "Next: notarize via"
-echo "  xcrun notarytool submit $APP_PATH --apple-id YOUR@email --team-id TEAMID --password APP-PASSWORD --wait"
+echo "  ditto -c -k --keepParent \"$APP_PATH\" Clipx-notarize.zip"
+echo "  xcrun notarytool submit Clipx-notarize.zip --keychain-profile YOUR_PROFILE --wait"
 echo "Then staple:"
 echo "  xcrun stapler staple $APP_PATH"

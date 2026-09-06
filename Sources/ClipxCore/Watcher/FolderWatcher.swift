@@ -17,6 +17,23 @@ final class FolderWatcher {
     private let bookmarkStore: BookmarkStore
     private var stream: FSEventStreamRef?
     private var paths: [String] = []
+    private var work: Task<Void, Never>?
+    private var pendingEvents: [String: Event] = [:]
+    private var generation = 0
+
+    struct Event {
+        let path: String
+        let flags: FSEventStreamEventFlags
+        let id: FSEventStreamEventId
+
+        var requiresRescan: Bool {
+            let mask = UInt32(kFSEventStreamEventFlagMustScanSubDirs |
+                kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped |
+                kFSEventStreamEventFlagRootChanged | kFSEventStreamEventFlagEventIdsWrapped |
+                kFSEventStreamEventFlagItemIsDir | kFSEventStreamEventFlagItemRenamed)
+            return flags & mask != 0
+        }
+    }
     /// Last event id observed by the callback. Used so a stream
     /// restart (add/remove folder) doesn't drop events that arrived in the
     /// gap — without this, every restart used `kFSEventStreamEventIdSinceNow`.
@@ -28,7 +45,7 @@ final class FolderWatcher {
     init(indexer: Indexer, bookmarkStore: BookmarkStore) {
         self.indexer = indexer
         self.bookmarkStore = bookmarkStore
-        if let saved = UserDefaults.standard.string(forKey: Self.eventIdKey), let v = UInt64(saved) {
+        if let saved = AppPreferences.defaults.string(forKey: Self.eventIdKey), let v = UInt64(saved) {
             self.lastSeenEventId = FSEventStreamEventId(v)
         }
     }
@@ -36,92 +53,116 @@ final class FolderWatcher {
     /// Restores access to all stored library folders and starts a watcher
     /// covering them. Called at app launch from `AppEnvironment.bootstrap()`.
     func resumeAll() {
+        stopStream()
+        cancelWork()
         let urls = bookmarkStore.resumeAccess()
         paths = uniquePaths(from: urls.map(\.path))
-        guard !paths.isEmpty else { return }
-        startStream(paths: paths, sinceEventId: lastSeenEventId)
-
-        // One-shot rescan so new files added while the app was closed get
-        // picked up. Cheap per-file now that `Indexer.indexFile` skips on
-        // unchanged mtime+size.
-        for url in urls {
-            let idx = indexer
-            Task.detached { await idx.index(folder: url) }
+        restartStream()
+        scan(urls, announce: false)
+        if !bookmarkStore.accessFailures.isEmpty {
+            AppState.shared.showToast("Some library folders are unavailable. Reconnect the drive or add the folder again in Settings.", level: .warning)
         }
     }
 
-    func add(folder url: URL) {
+    @discardableResult
+    func add(folder url: URL) -> Bool {
         do {
             try bookmarkStore.addFolder(url: url)
-            // Dedupe — the bookmark store is already idempotent, but `paths`
-            // backs FSEvents and a duplicate entry there would deliver every
-            // event twice.
             if !paths.contains(url.path) { paths.append(url.path) }
             restartStream()
-            let idx = indexer
-            Task.detached { await idx.index(folder: url) }
+            scan([url], announce: true)
+            return true
         } catch {
-            ClipxLog.watcher.error("add failed: \(String(describing: error), privacy: .public)")
+            AppState.shared.showToast("Could not add folder: \(error.localizedDescription)", level: .error)
+            return false
         }
     }
 
     func remove(folderPath path: String) {
-        bookmarkStore.removeFolder(path: path)
-        paths.removeAll { $0 == path }
-        restartStream()
-    }
-
-    /// Re-walks every library folder and indexes new/changed files. Reports a
-    /// start + completion toast so the action is never a silent no-op.
-    func rescanAll() {
-        // Source of truth is the persisted folder list, not the in-memory
-        // `paths` (the FSEvents set), which is empty whenever bookmark resume
-        // failed — the previous cause of "Rescan All does nothing".
-        var roots = bookmarkStore.allFolders().map(\.path)
-        if roots.isEmpty { roots = paths }
-        let urls = uniquePaths(from: roots).map { URL(fileURLWithPath: $0) }
-        guard !urls.isEmpty else {
-            AppState.shared.showToast("No library folders to rescan — add a folder first.", level: .warning)
+        guard bookmarkStore.removeFolder(path: path) else {
+            AppState.shared.showToast("Could not remove the folder. Try again.", level: .error)
             return
         }
-        AppState.shared.showToast(
-            "Rescanning \(urls.count) folder\(urls.count == 1 ? "" : "s")…", level: .info
-        )
-        let idx = indexer
-        Task.detached {
-            var scanned = 0, indexed = 0
+        paths.removeAll { $0 == path }
+        cancelWork()
+        restartStream()
+        scan(paths.map { URL(fileURLWithPath: $0) }, announce: false)
+    }
+
+    func rescanAll() {
+        let urls = bookmarkStore.resumeAccess()
+        paths = uniquePaths(from: urls.map(\.path))
+        restartStream()
+        guard !urls.isEmpty else {
+            let message = bookmarkStore.allFolders().isEmpty
+                ? "Add a library folder in Settings to start indexing."
+                : "Library folders are unavailable. Reconnect the drive or add the folder again in Settings."
+            AppState.shared.showToast(message, level: .warning)
+            return
+        }
+        scan(urls, announce: true)
+    }
+
+    private func scan(_ urls: [URL], announce: Bool) {
+        guard !urls.isEmpty else { return }
+        if announce { AppState.shared.showToast("Scanning library folders…", level: .info) }
+        let previous = work
+        let scanGeneration = generation
+        work = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, scanGeneration == self.generation else { return }
+            var total = Indexer.ScanResult()
             for url in urls {
-                let r = await idx.index(folder: url)
-                scanned += r.scanned
-                indexed += r.indexed
+                guard !Task.isCancelled, scanGeneration == self.generation else { return }
+                let result = await self.indexer.index(folder: url)
+                guard !result.cancelled, !Task.isCancelled, scanGeneration == self.generation else { return }
+                total.scanned += result.scanned
+                total.indexed += result.indexed
+                total.failed += result.failed
+                total.deferred += result.deferred
             }
-            await MainActor.run {
-                let msg = indexed > 0
-                    ? "Rescan complete — \(indexed) new or updated of \(scanned) file\(scanned == 1 ? "" : "s")."
-                    : "Rescan complete — no changes (\(scanned) file\(scanned == 1 ? "" : "s") checked)."
-                AppState.shared.showToast(msg, level: .success)
-                AppState.shared.libraryRevision &+= 1
+            guard !Task.isCancelled, scanGeneration == self.generation else { return }
+            if announce {
+                let message = "Checked \(total.scanned) files; \(total.indexed) added or updated."
+                if total.failed > 0 {
+                    AppState.shared.showToast(message + " \(total.failed) could not be read; check folder access and try again.", level: .warning)
+                } else if total.deferred > 0 {
+                    AppState.shared.showToast(message + " \(total.deferred) still copying; indexing will retry automatically.", level: .info)
+                } else {
+                    AppState.shared.showToast(message, level: .success)
+                }
             }
+            AppState.shared.libraryRevision &+= 1
         }
     }
 
     func stopAll() {
-        if let stream = stream {
+        stopStream()
+        cancelWork()
+        bookmarkStore.stopAll()
+    }
+
+    private func cancelWork() {
+        generation &+= 1
+        work?.cancel()
+        work = nil
+        pendingEvents.removeAll()
+        // Serialize cancellation ahead of subsequent scans on the indexer.
+        let idx = indexer
+        work = Task { await idx.cancelPendingWork() }
+    }
+
+    private func stopStream() {
+        if let stream {
             FSEventStreamStop(stream)
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
         }
         stream = nil
-        bookmarkStore.stopAll()
     }
 
     private func restartStream() {
-        if let stream = stream {
-            FSEventStreamStop(stream)
-            FSEventStreamInvalidate(stream)
-            FSEventStreamRelease(stream)
-            self.stream = nil
-        }
+        stopStream()
         guard !paths.isEmpty else { return }
         startStream(paths: paths, sinceEventId: lastSeenEventId)
     }
@@ -145,7 +186,7 @@ final class FolderWatcher {
         let flags = UInt32(
             kFSEventStreamCreateFlagFileEvents |
             kFSEventStreamCreateFlagNoDefer |
-            kFSEventStreamCreateFlagUseCFTypes
+            kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagWatchRoot
         )
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault,
@@ -162,7 +203,12 @@ final class FolderWatcher {
             return
         }
         FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
-        FSEventStreamStart(stream)
+        guard FSEventStreamStart(stream) else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+            AppState.shared.showToast("Folder watching could not start. Use Rescan Library to refresh files.", level: .warning)
+            return
+        }
         self.stream = stream
     }
 
@@ -171,50 +217,79 @@ final class FolderWatcher {
         return input.filter { seen.insert($0).inserted }
     }
 
-    /// Receives FSEvents on the main queue (configured via
-    /// SetDispatchQueue). Filters to video files and dispatches indexing
-    /// to the `Indexer` actor.
+    private func receive(_ events: [Event]) {
+        guard stream != nil else { return }
+        for event in events {
+            if let earlier = pendingEvents[event.path] {
+                pendingEvents[event.path] = Event(path: event.path,
+                    flags: earlier.flags | event.flags, id: max(earlier.id, event.id))
+            } else { pendingEvents[event.path] = event }
+        }
+        let previous = work
+        let eventGeneration = generation
+        work = Task { [weak self] in
+            await previous?.value
+            guard let self, !Task.isCancelled, eventGeneration == self.generation else { return }
+            let batch = Array(self.pendingEvents.values)
+            self.pendingEvents.removeAll()
+            guard !batch.isEmpty else { return }
+            var completed = true
+            if batch.contains(where: \.requiresRescan) {
+                // Directory renames and dropped events require a full walk,
+                // including missing-file reconciliation and bookmark relocation.
+                let urls = self.bookmarkStore.resumeAccess()
+                self.paths = self.uniquePaths(from: urls.map(\.path))
+                self.restartStream()
+                for url in urls {
+                    guard !Task.isCancelled, eventGeneration == self.generation else { return }
+                    let result = await self.indexer.index(folder: url)
+                    guard !result.cancelled, !Task.isCancelled, eventGeneration == self.generation else { return }
+                    completed = completed && result.failed == 0 && result.deferred == 0 && !result.cancelled
+                }
+            } else {
+                for event in batch {
+                    guard !Task.isCancelled, eventGeneration == self.generation else { return }
+                    let path = self.libraryPath(for: event.path)
+                    let url = URL(fileURLWithPath: path)
+                    guard Indexer.videoExtensions.contains(url.pathExtension.lowercased()) else { continue }
+                    if FileManager.default.fileExists(atPath: path) {
+                        let done = await self.indexer.processFileEvent(url)
+                        completed = completed && done
+                    } else { await self.indexer.markPathOffline(path) }
+                }
+            }
+            guard completed, !Task.isCancelled, eventGeneration == self.generation,
+                  let maximum = batch.map(\.id).max() else { return }
+            self.lastSeenEventId = maximum
+            AppPreferences.defaults.set(String(maximum), forKey: Self.eventIdKey)
+        }
+    }
+
+    private func libraryPath(for eventPath: String) -> String {
+        // FSEvents reports POSIX canonical paths, including /private/var.
+        // Foundation's resolvingSymlinksInPath deliberately shortens that
+        // prefix, so use realpath to match the event and keep stored identity.
+        for root in paths.sorted(by: { $0.count > $1.count }) {
+            guard let resolved = realpath(root, nil) else { continue }
+            let canonical = String(cString: resolved)
+            free(resolved)
+            if eventPath == canonical { return root }
+            if eventPath.hasPrefix(canonical + "/") {
+                return root + eventPath.dropFirst(canonical.count)
+            }
+        }
+        return eventPath
+    }
+
     nonisolated private static let callback: FSEventStreamCallback = {
         (_, info, count, evPathsRaw, evFlags, evIds) in
-        guard let info = info else { return }
-        // Unretained — release happens in the context's release callback.
+        guard let info else { return }
         let watcher = Unmanaged<FolderWatcher>.fromOpaque(info).takeUnretainedValue()
         let paths = unsafeBitCast(evPathsRaw, to: NSArray.self) as? [String] ?? []
-        var maxId: FSEventStreamEventId = 0
-        for i in 0..<count {
-            let id = evIds[i]
-            if id > maxId { maxId = id }
-            let flags = evFlags[i]
-            let path = paths[i]
-            let isFile = (flags & UInt32(kFSEventStreamEventFlagItemIsFile)) != 0
-            let removed = (flags & UInt32(kFSEventStreamEventFlagItemRemoved)) != 0
-            guard isFile else { continue }
-            let url = URL(fileURLWithPath: path)
-            let ext = url.pathExtension.lowercased()
-            guard Indexer.videoExtensions.contains(ext) else { continue }
-            let idx = watcher.indexer
-            if removed {
-                // Deleted file — drop it from "online". (#21)
-                let removedPath = path
-                Task.detached { await idx.markPathOffline(removedPath) }
-            } else {
-                // Let an in-progress copy settle before indexing. (#20)
-                Task.detached {
-                    try? await Task.sleep(nanoseconds: 3_000_000_000)
-                    await idx.indexFile(url)
-                }
-            }
+        // Copy C-owned memory before crossing the actor boundary.
+        let events = (0..<min(count, paths.count)).map {
+            Event(path: paths[$0], flags: evFlags[$0], id: evIds[$0])
         }
-        if maxId > 0 {
-            // Update on the main actor — callback already runs on the main
-            // queue but Swift's isolation doesn't know that, so hop.
-            Task { @MainActor in
-                if maxId > watcher.lastSeenEventId {
-                    watcher.lastSeenEventId = maxId
-                    // Persist so a relaunch resumes from here. (#26)
-                    UserDefaults.standard.set(String(maxId), forKey: FolderWatcher.eventIdKey)
-                }
-            }
-        }
+        Task { @MainActor in watcher.receive(events) }
     }
 }

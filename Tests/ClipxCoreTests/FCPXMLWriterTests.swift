@@ -49,3 +49,37 @@ final class FCPXMLWriterTests: XCTestCase {
         XCTAssertTrue(err.errorDescription?.contains("/tmp/no-meta.mov") == true)
     }
 }
+
+final class FCPXMLDocumentTests: XCTestCase {
+    func testOneFrameSelectionAndModernAssetSchema() throws {
+        var source = MediaRegressionTests.source(path: "/tmp/a & b#c.mov")
+        source.audioChannels = 0
+        let clip = Clip(id: 1, sourceID: 1, name: "Take & review\u{1}", inMs: 33, outMs: 67, createdAt: 0)
+        let text = try FCPXMLWriter.buildDocument(items: [(clip, source)])
+        let document = try XMLDocument(xmlString: text)
+        XCTAssertEqual(document.rootElement()?.attribute(forName: "version")?.stringValue, "1.10")
+        let asset = try XCTUnwrap(document.nodes(forXPath: "//asset").first as? XMLElement)
+        XCTAssertNil(asset.attribute(forName: "src"))
+        XCTAssertEqual(asset.attribute(forName: "hasAudio")?.stringValue, "0")
+        let media = try XCTUnwrap(document.nodes(forXPath: "//asset/media-rep").first as? XMLElement)
+        XCTAssertEqual(media.attribute(forName: "src")?.stringValue, URL(fileURLWithPath: source.path).absoluteString)
+        let item = try XCTUnwrap(document.nodes(forXPath: "//asset-clip").first as? XMLElement)
+        XCTAssertEqual(item.attribute(forName: "start")?.stringValue, "1/30s")
+        XCTAssertEqual(item.attribute(forName: "duration")?.stringValue, "1/30s")
+    }
+
+    func testMixedRateSequenceOffsetsUseOneFrameGrid() throws {
+        var first = MediaRegressionTests.source(path: "/first.mov")
+        first.fps = 30
+        var second = MediaRegressionTests.source(path: "/second.mov")
+        second.fps = 23.976
+        let a = Clip(id: 1, sourceID: 1, inMs: 0, outMs: 33, createdAt: 0)
+        let b = Clip(id: 2, sourceID: 1, inMs: 42, outMs: 1043, createdAt: 0)
+        let document = try XMLDocument(xmlString: FCPXMLWriter.buildDocument(items: [(a, first), (b, second), (a, first)]))
+        let clips = try document.nodes(forXPath: "//asset-clip").compactMap { $0 as? XMLElement }
+        XCTAssertEqual(clips.map { $0.attribute(forName: "offset")?.stringValue }, ["0/30s", "1/30s", "31/30s"])
+        XCTAssertEqual(clips[1].attribute(forName: "start")?.stringValue, "1001/24000s")
+        let sequence = try XCTUnwrap(document.nodes(forXPath: "//sequence").first as? XMLElement)
+        XCTAssertEqual(sequence.attribute(forName: "duration")?.stringValue, "32/30s")
+    }
+}

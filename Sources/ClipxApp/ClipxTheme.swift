@@ -68,6 +68,7 @@ struct PillButtonStyle: ButtonStyle {
     var kind: Kind = .ghost
     var compact: Bool = false
     @State private var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -80,7 +81,7 @@ struct PillButtonStyle: ButtonStyle {
             .contentShape(Capsule())
             .onHover { hovering = $0 }
             .animation(.easeOut(duration: 0.12), value: hovering)
-            .opacity(configuration.isPressed ? 0.85 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
             // Subtle press-in so every button feels physical (feel-better).
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)

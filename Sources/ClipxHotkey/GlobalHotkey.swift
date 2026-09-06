@@ -34,7 +34,7 @@ final class GlobalHotkey {
         unregister()
 
         let signature: OSType = OSType(0x434C5058) // 'CLPX'
-        var hotKeyID = EventHotKeyID(signature: signature, id: 1)
+        let hotKeyID = EventHotKeyID(signature: signature, id: 1)
 
         // Cmd+Shift+C = kVK_ANSI_C with cmdKey + shiftKey
         let modifiers: UInt32 = UInt32(cmdKey | shiftKey)

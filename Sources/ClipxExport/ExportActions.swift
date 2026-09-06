@@ -2,11 +2,10 @@ import Foundation
 import AppKit
 
 /// Top-level export actions wired to menu items and the command palette.
+@MainActor
 enum ExportActions {
     static func exportSelected(_ preset: ExportPreset) {
-        Task { @MainActor in
-            export(clipIDs: Array(AppState.shared.selectedClipIDs), preset: preset)
-        }
+        export(clipIDs: AppState.shared.selectedClipIDs.sorted(), preset: preset)
     }
 
     /// Export an explicit set of clips without touching the global selection —
@@ -28,20 +27,30 @@ enum ExportActions {
             }
             #endif
             // Use the remembered default folder if set, else prompt. (#33)
-            let outputDir: URL
-            if let remembered = rememberedExportDir() {
-                outputDir = remembered
-            } else if let picked = await pickOutputDirectory() {
-                outputDir = picked
-            } else {
-                return
+            let destination: DestinationAccess
+            do {
+                if let remembered = try DestinationAccess.resolve(.exportFolder) {
+                    destination = remembered
+                } else if let picked = await pickOutputDirectory() {
+                    destination = DestinationAccess.open(picked)
+                } else {
+                    return
+                }
+            } catch {
+                AppState.shared.showToast(error.localizedDescription, level: .warning)
+                guard let picked = await pickOutputDirectory() else { return }
+                do { try DestinationAccess.remember(picked, for: .exportFolder) }
+                catch {
+                    AppState.shared.showToast("Couldn't remember the folder: \(error.localizedDescription)", level: .error)
+                }
+                destination = DestinationAccess.open(picked)
             }
             guard let pipeline = AppEnvironment.shared.exportPipeline else {
                 AppState.shared.showToast("Export pipeline isn't ready yet", level: .warning)
                 return
             }
             for id in ids {
-                pipeline.enqueue(clipID: id, preset: preset, outputDir: outputDir)
+                pipeline.enqueue(clipID: id, preset: preset, outputDir: destination.url, destination: destination)
             }
             AppState.shared.showToast(
                 "Queued \(ids.count) clip(s) as \(preset.displayName)",
@@ -51,13 +60,19 @@ enum ExportActions {
     }
 
     static func exportFCPXML() {
+        exportFCPXML(clipIDs: AppState.shared.selectedClipIDs.sorted())
+    }
+
+    static func exportFCPXML(clipIDs: [Int64]) {
         Task { @MainActor in
-            let ids = AppState.shared.selectedClipIDs
+            let ids = clipIDs
             guard !ids.isEmpty else {
                 AppState.shared.showToast("No clips selected", level: .warning)
                 return
             }
             guard let url = await saveDestination(suggested: "clipx-clips.fcpxml") else { return }
+            let access = DestinationAccess.open(url)
+            defer { withExtendedLifetime(access) {} }
             do {
                 try FCPXMLWriter.write(clipIDs: Array(ids), to: url)
                 AppState.shared.showToast("FCPXML written", level: .success)
@@ -68,36 +83,31 @@ enum ExportActions {
     }
 
     static func exportObsidian() {
+        exportObsidian(clipIDs: AppState.shared.selectedClipIDs.sorted())
+    }
+
+    static func exportObsidian(clipIDs: [Int64]) {
         Task { @MainActor in
-            let ids = AppState.shared.selectedClipIDs
+            let ids = clipIDs
             guard !ids.isEmpty else {
                 AppState.shared.showToast("No clips selected", level: .warning)
                 return
             }
-            let vaultPath = UserDefaults.standard.string(forKey: "obsidianVaultPath") ?? ""
-            guard !vaultPath.isEmpty else {
-                AppState.shared.showToast("Set the Obsidian vault path in Settings → Bridges", level: .warning)
-                return
-            }
             do {
+                guard let destination = try DestinationAccess.resolve(.obsidianVault) else {
+                    AppState.shared.showToast("Choose an Obsidian vault in Settings → Bridges", level: .warning)
+                    return
+                }
+                defer { withExtendedLifetime(destination) {} }
                 let count = try ObsidianWriter.writeSidecars(
                     clipIDs: Array(ids),
-                    vaultPath: vaultPath
+                    vaultPath: destination.url.path
                 )
                 AppState.shared.showToast("Wrote \(count) Obsidian sidecar(s)", level: .success)
             } catch {
                 AppState.shared.showToast("Obsidian write failed: \(error.localizedDescription)", level: .error)
             }
         }
-    }
-
-    /// The persisted default export destination, if set and still a folder.
-    /// When present, exports skip the picker. (#33)
-    static func rememberedExportDir() -> URL? {
-        guard let path = UserDefaults.standard.string(forKey: "exportDefaultFolder"), !path.isEmpty else { return nil }
-        var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue else { return nil }
-        return URL(fileURLWithPath: path)
     }
 
     @MainActor

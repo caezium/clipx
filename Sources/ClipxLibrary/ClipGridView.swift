@@ -86,10 +86,7 @@ struct ClipGridView: View {
     }
 
     private func openInPlayer(clip: Clip) {
-        if let id = clip.id { appState.selectedClipIDs = [id] }
-        appState.playerSourceID = clip.sourceID
-        appState.playerInMs = clip.inMs
-        appState.playerOutMs = clip.outMs
+        appState.openClip(clip)
     }
 
     @ViewBuilder
@@ -126,55 +123,8 @@ struct ClipGridView: View {
         Button("Delete clip", role: .destructive) { deleteWithUndo(clip: clip) }
     }
 
-    /// Delete a clip but capture its full state first and offer an Undo on the
-    /// toast — marks, tags, rating, notes, and project assignments are all
-    /// restored if the user undoes. (#30)
     private func deleteWithUndo(clip: Clip) {
-        guard let id = clip.id,
-              let markerStore = AppEnvironment.shared.markerStore,
-              let database = AppEnvironment.shared.database else { return }
-        let tagStore = AppEnvironment.shared.tagStore
-        let snapshot = clip
-        let tags = (try? tagStore?.tags(forClip: id).map(\.name)) ?? []
-        let projectIDs: [Int64] = (try? database.read { db in
-            try Int64.fetchAll(db, sql: "SELECT project_id FROM clip_projects WHERE clip_id = ?", arguments: [id])
-        }) ?? []
-        do {
-            try markerStore.deleteClip(id)
-            appState.selectedClipIDs.remove(id)
-            AppState.shared.showToast(
-                "Deleted “\(snapshot.name ?? "clip")”",
-                level: .info,
-                actionLabel: "Undo"
-            ) {
-                restore(snapshot: snapshot, tags: tags, projectIDs: projectIDs)
-            }
-        } catch {
-            AppState.shared.showToast("Delete failed: \(error.localizedDescription)", level: .error)
-        }
-    }
-
-    private func restore(snapshot: Clip, tags: [String], projectIDs: [Int64]) {
-        guard let markerStore = AppEnvironment.shared.markerStore,
-              let database = AppEnvironment.shared.database,
-              let clip = try? markerStore.saveRange(
-                sourceID: snapshot.sourceID, inMs: snapshot.inMs, outMs: snapshot.outMs,
-                name: snapshot.name
-              ),
-              let newID = clip.id else { return }
-        try? database.write { db in
-            try db.execute(
-                sql: "UPDATE clips SET rating=?, color_label=?, mood=?, shot_type=?, camera_move=?, setting=?, notes=? WHERE id=?",
-                arguments: [snapshot.rating, snapshot.colorLabel, snapshot.mood, snapshot.shotType,
-                            snapshot.cameraMove, snapshot.setting, snapshot.notes, newID]
-            )
-            for pid in projectIDs {
-                try db.execute(sql: "INSERT OR IGNORE INTO clip_projects(clip_id, project_id) VALUES(?,?)",
-                               arguments: [newID, pid])
-            }
-        }
-        for t in tags { try? AppEnvironment.shared.tagStore?.addTag(t, toClip: newID) }
-        AppState.shared.libraryRevision &+= 1
+        if let id = clip.id { MarkerActions.deleteClips([id]) }
     }
 
     private func quickExport(clip: Clip, preset: ExportPreset) {
@@ -194,6 +144,7 @@ struct ClipCardView: View {
     let onOpenInPlayer: () -> Void
 
     @State private var thumbImage: NSImage?
+    @State private var thumbnailGeneration = UUID()
     @State private var sourceName: String = ""
     @State private var hovering = false
 
@@ -289,7 +240,11 @@ struct ClipCardView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(clip.name ?? defaultName))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onSelect() }
+        .accessibilityAction(named: "Open clip") { onOpenInPlayer() }
         .onAppear { loadThumb() }
+        .onDisappear { thumbnailGeneration = UUID() }
     }
 
     private var defaultName: String {
@@ -304,16 +259,25 @@ struct ClipCardView: View {
 
     private func loadThumb() {
         guard let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
+        let generation = UUID()
+        thumbnailGeneration = generation
         // Resolve the source identity from a memoized lookup (no per-card SQLite
         // query on scroll), then hand off to the memory-cached, downsampled
         // image loader. Both steps are near-instant once warm.
-        Task.detached(priority: .utility) { [clip] in
-            guard let meta = thumbnailEngine.sourceThumbMeta(for: clip.sourceID) else { return }
-            await MainActor.run { self.sourceName = meta.displayName }
+        let maxPixel = Self.thumbMaxPixel
+        Task { @MainActor in
+            let metadata = await Task.detached(priority: .utility) { [clip] in
+                thumbnailEngine.sourceThumbMeta(for: clip.sourceID)
+            }.value
+            guard !Task.isCancelled, thumbnailGeneration == generation, let meta = metadata else { return }
+            self.sourceName = meta.displayName
             thumbnailEngine.displayThumbnail(
-                forHash: meta.hash, sourcePath: meta.path, maxPixel: Self.thumbMaxPixel
+                forHash: meta.hash, sourcePath: meta.path, maxPixel: maxPixel
             ) { img in
-                self.thumbImage = img   // completion fires on main
+                Task { @MainActor in
+                    guard thumbnailGeneration == generation else { return }
+                    self.thumbImage = img
+                }
             }
         }
     }
@@ -355,6 +319,7 @@ struct SourceCardView: View {
     let source: Source
     var onOpen: (() -> Void)? = nil
     @State private var thumbImage: NSImage?
+    @State private var thumbnailGeneration = UUID()
     @State private var hovering = false
 
     var body: some View {
@@ -419,8 +384,8 @@ struct SourceCardView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
-                if let fps = source.fps {
-                    Text("\(Int(fps))p")
+                if let fps = source.fps, fps.isFinite, fps > 0 {
+                    Text(fps.formatted(.number.precision(.fractionLength(0...2))) + " fps")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -436,11 +401,16 @@ struct SourceCardView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(source.displayName))
         .accessibilityAddTraits(.isButton)
-        .onAppear { loadThumb() }
+        .accessibilityAction { onOpen?() }
+        .task(id: source.hash) { loadThumb() }
+        .onDisappear { thumbnailGeneration = UUID() }
     }
 
     private func loadThumb() {
         guard let thumbnailEngine = AppEnvironment.shared.thumbnailEngine else { return }
+        let generation = UUID()
+        thumbnailGeneration = generation
+        thumbImage = nil
         // Warm hit: paint synchronously so a card scrolling back into view never
         // flickers a placeholder while a task hops to fetch what's already cached.
         if let warm = thumbnailEngine.cachedImage(forHash: source.hash) {
@@ -452,7 +422,10 @@ struct SourceCardView: View {
         thumbnailEngine.displayThumbnail(
             forHash: source.hash, sourcePath: source.path, maxPixel: ClipCardView.thumbMaxPixel
         ) { img in
-            self.thumbImage = img   // completion fires on main
+            Task { @MainActor in
+                guard thumbnailGeneration == generation else { return }
+                self.thumbImage = img
+            }
         }
     }
 

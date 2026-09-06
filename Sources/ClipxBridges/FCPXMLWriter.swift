@@ -1,6 +1,6 @@
 import Foundation
 
-/// Generates a minimal FCPXML 1.13 document referencing the chosen clips so
+/// Generates a minimal FCPXML 1.10 document referencing the chosen clips so
 /// they drop straight onto a Final Cut Pro timeline with in/out preserved.
 ///
 /// The format is intentionally narrow — we emit one `event` containing one
@@ -13,12 +13,15 @@ enum FCPXMLWriter {
     enum FCPError: LocalizedError {
         case missingMetadata(sourcePath: String)
         case noClips
+        case invalidRange
         var errorDescription: String? {
             switch self {
             case .missingMetadata(let path):
-                return "Source \"\(path)\" is missing fps/width/height — re-index the folder or open the file in QuickTime once to populate metadata."
+                return "Source \"\(path)\" is missing valid frame rate, dimensions, or duration. Restore the source file and rescan its folder."
             case .noClips:
                 return "No clips to export."
+            case .invalidRange:
+                return "A clip cannot be represented as a valid frame range."
             }
         }
     }
@@ -28,87 +31,93 @@ enum FCPXMLWriter {
         try xml.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    static func buildDocument(clipIDs: [Int64]) throws -> String {
+    static func buildDocument(clipIDs: [Int64], database suppliedDatabase: Database? = nil) throws -> String {
         guard !clipIDs.isEmpty else { throw FCPError.noClips }
-        guard let database = AppEnvironment.shared.database else {
+        guard let database = suppliedDatabase ?? AppEnvironment.shared.database else {
             throw NSError(domain: "clipx.fcpxml", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Library is not loaded yet."])
         }
+        let items: [(clip: Clip, source: Source)] = try database.read { db in
+            try clipIDs.map { id in
+                guard let clip = try Clip.fetchOne(db, key: id),
+                      let source = try Source.fetchOne(db, key: clip.sourceID) else { throw FCPError.noClips }
+                return (clip, source)
+            }
+        }
+        return try buildDocument(items: items)
+    }
+
+    static func buildDocument(items: [(clip: Clip, source: Source)]) throws -> String {
+        guard let first = items.first else { throw FCPError.noClips }
         var formats: [(id: String, fps: Double, width: Int, height: Int)] = []
-        var assetClips: [String] = []
-        var spineClips: [String] = []
-        var currentOffsetMs: Int64 = 0
-        var formatCounter = 1
-        var assetCounter = 1
+        var assets: [String] = []
+        var spine: [String] = []
+        var sequenceOffsetFrames = 0
+        guard let sequenceFPS = first.source.fps, sequenceFPS.isFinite, sequenceFPS > 0, sequenceFPS < 1000 else {
+            throw FCPError.missingMetadata(sourcePath: first.source.path)
+        }
+        let sequenceRate = rationalForFps(sequenceFPS)
+        let sequenceFramesPerSecond = Double(sequenceRate.0) / Double(sequenceRate.1)
 
-        for clipID in clipIDs {
-            guard let clip: Clip = try database.read({ db in
-                try Clip.fetchOne(db, key: clipID)
-            }) else { continue }
-            guard let source: Source = try database.read({ db in
-                try Source.fetchOne(db, key: clip.sourceID)
-            }) else { continue }
-
-            // Fail loudly rather than fabricate defaults.
-            guard let fps = source.fps,
-                  let width = source.width,
-                  let height = source.height else {
+        for (index, item) in items.enumerated() {
+            let (clip, source) = item
+            guard let fps = source.fps, fps.isFinite, fps > 0, fps < 1000,
+                  let width = source.width, width > 0,
+                  let height = source.height, height > 0,
+                  let durationMs = source.durationMs, durationMs > 0, durationMs < 1_000_000_000_000,
+                  clip.inMs >= 0, clip.outMs > clip.inMs, clip.outMs <= durationMs else {
                 throw FCPError.missingMetadata(sourcePath: source.path)
             }
-
-            // Find or create format
             let formatID: String
             if let existing = formats.first(where: { $0.fps == fps && $0.width == width && $0.height == height }) {
                 formatID = existing.id
             } else {
-                formatID = "r\(formatCounter)"
-                formatCounter += 1
-                formats.append((id: formatID, fps: fps, width: width, height: height))
+                formatID = "r\(formats.count + 1)"
+                formats.append((formatID, fps, width, height))
             }
-
-            let assetID = "a\(assetCounter)"
-            assetCounter += 1
-            let durationFrames = Int((Double(source.durationMs ?? 0) / 1000.0) * fps)
-            let inFrames = Int((Double(clip.inMs) / 1000.0) * fps)
-            let clipFrames = Int((Double(clip.durationMs) / 1000.0) * fps)
-
-            // Build the file:// URL by percent-encoding the *raw* path —
-            // previously the path was HTML-escaped first, so a filename
-            // containing "&" became "%26amp%3B" and FCP couldn't resolve it.
-            let percentEncoded = source.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? source.path
-            let assetURL = "file://" + percentEncoded
-
-            assetClips.append("""
-            <asset id="\(assetID)" name="\(escape(source.displayName))" src="\(escape(assetURL))" start="0s" duration="\(rationalSeconds(frames: durationFrames, fps: fps))" hasVideo="1" hasAudio="1" format="\(formatID)" videoSources="1" audioSources="1" audioChannels="2" audioRate="48000"/>
+            let assetID = "a\(index + 1)"
+            let rate = rationalForFps(fps)
+            let sourceFPS = Double(rate.0) / Double(rate.1)
+            // Stored milliseconds are rounded frame boundaries. Recover each
+            // endpoint independently so 0–33 ms at 30 fps remains one frame.
+            let startFrame = Int((Double(clip.inMs) * sourceFPS / 1000).rounded())
+            let endFrame = Int((Double(clip.outMs) * sourceFPS / 1000).rounded())
+            guard endFrame > startFrame else { throw FCPError.invalidRange }
+            let sourceDurationFrames = max(endFrame, Int((Double(durationMs) * sourceFPS / 1000).rounded()))
+            let clipSeconds = Double(endFrame - startFrame) / sourceFPS
+            let sequenceFrames = max(1, Int((clipSeconds * sequenceFramesPerSecond).rounded()))
+            let assetURL = URL(fileURLWithPath: source.path).absoluteString
+            let channels = source.audioChannels ?? 0
+            let audioAttributes = channels > 0 ? " hasAudio=\"1\" audioSources=\"1\" audioChannels=\"\(channels)\"" : " hasAudio=\"0\""
+            assets.append("""
+            <asset id="\(assetID)" name="\(escape(source.displayName))" start="0s" duration="\(rationalSeconds(frames: sourceDurationFrames, fps: fps))" hasVideo="1" format="\(formatID)" videoSources="1"\(audioAttributes)>
+                <media-rep kind="original-media" src="\(escape(assetURL))"/>
+            </asset>
             """)
-
-            let offsetFrames = Int((Double(currentOffsetMs) / 1000.0) * fps)
-            spineClips.append("""
-            <asset-clip name="\(escape(clip.name ?? source.displayName))" ref="\(assetID)" offset="\(rationalSeconds(frames: offsetFrames, fps: fps))" start="\(rationalSeconds(frames: inFrames, fps: fps))" duration="\(rationalSeconds(frames: clipFrames, fps: fps))" format="\(formatID)"/>
+            spine.append("""
+            <asset-clip name="\(escape(clip.name ?? source.displayName))" ref="\(assetID)" offset="\(rationalSeconds(frames: sequenceOffsetFrames, fps: sequenceFPS))" start="\(rationalSeconds(frames: startFrame, fps: fps))" duration="\(rationalSeconds(frames: sequenceFrames, fps: sequenceFPS))" format="\(formatID)"/>
             """)
-            currentOffsetMs += clip.durationMs
+            let (nextOffset, overflow) = sequenceOffsetFrames.addingReportingOverflow(sequenceFrames)
+            guard !overflow else { throw FCPError.invalidRange }
+            sequenceOffsetFrames = nextOffset
         }
-
-        let formatXML = formats.map { fmt in
-            "<format id=\"\(fmt.id)\" name=\"FFVideoFormat\(fmt.width)x\(fmt.height)p\(Int(fmt.fps.rounded()))\" frameDuration=\"\(frameDurationRational(fps: fmt.fps))\" width=\"\(fmt.width)\" height=\"\(fmt.height)\"/>"
+        let formatXML = formats.map { format in
+            "<format id=\"\(format.id)\" frameDuration=\"\(frameDurationRational(fps: format.fps))\" width=\"\(format.width)\" height=\"\(format.height)\"/>"
         }.joined(separator: "\n            ")
-
-        let primaryFormatID = formats.first?.id ?? "r1"
-
         return """
         <?xml version="1.0" encoding="UTF-8"?>
         <!DOCTYPE fcpxml>
-        <fcpxml version="1.13">
+        <fcpxml version="1.10">
             <resources>
                 \(formatXML)
-                \(assetClips.joined(separator: "\n            "))
+                \(assets.joined(separator: "\n            "))
             </resources>
             <library>
                 <event name="Clipx Export">
                     <project name="Clipx Selection">
-                        <sequence format="\(primaryFormatID)" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+                        <sequence format="r1" duration="\(rationalSeconds(frames: sequenceOffsetFrames, fps: sequenceFPS))" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
                             <spine>
-                                \(spineClips.joined(separator: "\n                            "))
+                                \(spine.joined(separator: "\n                            "))
                             </spine>
                         </sequence>
                     </project>
@@ -126,9 +135,9 @@ enum FCPXMLWriter {
     static func rationalSeconds(frames: Int, fps: Double) -> String {
         let (num, den) = rationalForFps(fps)
         // frames at fps `num/den` per second = frames * den / num seconds.
-        let n = frames * den
-        let d = num
-        return "\(n)/\(d)s"
+        let (n, overflow) = frames.multipliedReportingOverflow(by: den)
+        guard !overflow else { return "0s" }
+        return "\(n)/\(num)s"
     }
 
     static func frameDurationRational(fps: Double) -> String {
@@ -146,12 +155,26 @@ enum FCPXMLWriter {
         case 59.94:  return (60000, 1001)
         case 47.952: return (48000, 1001)
         default:
-            return (Int(fps.rounded()), 1)
+            guard fps.isFinite, fps > 0, fps < 1000 else { return (30, 1) }
+            let numerator = Int((fps * 1_000_000).rounded())
+            let divisor = gcd(numerator, 1_000_000)
+            return (numerator / divisor, 1_000_000 / divisor)
         }
     }
 
+    private static func gcd(_ a: Int, _ b: Int) -> Int {
+        var a = a, b = b
+        while b != 0 { (a, b) = (b, a % b) }
+        return max(1, a)
+    }
+
     private static func escape(_ s: String) -> String {
-        s.replacingOccurrences(of: "&", with: "&amp;")
+        let legal = String(String.UnicodeScalarView(s.unicodeScalars.filter {
+            $0.value == 9 || $0.value == 10 || $0.value == 13 ||
+            (0x20...0xD7FF).contains($0.value) || (0xE000...0xFFFD).contains($0.value) ||
+            (0x10000...0x10FFFF).contains($0.value)
+        }))
+        return legal.replacingOccurrences(of: "&", with: "&amp;")
          .replacingOccurrences(of: "<", with: "&lt;")
          .replacingOccurrences(of: ">", with: "&gt;")
          .replacingOccurrences(of: "\"", with: "&quot;")

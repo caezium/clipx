@@ -15,7 +15,7 @@ final class ImportCoordinator {
             AppState.shared.showToast("Library still loading — try again in a moment", level: .warning)
             return
         }
-        watcher.add(folder: url)
+        guard watcher.add(folder: url) else { return }
         AppState.shared.showToast("Added \(url.lastPathComponent) to library", level: .success)
     }
 }

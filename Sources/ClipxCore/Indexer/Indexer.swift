@@ -16,7 +16,21 @@ actor Indexer {
 
     private let database: Database
     private let thumbnailEngine: ThumbnailEngine
+    private let metadataLoader: (URL) async -> MetadataExtractor.VideoMeta
     private var pendingRevisionBump: Task<Void, Never>?
+    private var deferredFiles: [String: URL] = [:]
+    private var retryTask: Task<Void, Never>?
+    private var inFlightPaths = Set<String>()
+    private var generation = 0
+
+    struct ScanResult {
+        var scanned = 0
+        var indexed = 0
+        var failed = 0
+        var deferred = 0
+        var cancelled = false
+    }
+    private enum IndexOutcome { case indexed, unchanged, deferred, failed }
     /// How many bulk scans are in flight. While > 0 a slow per-file heartbeat
     /// drives the UI instead of one debounced reload per written file.
     private var scanDepth = 0
@@ -32,9 +46,11 @@ actor Indexer {
     /// import. A coarse heartbeat caps that to one reload per interval.
     private static let scanHeartbeatNs: UInt64 = 1_500_000_000   // 1.5s
 
-    init(database: Database, thumbnailEngine: ThumbnailEngine) {
+    init(database: Database, thumbnailEngine: ThumbnailEngine,
+         metadataLoader: @escaping (URL) async -> MetadataExtractor.VideoMeta = MetadataExtractor.extract) {
         self.database = database
         self.thumbnailEngine = thumbnailEngine
+        self.metadataLoader = metadataLoader
     }
 
     /// Scans the given root folder recursively for videos and indexes them.
@@ -42,19 +58,49 @@ actor Indexer {
     /// files were seen and how many were actually new/changed (written) so
     /// callers like "Rescan All" can report a meaningful result.
     @discardableResult
-    func index(folder: URL, progress: ((Int, Int) -> Void)? = nil) async -> (scanned: Int, indexed: Int) {
+    func index(folder: URL, progress: ((Int, Int) -> Void)? = nil) async -> ScanResult {
+        guard !Task.isCancelled else { return ScanResult(cancelled: true) }
         beginScan()
         defer { endScan() }
-        let urls = collectVideoFiles(at: folder)
-        let total = urls.count
-        var processed = 0
-        var indexed = 0
-        for url in urls {
-            if await indexFile(url) { indexed += 1 }
-            processed += 1
-            progress?(processed, total)
+        let scanGeneration = generation
+        guard FileManager.default.isReadableFile(atPath: folder.path) else {
+            markFolderOffline(folder.path)
+            return ScanResult(failed: 1)
         }
-        return (scanned: total, indexed: indexed)
+        let collection = collectVideoFiles(at: folder)
+        guard !Task.isCancelled, scanGeneration == generation else { return ScanResult(cancelled: true) }
+        var result = ScanResult(failed: collection.errors)
+        for url in collection.urls {
+            guard !Task.isCancelled, scanGeneration == generation else {
+                result.cancelled = true
+                return result
+            }
+            let outcome = await performIndex(url)
+            guard !Task.isCancelled, scanGeneration == generation else {
+                result.cancelled = true
+                return result
+            }
+            switch outcome {
+            case .indexed: result.indexed += 1
+            case .failed: result.failed += 1
+            case .deferred: result.deferred += 1
+            case .unchanged: break
+            }
+            result.scanned += 1
+            progress?(result.scanned, collection.urls.count)
+        }
+        guard !Task.isCancelled, scanGeneration == generation else {
+            result.cancelled = true
+            return result
+        }
+        _ = reconcileMissingSources(in: folder.path)
+        do {
+            try database.write { db in
+                try db.execute(sql: "UPDATE folders SET online = 1, last_scan_at = ? WHERE path = ?",
+                    arguments: [Int64(Date().timeIntervalSince1970), folder.path])
+            }
+        } catch { result.failed += 1 }
+        return result
     }
 
     // MARK: - Scan lifecycle (controls UI-refresh cadence)
@@ -99,6 +145,22 @@ actor Indexer {
     /// `false` if the file was unchanged (skipped) or failed.
     @discardableResult
     func indexFile(_ url: URL) async -> Bool {
+        await performIndex(url) == .indexed
+    }
+
+    func processFileEvent(_ url: URL) async -> Bool {
+        let outcome = await performIndex(url)
+        return outcome == .indexed || outcome == .unchanged
+    }
+
+    private func performIndex(_ url: URL) async -> IndexOutcome {
+        guard !Task.isCancelled else { return .deferred }
+        guard inFlightPaths.insert(url.path).inserted else {
+            scheduleRetry(url)
+            return .deferred
+        }
+        defer { inFlightPaths.remove(url.path) }
+        let fileGeneration = generation
         do {
             let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
             let mtime = Int64(((attrs[.modificationDate] as? Date) ?? Date()).timeIntervalSince1970)
@@ -108,7 +170,8 @@ actor Indexer {
             // would be captured from truncated bytes and never corrected. (#20)
             let now = Int64(Date().timeIntervalSince1970)
             guard FileStability.isStable(mtimeEpoch: mtime, now: now) else {
-                return false
+                scheduleRetry(url)
+                return .deferred
             }
 
             // Skip unchanged. Two paths:
@@ -127,20 +190,29 @@ actor Indexer {
             if let existing, existing.mtime == mtime {
                 if existing.size == nil || existing.size == size {
                     // Backfill size for pre-v2 rows so we converge.
-                    if existing.size == nil, let existingID = existing.id {
-                        try? database.write { db in
+                    if existing.size == nil || !existing.online, let existingID = existing.id {
+                        try database.write { db in
                             try db.execute(
-                                sql: "UPDATE sources SET size = ? WHERE id = ?",
+                                sql: "UPDATE sources SET size = ?, online = 1 WHERE id = ?",
                                 arguments: [size, existingID]
                             )
                         }
+                        scheduleRevisionBump()
+                        return .indexed
                     }
-                    return false
+                    return .unchanged
                 }
             }
 
             let hash = try FileHasher.quickHash(url: url)
-            let meta = await MetadataExtractor.extract(url: url)
+            let meta = await metadataLoader(url)
+            guard !Task.isCancelled, fileGeneration == generation else { return .deferred }
+            let latest = try FileManager.default.attributesOfItem(atPath: url.path)
+            guard (latest[.size] as? Int64) == size,
+                  (latest[.modificationDate] as? Date) == (attrs[.modificationDate] as? Date) else {
+                scheduleRetry(url)
+                return .deferred
+            }
             let importedAt = existing?.importedAt ?? Int64(Date().timeIntervalSince1970)
 
             // Atomic upsert. Without ON CONFLICT, a concurrent FSEvents fire
@@ -198,11 +270,47 @@ actor Indexer {
             }
 
             scheduleRevisionBump()
-            return true
+            return .indexed
         } catch {
+            if !FileManager.default.fileExists(atPath: url.path) { markPathOffline(url.path) }
             ClipxLog.indexer.error("indexFile failed for \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
-            return false
+            return .failed
         }
+    }
+
+    /// A single retry loop handles any number of files still being copied.
+    /// No new filesystem event is required once the last write settles.
+    private func scheduleRetry(_ url: URL) {
+        deferredFiles[url.path] = url
+        guard retryTask == nil else { return }
+        retryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 3_200_000_000) }
+                catch { return }
+                guard let self else { return }
+                if !(await self.retryDeferredFiles()) { return }
+            }
+        }
+    }
+
+    private func retryDeferredFiles() async -> Bool {
+        let files = Array(deferredFiles.values)
+        deferredFiles.removeAll()
+        for url in files {
+            guard !Task.isCancelled else { return false }
+            _ = await performIndex(url)
+        }
+        if deferredFiles.isEmpty { retryTask = nil; return false }
+        return true
+    }
+
+    func cancelPendingWork() {
+        generation &+= 1
+        deferredFiles.removeAll()
+        retryTask?.cancel()
+        retryTask = nil
+        pendingRevisionBump?.cancel()
+        pendingRevisionBump = nil
     }
 
     private func updateThumbPath(sourceID: Int64) async {
@@ -252,21 +360,29 @@ actor Indexer {
         pendingRevisionBump = nil
     }
 
-    nonisolated private func collectVideoFiles(at root: URL) -> [URL] {
+    nonisolated private func collectVideoFiles(at root: URL) -> (urls: [URL], errors: Int) {
         var result: [URL] = []
+        var errors = 0
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return [] }
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
+            errorHandler: { _, _ in errors += 1; return true }
+        ) else { return ([], 1) }
+        var relativeComponents: [String] = []
         for case let url as URL in enumerator {
+            relativeComponents = Array(relativeComponents.prefix(max(0, enumerator.level - 1)))
+            relativeComponents.append(url.lastPathComponent)
             guard Indexer.videoExtensions.contains(url.pathExtension.lowercased()) else { continue }
             guard let isFile = try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile,
                   isFile else { continue }
-            result.append(url)
+            // Foundation enumerates canonical paths (/private/var on macOS),
+            // but bookmarks and existing rows can retain an alias (/var).
+            // Keep the chosen root's spelling so a rescan updates its rows.
+            result.append(root.appendingPathComponent(relativeComponents.joined(separator: "/")))
         }
-        return result
+        return (result, errors)
     }
 
     /// One-time pass: derive each source's recording date from its filename
@@ -304,9 +420,14 @@ actor Indexer {
     /// offline, so renamed / moved / deleted files stop showing as available.
     /// Returns the number of rows changed. (#21)
     @discardableResult
-    func reconcileMissingSources() -> Int {
+    func reconcileMissingSources(in folder: String? = nil) -> Int {
         let sources: [Source] = (try? database.read { db in
-            try Source.fetchAll(db, sql: "SELECT * FROM sources WHERE online = 1")
+            if let folder {
+                let prefix = folderDescendantPrefix(folder)
+                return try Source.fetchAll(db, sql: "SELECT * FROM sources WHERE online = 1 AND substr(path, 1, length(?)) = ? COLLATE BINARY",
+                    arguments: [prefix, prefix])
+            }
+            return try Source.fetchAll(db, sql: "SELECT * FROM sources WHERE online = 1")
         }) ?? []
         var changed = 0
         for src in sources where !FileManager.default.fileExists(atPath: src.path) {
@@ -332,24 +453,19 @@ actor Indexer {
     /// Marks all sources under the given folder as offline (drive unplugged).
     /// Escapes `_`/`%` so a folder like `My_Footage` doesn't match neighbours.
     func markFolderOffline(_ path: String) {
-        let escaped = sqlLikeEscape(path)
+        let prefix = folderDescendantPrefix(path)
         try? database.write { db in
+            try db.execute(sql: "UPDATE folders SET online = 0 WHERE path = ? COLLATE BINARY OR substr(path, 1, length(?)) = ? COLLATE BINARY",
+                           arguments: [path, prefix, prefix])
             try db.execute(
-                sql: "UPDATE sources SET online = 0 WHERE path LIKE ? ESCAPE '\\'",
-                arguments: ["\(escaped)/%"]
+                sql: "UPDATE sources SET online = 0 WHERE substr(path, 1, length(?)) = ? COLLATE BINARY",
+                arguments: [prefix, prefix]
             )
         }
         scheduleRevisionBump()
     }
 
-    func markFolderOnline(_ path: String) {
-        let escaped = sqlLikeEscape(path)
-        try? database.write { db in
-            try db.execute(
-                sql: "UPDATE sources SET online = 1 WHERE path LIKE ? ESCAPE '\\'",
-                arguments: ["\(escaped)/%"]
-            )
-        }
-        scheduleRevisionBump()
+    func markFolderOnline(_ path: String) async {
+        _ = await index(folder: URL(fileURLWithPath: path, isDirectory: true))
     }
 }

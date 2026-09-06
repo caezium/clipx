@@ -12,9 +12,11 @@ import GRDB
 /// concurrent readers safe. Tests still use an in-memory `DatabaseQueue`.
 final class Database {
     let dbWriter: any DatabaseWriter
+    let recoveryMessage: String?
 
-    private init(writer: any DatabaseWriter) {
+    private init(writer: any DatabaseWriter, recoveryMessage: String? = nil) {
         self.dbWriter = writer
+        self.recoveryMessage = recoveryMessage
     }
 
     /// Opens (or creates) the app database at the canonical Application Support
@@ -26,24 +28,79 @@ final class Database {
         return db
     }
 
-    /// Opens + migrates the database at `url`, and on failure (corruption /
-    /// failed integrity check) preserves the bad file aside and starts fresh —
-    /// rather than crashing every launch with no recourse but data loss. (#24)
+    /// Only confirmed corruption permits recovery. Busy, permission and
+    /// migration failures leave the original library in place for a retry.
     static func openOrRecover(at url: URL) throws -> Database {
         do {
             return try openMigrating(at: url)
         } catch {
-            ClipxLog.app.error("DB open failed, recovering: \(String(describing: error), privacy: .public)")
-            // Prefer restoring the most recent backup over an empty library.
-            let backup = url.deletingLastPathComponent().appendingPathComponent("clipx.backup.sqlite")
-            sidelineCorruptFile(at: url)
-            if FileManager.default.fileExists(atPath: backup.path),
-               (try? FileManager.default.copyItem(at: backup, to: url)) != nil,
-               let restored = try? openMigrating(at: url) {
-                return restored
+            guard isCorruption(error) else { throw error }
+            ClipxLog.app.error("DB corruption confirmed: \(String(describing: error), privacy: .public)")
+
+            let fm = FileManager.default
+            let directory = url.deletingLastPathComponent()
+            let backup = directory.appendingPathComponent("clipx.backup.sqlite")
+            let candidate = directory.appendingPathComponent(".recovery-\(UUID().uuidString).sqlite")
+            defer { removeDatabaseFiles(at: candidate) }
+            var restoredBackup = false
+            var rejectedBackup = false
+            if fm.fileExists(atPath: backup.path) {
+                try fm.copyItem(at: backup, to: candidate)
+                do {
+                    let validated = try openMigrating(at: candidate)
+                    try validated.closeForReplacement()
+                    restoredBackup = true
+                } catch {
+                    // Preserve the failed backup as evidence. A corrupt backup
+                    // must never be installed at the canonical path.
+                    guard isCorruption(error) else { throw error }
+                    rejectedBackup = true
+                    removeDatabaseFiles(at: candidate)
+                }
             }
-            return try openMigrating(at: url)   // last resort: fresh DB
+            if !restoredBackup {
+                let fresh = try openMigrating(at: candidate)
+                try fresh.closeForReplacement()
+            }
+
+            if rejectedBackup { _ = try sidelineCorruptFile(at: backup) }
+
+            let aside = try sidelineCorruptFile(at: url)
+            do {
+                try fm.moveItem(at: candidate, to: url)
+            } catch {
+                // If installation fails, put the untouched original back.
+                try? moveDatabaseFiles(from: aside, to: url)
+                throw error
+            }
+            let recovered = try openMigrating(at: url)
+            let outcome = restoredBackup ? "restored from the last backup" : "recreated because no usable backup was available"
+            return Database(writer: recovered.dbWriter, recoveryMessage:
+                "Your library was \(outcome). The damaged database is preserved at \(aside.path).")
         }
+    }
+
+    private struct IntegrityFailure: LocalizedError {
+        let details: String
+        var errorDescription: String? { "Database integrity check failed: \(details)" }
+    }
+
+    /// DatabasePool keeps WAL files for reuse; closing alone does not promise
+    /// the main file contains the newest migrations before a filesystem move.
+    private func closeForReplacement() throws {
+        try dbWriter.writeWithoutTransaction { db in
+            let row = try Row.fetchOne(db, sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+            guard let row, (row[0] as Int) == 0 else {
+                throw DatabaseError(resultCode: .SQLITE_BUSY, message: "Could not checkpoint the recovery database")
+            }
+        }
+        try dbWriter.close()
+    }
+
+    static func isCorruption(_ error: Error) -> Bool {
+        if error is IntegrityFailure { return true }
+        guard let sqlite = error as? DatabaseError else { return false }
+        return sqlite.resultCode == .SQLITE_CORRUPT || sqlite.resultCode == .SQLITE_NOTADB
     }
 
     private static func openMigrating(at url: URL) throws -> Database {
@@ -63,28 +120,49 @@ final class Database {
         // writer, so reads run concurrently with writes under WAL.
         let pool = try DatabasePool(path: url.path, configuration: config)
         // Catch corruption before migrating into a damaged page set. (#24)
-        try pool.read { db in
-            let result = try String.fetchOne(db, sql: "PRAGMA integrity_check")
-            if result != "ok" {
-                throw NSError(domain: "clipx.db", code: -100,
-                              userInfo: [NSLocalizedDescriptionKey: "integrity_check: \(result ?? "nil")"])
+        do {
+            try pool.read { db in
+                let results = try String.fetchAll(db, sql: "PRAGMA integrity_check")
+                guard results == ["ok"] else {
+                    throw IntegrityFailure(details: results.joined(separator: "; "))
+                }
             }
+            try Migrations.register().migrate(pool)
+            return Database(writer: pool)
+        } catch {
+            try? pool.close()
+            throw error
         }
-        try Migrations.register().migrate(pool)
-        return Database(writer: pool)
     }
 
     /// Move a corrupt DB (and its WAL/SHM siblings) aside, timestamped, so the
     /// user's data is preserved for manual recovery rather than destroyed. (#24)
-    private static func sidelineCorruptFile(at url: URL) {
+    private static func sidelineCorruptFile(at url: URL) throws -> URL {
+        let aside = url.deletingLastPathComponent()
+            .appendingPathComponent("\(url.deletingPathExtension().lastPathComponent).corrupt-\(UUID().uuidString).sqlite")
+        try moveDatabaseFiles(from: url, to: aside)
+        return aside
+    }
+
+    private static func moveDatabaseFiles(from source: URL, to destination: URL) throws {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: url.path) else { return }
-        let stamp = Int(Date().timeIntervalSince1970)
-        let asidePath = url.deletingLastPathComponent()
-            .appendingPathComponent("clipx.corrupt-\(stamp).sqlite").path
+        var moved: [String] = []
+        do {
+            for suffix in ["", "-wal", "-shm"] where fm.fileExists(atPath: source.path + suffix) {
+                try fm.moveItem(atPath: source.path + suffix, toPath: destination.path + suffix)
+                moved.append(suffix)
+            }
+        } catch {
+            for suffix in moved.reversed() {
+                try? fm.moveItem(atPath: destination.path + suffix, toPath: source.path + suffix)
+            }
+            throw error
+        }
+    }
+
+    private static func removeDatabaseFiles(at url: URL) {
         for suffix in ["", "-wal", "-shm"] {
-            let src = url.path + suffix
-            if fm.fileExists(atPath: src) { try? fm.moveItem(atPath: src, toPath: asidePath + suffix) }
+            try? FileManager.default.removeItem(atPath: url.path + suffix)
         }
     }
 
@@ -92,9 +170,17 @@ final class Database {
     /// a recent restore point. (#24)
     func writeBackup(of url: URL) {
         let dest = url.deletingLastPathComponent().appendingPathComponent("clipx.backup.sqlite")
+        let scratch = url.deletingLastPathComponent().appendingPathComponent(".backup-\(UUID().uuidString).sqlite")
+        defer { Self.removeDatabaseFiles(at: scratch) }
         do {
-            let target = try DatabaseQueue(path: dest.path)
+            let target = try DatabaseQueue(path: scratch.path)
             try dbWriter.backup(to: target)
+            try target.close()
+            if FileManager.default.fileExists(atPath: dest.path) {
+                _ = try FileManager.default.replaceItemAt(dest, withItemAt: scratch)
+            } else {
+                try FileManager.default.moveItem(at: scratch, to: dest)
+            }
         } catch {
             ClipxLog.app.debug("DB backup skipped: \(String(describing: error), privacy: .public)")
         }
@@ -110,6 +196,11 @@ final class Database {
 
     static func defaultDatabaseURL() throws -> URL {
         let fm = FileManager.default
+        // Explicit opt-in keeps verification fixtures out of the user's library.
+        if let directory = AppPreferences.dataDirectory {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            return directory.appendingPathComponent("clipx.sqlite")
+        }
         let appSupport = try fm.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -152,4 +243,10 @@ public func sqlLikeEscape(_ s: String) -> String {
         }
     }
     return out
+}
+
+/// Folder membership uses a binary prefix comparison: LIKE would also match
+/// a different-cased neighbour on a case-sensitive volume.
+func folderDescendantPrefix(_ path: String) -> String {
+    path.hasSuffix("/") ? path : path + "/"
 }

@@ -1,0 +1,117 @@
+Direct final run; 29 states.
+
+01-calendar.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+02-grid.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+03-list.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+04-light-table-inspector-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+05-filtered-clip-inspector.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+06-no-results.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+07-project-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+08-multiple-selection.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+09-player.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+10-player-inspector-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+11-capture-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+12-onboarding-welcome.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+13-onboarding-ready.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+14-settings.txt
+Requested 680.0 × 600.0; hosted 680.0 × 600.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+15-remote-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+16-export-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+17-sidebar.txt
+Requested 240.0 × 700.0; hosted 240.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+18-session-rail.txt
+Requested 240.0 × 700.0; hosted 240.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+19-onboarding-folder.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+20-onboarding-vault.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+21-label-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+22-library-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+23-bridge-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+24-hotkey-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+25-update-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+26-command-palette.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+27-shortcuts.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+28-missing-source.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window
+
+29-export-queue.txt
+Requested 480.0 × 320.0; hosted 480.0 × 320.0.
+AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent. Window capture failed: could not create image from window

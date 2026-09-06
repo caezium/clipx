@@ -7,6 +7,7 @@ import Foundation
 /// stopped changing. (#20)
 enum FileStability {
     static func isStable(mtimeEpoch: Int64, now: Int64, minAgeSeconds: Int64 = 3) -> Bool {
-        now - mtimeEpoch >= minAgeSeconds
+        let (age, overflow) = now.subtractingReportingOverflow(mtimeEpoch)
+        return !overflow && age >= max(0, minAgeSeconds)
     }
 }

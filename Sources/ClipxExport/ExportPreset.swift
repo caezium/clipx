@@ -1,7 +1,7 @@
 import Foundation
 
 /// Built-in export presets for the platforms creators ship to.
-struct ExportPreset: Identifiable, Hashable {
+struct ExportPreset: Identifiable, Hashable, Sendable {
     let id: String
     let displayName: String
     let width: Int
@@ -17,8 +17,8 @@ struct ExportPreset: Identifiable, Hashable {
     /// bitrate). MAS build hides or grays these out.
     let requiresFFmpeg: Bool
 
-    enum VideoCodec: String { case h264, hevc, prores }
-    enum ColorPrimaries: String { case bt709, bt2020 }
+    enum VideoCodec: String, Sendable { case h264, hevc, prores }
+    enum ColorPrimaries: String, Sendable { case bt709, bt2020 }
 
     static let reels = ExportPreset(
         id: "reels",

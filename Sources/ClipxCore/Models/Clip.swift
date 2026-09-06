@@ -82,7 +82,10 @@ struct Clip: Identifiable, Codable, FetchableRecord, MutablePersistableRecord {
         id = inserted.rowID
     }
 
-    var durationMs: Int64 { max(0, outMs - inMs) }
+    var durationMs: Int64 {
+        guard inMs >= 0, outMs > inMs else { return 0 }
+        return outMs - inMs
+    }
 
     /// The clip's purpose keys, parsed from the CSV `purpose` field.
     var purposeList: [String] {

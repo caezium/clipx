@@ -3,6 +3,26 @@ import Foundation
 /// Static action handlers wired to menu items and global hotkeys. Bridges the
 /// menu/keyboard layer to the `PlayerController` / `MarkerStore` instances.
 enum MarkerActions {
+    @MainActor
+    static func deleteClips(_ ids: Set<Int64>) {
+        guard !ids.isEmpty, let store = AppEnvironment.shared.markerStore else { return }
+        do {
+            let snapshots = try store.deleteClips(ids)
+            AppState.shared.selectedClipIDs.subtract(ids)
+            AppState.shared.showToast("Deleted \(snapshots.count) clip\(snapshots.count == 1 ? "" : "s")",
+                                      level: .info, actionLabel: "Undo") {
+                do {
+                    try store.restore(snapshots)
+                    AppState.shared.selectedClipIDs = Set(snapshots.compactMap { $0.clip.id })
+                } catch {
+                    AppState.shared.showToast("Couldn't restore clips: \(error.localizedDescription)", level: .error)
+                }
+            }
+        } catch {
+            AppState.shared.showToast("Couldn't delete clips: \(error.localizedDescription)", level: .error)
+        }
+    }
+
     static func markIn() {
         Task { @MainActor in
             NotificationCenter.default.post(name: .markIn, object: nil)
@@ -29,10 +49,12 @@ enum MarkerActions {
                 AppState.shared.showToast("Select a clip first to rate", level: .info)
                 return
             }
-            for id in ids {
-                try? markerStore.updateRating(id, rating: value)
+            do {
+                for id in ids { try markerStore.updateRating(id, rating: value) }
+                AppState.shared.showToast("Rated \(ids.count) clip(s) ★\(value)", level: .success)
+            } catch {
+                AppState.shared.showToast("Couldn't rate clips: \(error.localizedDescription)", level: .error)
             }
-            AppState.shared.showToast("Rated \(ids.count) clip(s) ★\(value)", level: .success)
         }
     }
 }

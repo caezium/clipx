@@ -63,7 +63,7 @@ final class ThumbnailEngine {
         // Bound the cache so a huge library can't grow it without limit; NSCache
         // also drops entries automatically when the system needs memory.
         imageCache.countLimit = 600
-        let caches = (try? FileManager.default.url(
+        let caches = AppPreferences.cacheDirectory ?? (try? FileManager.default.url(
             for: .cachesDirectory,
             in: .userDomainMask,
             appropriateFor: nil,

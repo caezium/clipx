@@ -29,6 +29,7 @@ final class AppEnvironment: @unchecked Sendable {
     private(set) var httpServer: HTTPServer?
 
     private var didBootstrap = false
+    private var bootstrapTask: Task<Void, Never>?
 
     private init() {}
 
@@ -38,8 +39,14 @@ final class AppEnvironment: @unchecked Sendable {
         didBootstrap = true
         ClipxLog.app.info("bootstrap: starting")
 
+        bootstrapTask = Task { @MainActor in
         do {
-            let db = try Database.open()
+            // Integrity checks, migrations and the rolling backup can take
+            // seconds on a large library. Keep launch and window drawing live.
+            let db = try await Task.detached(priority: .userInitiated) {
+                try Database.open()
+            }.value
+            guard !Task.isCancelled else { return }
             let bookmarks = BookmarkStore(database: db)
             let markers = MarkerStore(database: db)
             let tags = TagStore(database: db)
@@ -64,6 +71,9 @@ final class AppEnvironment: @unchecked Sendable {
             ClipxLog.app.info("bootstrap: DB + services initialized")
             AppState.shared.bootstrapped = true
             AppState.shared.libraryRevision &+= 1
+            if let message = db.recoveryMessage {
+                AppState.shared.showToast(message, level: .warning)
+            }
 
             watch.resumeAll()
 
@@ -82,10 +92,10 @@ final class AppEnvironment: @unchecked Sendable {
             // indexed without a usable created_at (DJI / action-cam files whose
             // filesystem date is the copy date, not the shoot date). Fixes the
             // calendar's "No recording date" bucket for the existing library.
-            if !UserDefaults.standard.bool(forKey: "filenameDateBackfillV1") {
+            if !AppPreferences.defaults.bool(forKey: "filenameDateBackfillV1") {
                 Task.detached {
                     let n = await idx.backfillFilenameDates()
-                    UserDefaults.standard.set(true, forKey: "filenameDateBackfillV1")
+                    AppPreferences.defaults.set(true, forKey: "filenameDateBackfillV1")
                     if n > 0 { ClipxLog.app.info("filename date backfill updated \(n) sources") }
                 }
             }
@@ -99,7 +109,7 @@ final class AppEnvironment: @unchecked Sendable {
             // Start the embedded HTTP server (phone/laptop web UI) if the
             // user has it enabled. Default is OFF — turning it on is a
             // deliberate user choice in Settings.
-            if UserDefaults.standard.bool(forKey: "webServerEnabled") {
+            if AppPreferences.defaults.bool(forKey: "webServerEnabled") {
                 startWebServer()
             }
 
@@ -120,14 +130,20 @@ final class AppEnvironment: @unchecked Sendable {
             ClipxLog.app.error("bootstrap FAILED: \(String(describing: error), privacy: .public)")
             AppState.shared.bootstrapError = error.localizedDescription
         }
+        bootstrapTask = nil
+        }
     }
 
     @MainActor
     func shutdown() {
+        bootstrapTask?.cancel()
+        bootstrapTask = nil
         watcher?.stopAll()
         exportPipeline?.cancelAll()
         httpServer?.stop()
         httpServer = nil
+        let proxy = webProxyEngine
+        Task { await proxy?.shutdown() }
     }
 
     /// Spins up the embedded web server. Called at bootstrap (when the
@@ -136,19 +152,27 @@ final class AppEnvironment: @unchecked Sendable {
     @MainActor
     func startWebServer() {
         guard httpServer == nil else { return }
-        let port = UInt16(UserDefaults.standard.integer(forKey: "webServerPort"))
-        let server = HTTPServer(port: port == 0 ? 7878 : port)
+        let port = Self.validatedWebServerPort(AppPreferences.defaults.integer(forKey: "webServerPort"))
+        let server = HTTPServer(port: port)
+        server.onFailure = { [weak self, weak server] error in
+            guard let self, let server, self.httpServer === server else { return }
+            self.httpServer = nil
+            AppPreferences.defaults.set(false, forKey: "webServerEnabled")
+            AppState.shared.showToast("Remote could not start: \(error.localizedDescription). Choose another port or try again.", level: .error)
+        }
+        server.onReady = { [weak self, weak server] in
+            guard let self, let server, self.httpServer === server else { return }
+            AppState.shared.showToast(
+                "Remote is ready at http://\(Self.preferredLocalAddress() ?? "localhost"):\(server.port)", level: .info)
+        }
         do {
             try server.start { request in
                 await ClipxRoutes.handle(request)
             }
             httpServer = server
             ClipxLog.app.info("web server started on port \(server.port)")
-            AppState.shared.showToast(
-                "Web UI live at http://\(Self.preferredLocalAddress() ?? "<this mac>"):\(server.port)",
-                level: .info
-            )
         } catch {
+            AppPreferences.defaults.set(false, forKey: "webServerEnabled")
             ClipxLog.app.error("web server failed to start: \(String(describing: error), privacy: .public)")
             AppState.shared.showToast("Web server failed: \(error.localizedDescription)", level: .error)
         }
@@ -158,6 +182,16 @@ final class AppEnvironment: @unchecked Sendable {
     func stopWebServer() {
         httpServer?.stop()
         httpServer = nil
+        let proxy = webProxyEngine
+        // A rapid disable/enable must not let the old engine's asynchronous
+        // shutdown cancel proxy work submitted by the new server.
+        webProxyEngine = WebProxyEngine()
+        Task { await proxy?.shutdown() }
+    }
+
+    static func validatedWebServerPort(_ value: Int) -> UInt16 {
+        guard (1024...65535).contains(value) else { return 7878 }
+        return UInt16(value)
     }
 
     /// Best-effort: returns the first non-loopback IPv4 address the Mac is

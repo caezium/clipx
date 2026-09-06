@@ -7,6 +7,39 @@ struct HTTPResponse {
     var status: Int
     var headers: [String: String]
     var body: Data
+    var fileBody: FileBody?
+
+    /// Owns an open descriptor until sending finishes. Cache eviction can unlink
+    /// its path without interrupting an already accepted video response.
+    final class FileBody: @unchecked Sendable {
+        private let handle: FileHandle
+        private let lock = NSLock()
+        let length: Int64
+        private var unreadBytes: Int64
+        var remaining: Int64 {
+            lock.lock()
+            defer { lock.unlock() }
+            return unreadBytes
+        }
+        init(url: URL, offset: Int64, length: Int64) throws {
+            let handle = try FileHandle(forReadingFrom: url)
+            do { try handle.seek(toOffset: UInt64(offset)) }
+            catch { try? handle.close(); throw error }
+            self.handle = handle
+            self.length = length
+            self.unreadBytes = length
+        }
+        deinit { try? handle.close() }
+        func readNextChunk() throws -> Data {
+            lock.lock()
+            defer { lock.unlock() }
+            guard unreadBytes > 0 else { return Data() }
+            let data = try handle.read(upToCount: Int(min(unreadBytes, 65_536))) ?? Data()
+            guard !data.isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+            unreadBytes -= Int64(data.count)
+            return data
+        }
+    }
 
     init(status: Int = 200, headers: [String: String] = [:], body: Data = Data()) {
         self.status = status
@@ -63,10 +96,10 @@ struct HTTPResponse {
     }
 
     /// Serializes the response back to wire bytes.
-    func serialize() -> Data {
+    func serializeHead() -> Data {
         var head = "HTTP/1.1 \(status) \(Self.reason(for: status))\r\n"
         var mergedHeaders = headers
-        mergedHeaders["Content-Length"] = "\(body.count)"
+        mergedHeaders["Content-Length"] = "\(fileBody?.length ?? Int64(body.count))"
         mergedHeaders["Connection"] = "close"
         // The web frontend is served from this same origin, so it needs no CORS
         // grant. A wildcard `Access-Control-Allow-Origin: *` would instead let
@@ -76,7 +109,11 @@ struct HTTPResponse {
             head += "\(name): \(value)\r\n"
         }
         head += "\r\n"
-        var data = Data(head.utf8)
+        return Data(head.utf8)
+    }
+
+    func serialize() -> Data {
+        var data = serializeHead()
         data.append(body)
         return data
     }
@@ -85,14 +122,19 @@ struct HTTPResponse {
         switch status {
         case 200: return "OK"
         case 201: return "Created"
+        case 202: return "Accepted"
         case 204: return "No Content"
+        case 206: return "Partial Content"
         case 400: return "Bad Request"
         case 401: return "Unauthorized"
         case 403: return "Forbidden"
         case 404: return "Not Found"
+        case 409: return "Conflict"
+        case 413: return "Content Too Large"
         case 416: return "Range Not Satisfiable"
         case 429: return "Too Many Requests"
         case 500: return "Internal Server Error"
+        case 503: return "Service Unavailable"
         default:  return "OK"
         }
     }

@@ -19,15 +19,18 @@ struct NewProjectSheet: View {
                     }
                 }
                 HStack {
-                    TextField("Obsidian note (optional)", text: $obsidianNote)
-                    Button("…") {
+                    TextField("Markdown note (optional)", text: $obsidianNote)
+                    Button("Choose…") {
                         Task { @MainActor in
-                            if let path = await FolderPicker.pickFolder() {
-                                obsidianNote = path
+                            if let url = await FolderPicker.pickMarkdownNoteURL() {
+                                obsidianNote = url.path
                             }
                         }
                     }
+                    .accessibilityLabel("Choose related Markdown note")
                 }
+                Text("Keep an existing note's location as a reference for this project.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let error {
                 Text(error).foregroundStyle(.red).font(.caption)

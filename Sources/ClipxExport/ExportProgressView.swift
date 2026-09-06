@@ -18,7 +18,7 @@ struct ExportProgressView: View {
                 Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
             if let pipeline {
-                content(for: pipeline)
+                ExportQueueContent(pipeline: pipeline)
             } else {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle").font(.system(size: 36)).foregroundStyle(.secondary)
@@ -34,9 +34,12 @@ struct ExportProgressView: View {
         .onAppear { pipeline = AppEnvironment.shared.exportPipeline }
     }
 
-    @ViewBuilder
-    private func content(for pipeline: ExportPipeline) -> some View {
-        // Wrap in a Group so SwiftUI knows we're observing pipeline.
+}
+
+private struct ExportQueueContent: View {
+    @ObservedObject var pipeline: ExportPipeline
+
+    var body: some View {
         Group {
             if pipeline.currentJob == nil && pipeline.jobs.isEmpty {
                 VStack(spacing: 8) {
@@ -56,15 +59,12 @@ struct ExportProgressView: View {
                 .frame(minHeight: 200)
                 HStack {
                     Spacer()
-                    Button("Cancel All") { pipeline.cancelAll() }
-                        .foregroundStyle(.red)
+                    Button(pipeline.isCancelling ? "Cancelling…" : "Cancel All", role: .destructive) {
+                        pipeline.cancelAll()
+                    }
+                    .disabled(pipeline.isCancelling)
                 }
             }
-        }
-        // .onReceive forces a re-render when the pipeline publishes — the
-        // pipeline is reference type so the @State var doesn't auto-observe.
-        .onReceive(pipeline.objectWillChange) { _ in
-            // Triggers a body re-eval.
         }
     }
 
@@ -80,6 +80,7 @@ struct ExportProgressView: View {
             if let p = progress {
                 VStack(alignment: .trailing, spacing: 2) {
                     ProgressView(value: max(0, min(1, p))).frame(width: 110)
+                        .accessibilityLabel("Export progress for clip \(job.clipID)")
                     Text("\(Int((max(0, min(1, p))) * 100))%").font(.caption2).foregroundStyle(.secondary)
                 }
             } else {

@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 /// The top-level layout: sidebar | library | inspector.
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var showOnboarding = !UserDefaults.standard.bool(forKey: "didCompleteOnboarding")
+    @State private var showOnboarding = !AppPreferences.defaults.bool(forKey: "didCompleteOnboarding")
     @State private var dropTargeted = false
     /// Drives the native search field's active state so ⌘F can focus it
     /// (macOS 14-compatible; `.searchFocused` is 15+).
@@ -20,10 +20,10 @@ struct RootView: View {
     /// visible change. `.id` rebuilds it per clip so it reloads on selection.
     private var inspectorPanel: some View {
         Group {
-            if let clipID = appState.selectedClipIDs.first {
+            if appState.selectedClipIDs.count == 1, let clipID = appState.selectedClipIDs.first {
                 InspectorView(clipID: clipID).id(clipID)
             } else {
-                InspectorEmptyState()
+                InspectorEmptyState(clipIDs: appState.selectedClipIDs)
             }
         }
         .frame(maxHeight: .infinity)
@@ -141,7 +141,7 @@ struct RootView: View {
         }
         .sheet(isPresented: $showOnboarding) {
             OnboardingView(onComplete: {
-                UserDefaults.standard.set(true, forKey: "didCompleteOnboarding")
+                AppPreferences.defaults.set(true, forKey: "didCompleteOnboarding")
                 showOnboarding = false
             })
         }
@@ -155,7 +155,10 @@ struct RootView: View {
             presenting: appState.bootstrapError
         ) { _ in
             Button("Quit", role: .destructive) { NSApp.terminate(nil) }
-            Button("Continue Anyway", role: .cancel) {}
+            Button("Try Again") {
+                appState.bootstrapError = nil
+                AppEnvironment.shared.bootstrap()
+            }
         } message: { error in
             Text(error)
         }
@@ -201,23 +204,25 @@ struct RootView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Picker("", selection: $appState.sortOption) {
+            Picker("Sort library", selection: $appState.sortOption) {
                 ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
                     Text(opt.label).tag(opt)
                 }
             }
             .pickerStyle(.menu)
+            .accessibilityIdentifier("library.sort")
             .labelsHidden()
             .tint(Theme.textSecondary)
             .frame(width: 140)
 
-            Picker("", selection: $appState.viewMode) {
-                Image(systemName: "calendar").tag(LibraryViewMode.calendar)
-                Image(systemName: "square.grid.2x2").tag(LibraryViewMode.grid)
-                Image(systemName: "list.bullet").tag(LibraryViewMode.list)
-                Image(systemName: "tray.full").tag(LibraryViewMode.lightTable)
+            Picker("Library view", selection: $appState.viewMode) {
+                Image(systemName: "calendar").accessibilityLabel("Calendar").tag(LibraryViewMode.calendar)
+                Image(systemName: "square.grid.2x2").accessibilityLabel("Grid").tag(LibraryViewMode.grid)
+                Image(systemName: "list.bullet").accessibilityLabel("List").tag(LibraryViewMode.list)
+                Image(systemName: "tray.full").accessibilityLabel("Light Table").tag(LibraryViewMode.lightTable)
             }
             .pickerStyle(.segmented)
+            .accessibilityIdentifier("library.viewMode")
             .frame(width: 150)
             .help("Calendar · Grid · List · Light Table")
 
@@ -263,6 +268,8 @@ struct RootView: View {
         }
         .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
         .keyboardShortcut("i", modifiers: [.command, .option])
+        .accessibilityLabel(appState.inspectorVisible ? "Hide Inspector" : "Show Inspector")
+        .accessibilityIdentifier("library.inspector")
     }
 
     private func loadPlayerSourceName() {
@@ -296,7 +303,7 @@ extension RootView {
         // A dropped folder is watched directly; a dropped video adds its
         // containing folder. (#39)
         let folder = isDir.boolValue ? url : url.deletingLastPathComponent()
-        AppEnvironment.shared.watcher?.add(folder: folder)
+        guard AppEnvironment.shared.watcher?.add(folder: folder) == true else { return }
         AppState.shared.showToast("Added \(folder.lastPathComponent) to library", level: .success)
     }
 }
@@ -305,20 +312,32 @@ extension RootView {
 /// selected — so toggling the inspector always reveals a panel (instead of
 /// lighting the button with no visible change).
 private struct InspectorEmptyState: View {
+    var clipIDs: Set<Int64> = []
     var body: some View {
         VStack(spacing: 10) {
-            Image(systemName: "sidebar.right")
+            Image(systemName: clipIDs.isEmpty ? "sidebar.right" : "square.stack")
                 .font(.system(size: 30, weight: .ultraLight))
                 .foregroundStyle(Theme.textTertiary)
-            Text("No clip selected")
+            Text(clipIDs.isEmpty ? "No clip selected" : "\(clipIDs.count) clips selected")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
-            Text("Select a clip to see its rating, tags, attributes, and export options.")
+            Text(clipIDs.isEmpty
+                 ? "Select a saved clip to edit its name, purpose, tags, and notes."
+                 : "Select one clip to edit its details, or export the selected clips together.")
                 .font(.system(size: 12))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(Theme.textTertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 20)
+            if !clipIDs.isEmpty {
+                Menu {
+                    Button("Reels") { ExportActions.export(clipIDs: Array(clipIDs), preset: .reels) }
+                    Button("YouTube 1080p") { ExportActions.export(clipIDs: Array(clipIDs), preset: .youtube1080p) }
+                    Button("YouTube 4K") { ExportActions.export(clipIDs: Array(clipIDs), preset: .youtube4k) }
+                } label: { Label("Export \(clipIDs.count) clips", systemImage: "square.and.arrow.up") }
+                .menuStyle(.borderlessButton).fixedSize()
+                .padding(.top, 6)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bgRaised)

@@ -65,21 +65,21 @@ enum Purposes {
     /// The active label set used by the capture panel and the Light Table.
     /// A saved custom set wins; otherwise the chosen preset; otherwise Creator.
     static var active: [PurposeLabel] {
-        if let data = UserDefaults.standard.data(forKey: customKey),
+        if let data = AppPreferences.defaults.data(forKey: customKey),
            let labels = try? JSONDecoder().decode([PurposeLabel].self, from: data),
            !labels.isEmpty {
             return labels
         }
-        let id = UserDefaults.standard.string(forKey: presetKey) ?? creator.id
+        let id = AppPreferences.defaults.string(forKey: presetKey) ?? creator.id
         return (all.first { $0.id == id } ?? creator).labels
     }
 
     /// The id of the active built-in preset. Setting it clears any custom set.
     static var activePresetID: String {
-        get { UserDefaults.standard.string(forKey: presetKey) ?? creator.id }
+        get { AppPreferences.defaults.string(forKey: presetKey) ?? creator.id }
         set {
-            UserDefaults.standard.set(newValue, forKey: presetKey)
-            UserDefaults.standard.removeObject(forKey: customKey)
+            AppPreferences.defaults.set(newValue, forKey: presetKey)
+            AppPreferences.defaults.removeObject(forKey: customKey)
         }
     }
 

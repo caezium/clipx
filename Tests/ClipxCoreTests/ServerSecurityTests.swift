@@ -148,6 +148,27 @@ final class ServerSecurityTests: XCTestCase {
         XCTAssertNil(resolveByteRange(nil, size: 0))
     }
 
+    func test_resolveByteRange_boundsExplicitAndSuffixRangesWithoutOverflow() {
+        XCTAssertEqual(resolveByteRange("bytes=0-99999999", size: 100_000_000)?.end, 1_048_575)
+        XCTAssertEqual(resolveByteRange("bytes=-500", size: 1000).map { [$0.start, $0.end] }, [500, 999])
+        XCTAssertEqual(resolveByteRange("bytes=-2000", size: 1000).map { [$0.start, $0.end] }, [0, 999])
+        XCTAssertEqual(resolveByteRange("bytes=9223372036854775806-", size: .max)?.end, Int64.max - 1)
+        XCTAssertNil(resolveByteRange("bytes=9223372036854775807-", size: .max))
+        for header in ["bytes=-0", "bytes=abc-5", "bytes=0-garbage", "bytes=0-1,4-5", "bytes=+1-5", "items=0-4", "bytes=0", "bytes=--5"] {
+            XCTAssertNil(resolveByteRange(header, size: 1000), header)
+        }
+        XCTAssertNil(resolveByteRange(nil, size: 100, maxChunk: 0))
+    }
+
+    func test_isAllowedHost_parsesBracketedIPv6AndRejectsMalformedAuthority() {
+        for host in ["[::1]:7878", "[::1]", "[fd00::1234]:7878", "[fe80::42]:7878"] {
+            XCTAssertTrue(isAllowedHost(host), host)
+        }
+        for host in ["[2606:4700::1111]:7878", "[::1]:garbage", "[::1]evil.com", "[::1", "::1", "localhost:0", "localhost:65536", "evil.com@localhost", "localhost:7878:9", "10..0.0.1", "+10.0.0.1"] {
+            XCTAssertFalse(isAllowedHost(host), host)
+        }
+    }
+
     // MARK: #6 — session cookie instead of token in URL
 
     func test_cookieValue_parsesNamedCookie() {

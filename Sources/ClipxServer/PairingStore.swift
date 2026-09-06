@@ -8,13 +8,14 @@ import Foundation
 /// the token via `Authorization: Bearer <token>`. Stops drive-bys on a
 /// shared Wi-Fi.
 ///
-/// Not a real auth scheme — there's no rotation, no per-device tokens, and
-/// PIN brute-force is rate-limited only by network. Good enough for "phone
-/// on your home network" but not "exposed laptop in a hotel lobby". Don't
-/// confuse defense-in-depth with real security.
+/// PIN rotation revokes all tokens. Pair attempts are throttled and issued
+/// tokens are hashed at rest with an expiry time.
 @MainActor
 final class PairingStore {
     static let shared = PairingStore()
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = AppPreferences.defaults) { self.defaults = defaults }
 
     private static let pinKey = "webServerPairingPIN"
     /// v2 store: hashed tokens with issue times (was a plaintext array). (#3)
@@ -26,19 +27,19 @@ final class PairingStore {
 
     /// Returns the current PIN, generating one on first call.
     var pin: String {
-        if let existing = UserDefaults.standard.string(forKey: Self.pinKey),
-           existing.count == 6 {
+        if let existing = defaults.string(forKey: Self.pinKey),
+           existing.count == 6, existing.utf8.allSatisfy({ (48...57).contains($0) }) {
             return existing
         }
         let new = String(format: "%06d", Int.random(in: 0..<1_000_000))
-        UserDefaults.standard.set(new, forKey: Self.pinKey)
+        defaults.set(new, forKey: Self.pinKey)
         return new
     }
 
     /// Regenerates the PIN and revokes all session tokens.
     func rotate() {
         let new = String(format: "%06d", Int.random(in: 0..<1_000_000))
-        UserDefaults.standard.set(new, forKey: Self.pinKey)
+        defaults.set(new, forKey: Self.pinKey)
         var store = loadTokens()
         store.revokeAll()
         saveTokens(store)
@@ -75,13 +76,13 @@ final class PairingStore {
     }
 
     private func loadTokens() -> SessionTokenStore {
-        guard let data = UserDefaults.standard.data(forKey: Self.tokenStoreKey) else {
+        guard let data = defaults.data(forKey: Self.tokenStoreKey) else {
             return SessionTokenStore()
         }
         return SessionTokenStore.decode(data)
     }
 
     private func saveTokens(_ store: SessionTokenStore) {
-        UserDefaults.standard.set(store.encoded(), forKey: Self.tokenStoreKey)
+        defaults.set(store.encoded(), forKey: Self.tokenStoreKey)
     }
 }

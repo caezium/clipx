@@ -21,10 +21,10 @@ settings:
 packages:
   GRDB:
     url: https://github.com/groue/GRDB.swift
-    from: "6.29.0"
+    exactVersion: "6.29.3"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
-    from: "2.6.0"
+    exactVersion: "2.9.6"
 targets:
   Clipx-Direct:
     type: application
@@ -44,6 +44,7 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
+        NSLocalNetworkUsageDescription: Clipx connects to your chosen review server and shares your library with paired browsers when you enable Remote.
         NSAppleEventsUsageDescription: Clipx uses Apple Events to capture the frontmost video clip when the global hotkey is pressed.
         NSDesktopFolderUsageDescription: Clipx needs to read video files stored on your Desktop to index and generate thumbnails for your library.
         NSDocumentsFolderUsageDescription: Clipx needs to read video files stored in Documents to index and generate thumbnails for your library.
@@ -61,7 +62,8 @@ targets:
         com.apple.security.automation.apple-events: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.clipx.Clipx
+        CLIPX_BUNDLE_IDENTIFIER: com.clipx.Clipx
+        PRODUCT_BUNDLE_IDENTIFIER: $(CLIPX_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: Clipx
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: DIRECT_BUILD
         CODE_SIGN_STYLE: Automatic
@@ -73,6 +75,12 @@ targets:
         product: GRDB
       - package: Sparkle
         product: Sparkle
+    postBuildScripts:
+      - path: Scripts/copy-ffmpeg.sh
+        name: Bundle FFmpeg
+        shell: /bin/bash
+        showEnvVars: false
+        basedOnDependencyAnalysis: false
   Clipx-MAS:
     type: application
     platform: macOS
@@ -93,17 +101,21 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
+        NSLocalNetworkUsageDescription: Clipx connects to your chosen review server and shares your library with paired browsers when you enable Remote.
     entitlements:
       path: Configs/Clipx-MAS.entitlements
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.files.user-selected.read-write: true
         com.apple.security.files.bookmarks.app-scope: true
+        com.apple.security.network.client: true
+        com.apple.security.network.server: true
         com.apple.security.assets.movies.read-write: true
         com.apple.security.assets.music.read-only: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.clipx.Clipx
+        CLIPX_BUNDLE_IDENTIFIER: com.clipx.Clipx
+        PRODUCT_BUNDLE_IDENTIFIER: $(CLIPX_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: Clipx
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: MAS_BUILD
         CODE_SIGN_STYLE: Automatic
@@ -120,12 +132,47 @@ targets:
       - path: Tests/ClipxCoreTests
     settings:
       base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: DIRECT_BUILD
         BUNDLE_LOADER: $(TEST_HOST)
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Clipx.app/Contents/MacOS/Clipx
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
       - target: Clipx-Direct
+  ClipxCoreTests-MAS:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/ClipxCoreTests
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: MAS_BUILD
+        BUNDLE_LOADER: $(TEST_HOST)
+        TEST_HOST: $(BUILT_PRODUCTS_DIR)/Clipx.app/Contents/MacOS/Clipx
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Clipx-MAS
+  ClipxUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - path: Tests/ClipxUITests
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Clipx-Direct
+    dependencies:
+      - target: Clipx-Direct
 schemes:
+  Clipx-UI:
+    build:
+      targets:
+        Clipx-Direct: all
+    test:
+      config: Debug
+      environmentVariables:
+        CLIPX_ISOLATED_TESTS: "1"
+      targets:
+        - ClipxUITests
   Clipx-Direct:
     build:
       targets:
@@ -134,6 +181,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      environmentVariables:
+        CLIPX_ISOLATED_TESTS: "1"
       targets:
         - ClipxCoreTests
     archive:
@@ -144,5 +193,11 @@ schemes:
         Clipx-MAS: all
     run:
       config: Debug
+    test:
+      config: Debug
+      environmentVariables:
+        CLIPX_ISOLATED_TESTS: "1"
+      targets:
+        - ClipxCoreTests-MAS
     archive:
       config: Release

@@ -5,19 +5,20 @@ import SwiftUI
 /// shortcuts like ⌘Q still work while the overlay is visible.
 struct ShortcutOverlay: View {
     @Binding var visible: Bool
+    @FocusState private var focused: Bool
 
     private let groups: [(title: String, items: [(String, String)])] = [
-        ("Marking", [
+        ("Marking in the player", [
             ("I", "Mark in point"),
             ("O", "Mark out point"),
             ("S", "Save range as clip"),
-            ("3 / 4 / 5", "Rate selected clip(s) (menu only)")
+            ("Clip menu", "Rate selected clips")
         ]),
         ("Playback", [
             ("␣ or K", "Play / pause"),
             ("←  / →", "Step one frame"),
             ("⇧← / ⇧→", "Jump ±5 seconds"),
-            ("J / L", "Jump ±5 seconds (industry-standard transport)")
+            ("J / L", "Jump ±5 seconds")
         ]),
         ("Navigation", [
             ("⌘K", "Command palette"),
@@ -29,7 +30,7 @@ struct ShortcutOverlay: View {
         ]),
         ("Export", [
             ("⇧⌘R", "Export selected as Reels"),
-            ("via Export menu", "All other presets, FCPXML, Obsidian sidecars")
+            ("Export menu", "Other presets, FCPXML, Obsidian sidecars")
         ])
     ]
 
@@ -49,22 +50,29 @@ struct ShortcutOverlay: View {
                             .foregroundStyle(Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Close keyboard shortcuts")
                 }
-                ForEach(groups, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text(group.title).clipxSectionLabel()
-                        ForEach(group.items, id: \.0) { item in
-                            HStack(spacing: 12) {
-                                Text(item.0)
-                                    .clipxKeycap()
-                                    .frame(width: 110, alignment: .leading)
-                                Text(item.1).foregroundStyle(Theme.textSecondary)
-                                Spacer()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        ForEach(groups, id: \.title) { group in
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text(group.title).clipxSectionLabel()
+                                ForEach(group.items, id: \.0) { item in
+                                    HStack(spacing: 12) {
+                                        Text(item.0)
+                                            .clipxKeycap()
+                                            .frame(width: 110, alignment: .leading)
+                                        Text(item.1).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Spacer()
+                                    }
+                                }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer()
+                .scrollIndicators(.automatic)
                 HStack(spacing: 6) {
                     Text("Esc").clipxKeycap()
                     Text("to dismiss").font(.caption).foregroundStyle(Theme.textTertiary)
@@ -76,6 +84,8 @@ struct ShortcutOverlay: View {
             .overlay(RoundedRectangle(cornerRadius: Theme.r3).strokeBorder(Theme.borderStrong, lineWidth: 1))
             .shadow(color: .black.opacity(0.5), radius: 24, y: 8)
         }
+        .focusable().focusEffectDisabled().focused($focused)
+        .onAppear { focused = true }
         // Only consume non-modified keys; let ⌘Q etc. through so the user can
         // always quit / switch even while the overlay is up.
         .onKeyPress(.escape) {

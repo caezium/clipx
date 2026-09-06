@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject private var appState: AppState
     var body: some View {
         TabView {
             GeneralSettingsView()
@@ -24,6 +25,7 @@ struct SettingsView: View {
         .background(Theme.bg)
         .tint(Theme.accent)
         .preferredColorScheme(.dark)
+        .overlay(alignment: .top) { ToastStack(toasts: appState.toasts).padding(12) }
     }
 }
 
@@ -127,7 +129,7 @@ private struct SettingsField: View {
 // MARK: - General
 
 struct GeneralSettingsView: View {
-    @AppStorage("openClipsInBuiltInPlayer") private var openInBuiltInPlayer = true
+    @AppStorage("openClipsInBuiltInPlayer", store: AppPreferences.defaults) private var openInBuiltInPlayer = true
 
     private var appVersion: String {
         let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "—"
@@ -140,7 +142,7 @@ struct GeneralSettingsView: View {
             SettingsCard("Playback") {
                 Toggle("Open clips in the built-in player", isOn: $openInBuiltInPlayer)
                     .font(.system(size: 13))
-                SettingsDesc("When off, clips open in your default video app instead of the Clipx player.")
+                SettingsDesc("When off, opening a saved clip opens its source file in your default video app. Clip marks remain in Clipx.")
             }
             SettingsCard("About") {
                 LabeledRow(label: "Version", value: appVersion)
@@ -170,7 +172,7 @@ struct LabelsSettingsView: View {
     var body: some View {
         SettingsScaffold {
             SettingsCard("Purpose labels") {
-                SettingsDesc("Clips are tagged by purpose on the fast path — what each one is FOR. Pick the starter set that fits what you make; these show up in the capture panel and the Light Table.")
+                SettingsDesc("Choose the purpose labels shown when you save clips and browse the Light Table. Pick the set that fits what you make.")
                 Picker("Content type", selection: $presetID) {
                     ForEach(Purposes.all) { preset in
                         Text(preset.name).tag(preset.id)
@@ -273,7 +275,7 @@ struct LibrarySettingsView: View {
             } label: { Image(systemName: "arrow.up.forward.app") }
                 .buttonStyle(.plain)
                 .clipxIconButton(size: 26)
-                .help("Reveal in Finder")
+                .help("Reveal in Finder").accessibilityLabel("Reveal folder in Finder")
             Button {
                 // Stop watching + drop the folder record (sources stay indexed). (#35)
                 AppEnvironment.shared.watcher?.remove(folderPath: folder.path)
@@ -281,7 +283,7 @@ struct LibrarySettingsView: View {
             } label: { Image(systemName: "trash") }
                 .buttonStyle(.plain)
                 .clipxIconButton(size: 26)
-                .help("Remove from library")
+                .help("Stop watching this folder; indexed footage stays in the library").accessibilityLabel("Stop watching folder")
         }
     }
 
@@ -293,25 +295,31 @@ struct LibrarySettingsView: View {
 // MARK: - Export
 
 struct ExportSettingsView: View {
-    @AppStorage("exportDefaultFolder") private var exportFolder: String = ""
+    @AppStorage("exportDefaultFolder", store: AppPreferences.defaults) private var exportFolder: String = ""
 
     var body: some View {
         SettingsScaffold {
             SettingsCard("Default destination") {
                 HStack(spacing: 8) {
-                    SettingsField(placeholder: "Ask every time…", text: $exportFolder)
+                    Text(exportFolder.isEmpty ? "Ask every time…" : exportFolder)
+                        .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                     Button("Choose…") {
                         Task { @MainActor in
-                            if let path = await FolderPicker.pickFolder() { exportFolder = path }
+                            if let url = await FolderPicker.pickFolderURL() {
+                                do { try DestinationAccess.remember(url, for: .exportFolder) }
+                                catch { AppState.shared.showToast("Couldn't remember destination: \(error.localizedDescription)", level: .error) }
+                            }
                         }
                     }
                     .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                     if !exportFolder.isEmpty {
-                        Button("Clear") { exportFolder = "" }
+                        Button("Clear") { DestinationAccess.clear(.exportFolder) }
                             .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                     }
                 }
-                SettingsDesc("When set, exports write here without prompting. Leave empty to be asked each time. (#33)")
+                SettingsDesc("When set, exports write here without prompting. Leave empty to be asked each time.")
             }
             SettingsCard("Export") {
                 SettingsDesc("Export presets are chosen per clip from the Export menu, the clip's right-click menu, or ⌘K → Export. Reels, TikTok, YouTube Shorts, Instagram Feed, YouTube 1080p/4K are built in.")
@@ -334,28 +342,36 @@ struct ExportSettingsView: View {
 // MARK: - Bridges
 
 struct BridgesSettingsView: View {
-    @AppStorage("obsidianVaultPath") private var obsidianVaultPath: String = ""
-    @AppStorage("stintServerURL") private var stintServerURL: String = ""
+    @AppStorage("obsidianVaultPath", store: AppPreferences.defaults) private var obsidianVaultPath: String = ""
+    @AppStorage("stintServerURL", store: AppPreferences.defaults) private var stintServerURL: String = ""
 
     var body: some View {
         SettingsScaffold {
             SettingsCard("Stint review") {
                 SettingsField(placeholder: "http://your-stint-host:4040", text: $stintServerURL)
-                SettingsDesc("Send clips to a Stint project for collaborative, frame-pinned review — your coach or teammates open one share link and comment, no account needed. Set the base URL of your running Stint server, then use “Send to review” in the Light Table.")
+                SettingsDesc("Send clips to a Stint project for review and frame-pinned comments. Enter your Stint server’s address, then choose “Send to review” in the Light Table.")
             }
             SettingsCard("Obsidian") {
                 HStack(spacing: 8) {
-                    SettingsField(placeholder: "Vault folder…", text: $obsidianVaultPath)
+                    Text(obsidianVaultPath.isEmpty ? "Choose your vault folder…" : obsidianVaultPath)
+                        .font(.system(size: 12)).lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                     Button("Choose…") {
                         Task { @MainActor in
-                            if let path = await FolderPicker.pickFolder() {
-                                obsidianVaultPath = path
+                            if let url = await FolderPicker.pickFolderURL() {
+                                do { try DestinationAccess.remember(url, for: .obsidianVault) }
+                                catch { AppState.shared.showToast("Couldn't remember vault: \(error.localizedDescription)", level: .error) }
                             }
                         }
                     }
                     .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                 }
-                SettingsDesc("Clipx writes a Markdown sidecar to this folder for each saved clip, with its timecodes, rating, and tags.")
+                if !obsidianVaultPath.isEmpty {
+                    Button("Clear vault") { DestinationAccess.clear(.obsidianVault) }
+                        .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                }
+                SettingsDesc("Use Export → Obsidian Sidecars to write selected clips to this vault, including their timecodes, rating, tags, and notes.")
             }
             SettingsCard("FCPXML") {
                 SettingsDesc("FCPXML 1.13 is generated on demand via the Export menu — drop it straight into a Final Cut Pro timeline.")
@@ -370,8 +386,9 @@ struct BridgesSettingsView: View {
 /// frontend. Off by default — turning it on exposes a tiny HTTP server on
 /// the local network bound to a high port.
 struct RemoteSettingsView: View {
-    @AppStorage("webServerEnabled") private var enabled: Bool = false
-    @AppStorage("webServerPort") private var port: Int = 7878
+    @AppStorage("webServerEnabled", store: AppPreferences.defaults) private var enabled: Bool = false
+    @AppStorage("webServerPort", store: AppPreferences.defaults) private var port: Int = 7878
+    @State private var portText = "7878"
     @State private var displayURL: String = ""
     @State private var pin: String = ""
 
@@ -380,6 +397,7 @@ struct RemoteSettingsView: View {
             SettingsCard("Web UI") {
                 Toggle("Serve the Clipx web UI on this network", isOn: $enabled)
                     .font(.system(size: 13))
+                    .disabled(!enabled && RemotePortInput.parse(portText) == nil)
                     .onChange(of: enabled) { _, newValue in
                         Task { @MainActor in
                             if newValue {
@@ -395,7 +413,10 @@ struct RemoteSettingsView: View {
                 HStack {
                     Text("Port").font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
                     Spacer()
-                    TextField("", value: $port, format: .number.grouping(.never))
+                    TextField("7878", text: $portText)
+                        .onChange(of: portText) { _, value in
+                            if let validated = RemotePortInput.parse(value) { port = validated }
+                        }
                         .textFieldStyle(.plain)
                         .font(.system(size: 13, design: .monospaced))
                         .multilineTextAlignment(.trailing)
@@ -405,6 +426,9 @@ struct RemoteSettingsView: View {
                         .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.border, lineWidth: 1))
                         .disabled(enabled)
                         .opacity(enabled ? 0.5 : 1)
+                }
+                if RemotePortInput.parse(portText) == nil {
+                    Text("Enter a port from 1024 to 65535.").font(.caption).foregroundStyle(.orange)
                 }
                 if !enabled {
                     SettingsDesc("When enabled, your phone or laptop can browse sources, watch clips, and mark new clips remotely.")
@@ -447,7 +471,7 @@ struct RemoteSettingsView: View {
                         .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                         .help("Invalidates every paired device and generates a fresh code.")
                     }
-                    SettingsDesc("Open the URL on your phone or laptop and type the PIN once. Tokens persist in browser storage; New PIN forces everyone to re-pair.")
+                    SettingsDesc("Open the URL on your phone or laptop and enter the PIN. New PIN disconnects paired devices, so they need the new code to reconnect.")
                 }
             } else if enabled {
                 SettingsCard("Connection") {
@@ -460,7 +484,7 @@ struct RemoteSettingsView: View {
             }
 
             SettingsCard("Security") {
-                Label("PIN auth is rate-limited only by your network — don't use this on coffee-shop Wi-Fi. Treat the URL like a password.",
+                Label("Paired devices can browse and mark clips while Remote is enabled. Share the PIN only with people you trust, and use New PIN to disconnect every device.",
                       systemImage: "exclamationmark.triangle")
                     .font(.system(size: 12))
                     .foregroundStyle(.orange)
@@ -468,6 +492,8 @@ struct RemoteSettingsView: View {
             }
         }
         .onAppear {
+            if !RemotePortInput.isValid(port) { port = 7878 }
+            portText = String(port)
             refreshURL()
             if enabled { pin = PairingStore.shared.pin }
         }
@@ -502,7 +528,7 @@ struct HotkeySettingsView: View {
             }
             #if DIRECT_BUILD
             SettingsCard("Global") {
-                shortcutRow("Quick add to library", "⇧⌃⌘C")
+                shortcutRow("Quick add to library", "⇧⌘C")
                 SettingsDesc("Rebinding is on the roadmap — defaults are locked for now.")
             }
             #else
@@ -528,14 +554,14 @@ struct HotkeySettingsView: View {
 // MARK: - Updates
 
 struct UpdatesSettingsView: View {
-    @State private var channel = "stable"
+    @AppStorage("updateChannel", store: AppPreferences.defaults) private var channel = "stable"
 
     var body: some View {
         SettingsScaffold {
             #if DIRECT_BUILD
             SettingsCard("Updates") {
                 HStack {
-                    Text("Updates are delivered via Sparkle.")
+                    Text("Keep Clipx up to date.")
                         .font(.system(size: 13)).foregroundStyle(Theme.textPrimary)
                     Spacer()
                     Button("Check for Updates") {
@@ -553,6 +579,7 @@ struct UpdatesSettingsView: View {
                     }
                     .labelsHidden()
                     .frame(width: 120)
+                    .onChange(of: channel) { _, _ in UpdateManager.shared.resetUpdateCycle() }
                 }
             }
             #else

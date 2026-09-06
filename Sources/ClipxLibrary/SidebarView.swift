@@ -67,20 +67,31 @@ struct SidebarView: View {
         }
     }
 
-    private func applyRename(_ target: RenameTarget, to newName: String) {
+    private func applyRename(_ target: RenameTarget, to newName: String) -> Bool {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let db = AppEnvironment.shared.database else { return }
-        try? db.write { dbc in
-            try dbc.execute(sql: "UPDATE \(target.kind.table) SET name = ? WHERE id = ?", arguments: [trimmed, target.id])
+        guard !trimmed.isEmpty, let db = AppEnvironment.shared.database else { return false }
+        do {
+            try db.write { dbc in
+                try dbc.execute(sql: "UPDATE \(target.kind.table) SET name = ? WHERE id = ?", arguments: [trimmed, target.id])
+            }
+            load()
+            appState.libraryRevision &+= 1
+            return true
+        } catch {
+            appState.showToast("Couldn't rename \(target.kind.noun): \(error.localizedDescription)", level: .error)
+            return false
         }
-        load()
-        appState.libraryRevision &+= 1
     }
 
     private func applyDelete(_ target: RenameTarget) {
         guard let db = AppEnvironment.shared.database else { return }
-        try? db.write { dbc in
-            try dbc.execute(sql: "DELETE FROM \(target.kind.table) WHERE id = ?", arguments: [target.id])
+        do {
+            try db.write { dbc in
+                try dbc.execute(sql: "DELETE FROM \(target.kind.table) WHERE id = ?", arguments: [target.id])
+            }
+        } catch {
+            appState.showToast("Couldn't delete \(target.kind.noun): \(error.localizedDescription)", level: .error)
+            return
         }
         if target.kind == .project, appState.selectedProjectID == target.id {
             appState.selectedProjectID = nil
@@ -114,6 +125,7 @@ struct SidebarView: View {
             .frame(width: 28, height: 28)
             .foregroundStyle(Theme.textSecondary)
             .help("New project or collection")
+            .accessibilityLabel("New project or collection")
         }
         .padding(.horizontal, 6)
         .padding(.top, 2)
@@ -127,19 +139,16 @@ struct SidebarView: View {
             // Note: each row also clears any project/collection scope —
             // without this, picking "Unused" while in a Project view kept
             // the project filter, producing confusing empty results.
-            SidebarRow(label: "All Clips", icon: "rectangle.stack", isActive: isAllClipsActive) {
-                appState.activeFilters = ClipFilters()
-                appState.selectedProjectID = nil
-                appState.selectedCollectionID = nil
-                ensureClipsVisible()
+            SidebarRow(label: "All Footage", icon: "rectangle.stack", isActive: isAllClipsActive) {
+                appState.clearFilters()
             }
             SidebarRow(label: "Recently Imported", icon: "clock.arrow.circlepath", isActive: isRecentlyImportedActive) {
                 var f = ClipFilters()
                 f.dateFrom = Calendar.current.date(byAdding: .day, value: -7, to: Date())
+                f.dateField = .imported
                 appState.activeFilters = f
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
-                ensureClipsVisible()
             }
             SidebarRow(label: "Unused", icon: "sparkles",
                        isActive: appState.activeFilters.unusedOnly && appState.selectedProjectID == nil) {
@@ -148,7 +157,6 @@ struct SidebarView: View {
                 appState.activeFilters = f
                 appState.selectedProjectID = nil
                 appState.selectedCollectionID = nil
-                ensureClipsVisible()
             }
         }
     }
@@ -162,6 +170,7 @@ struct SidebarView: View {
     private var isRecentlyImportedActive: Bool {
         appState.selectedProjectID == nil
             && appState.activeFilters.dateFrom != nil
+            && appState.activeFilters.dateField == .imported
             && !appState.activeFilters.unusedOnly
             && appState.activeFilters.moods.isEmpty
             && appState.activeFilters.shotTypes.isEmpty
@@ -175,11 +184,7 @@ struct SidebarView: View {
                            isActive: appState.selectedCollectionID == collection.id) {
                     // Actually filter the library by the collection. (#31)
                     guard let id = collection.id else { return }
-                    appState.selectedCollectionID = id
-                    appState.selectedProjectID = nil
-                    appState.activeFilters.projectIDs = []
-                    appState.activeFilters.collectionIDs = [id]
-                    ensureClipsVisible()
+                    appState.selectCollection(id)
                 }
                 .contextMenu {
                     Button("Rename…") {
@@ -200,14 +205,7 @@ struct SidebarView: View {
                 let isSelected = appState.selectedProjectID == project.id
                 SidebarRow(label: project.name, icon: "folder.fill",
                            trailing: project.status.capitalized, isActive: isSelected) {
-                    if isSelected, let id = project.id {
-                        appState.selectedProjectID = nil
-                        appState.activeFilters.projectIDs.remove(id)
-                    } else if let id = project.id {
-                        appState.selectedProjectID = id
-                        appState.activeFilters.projectIDs = [id]
-                    }
-                    ensureClipsVisible()
+                    appState.selectProject(isSelected ? nil : project.id)
                 }
                 .contextMenu {
                     Button("Rename…") {
@@ -258,12 +256,6 @@ struct SidebarView: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6).padding(.top, 6).padding(.bottom, 2)
-    }
-
-    /// The calendar shows only sources; when the user picks a clip scope, switch
-    /// to the grid so their saved clips are actually visible.
-    private func ensureClipsVisible() {
-        if appState.viewMode == .calendar { appState.viewMode = .grid }
     }
 
     private func load() {
@@ -323,7 +315,7 @@ private struct SidebarRow: View {
 /// Simple rename sheet for a project/collection. (#35)
 private struct RenameSheet: View {
     let target: SidebarView.RenameTarget
-    let onSave: (String) -> Void
+    let onSave: (String) -> Bool
     @Environment(\.dismiss) private var dismiss
     @State private var name: String = ""
 
@@ -346,5 +338,5 @@ private struct RenameSheet: View {
         .onAppear { name = target.currentName }
     }
 
-    private func save() { onSave(name); dismiss() }
+    private func save() { if onSave(name) { dismiss() } }
 }

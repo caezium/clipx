@@ -11,6 +11,7 @@ final class BookmarkStore {
     /// matching scope and we don't leak a sandbox reference per remove.
     private var startedAccess: [String: URL] = [:]
     private let lock = NSLock()
+    private(set) var accessFailures: [String] = []
 
     init(database: Database) {
         self.database = database
@@ -20,6 +21,9 @@ final class BookmarkStore {
     /// Idempotent: if the folder is already known, refreshes its bookmark
     /// and `online = true` instead of throwing a UNIQUE-constraint error.
     func addFolder(url: URL) throws {
+        let started = url.startAccessingSecurityScopedResource()
+        var saved = false
+        defer { if started && !saved { url.stopAccessingSecurityScopedResource() } }
         let bookmark = try url.bookmarkData(
             options: [.withSecurityScope],
             includingResourceValuesForKeys: nil,
@@ -44,6 +48,8 @@ final class BookmarkStore {
                 try record.insert(db)
             }
         }
+        if started { retainAccess(url, replacing: url.path) }
+        saved = true
     }
 
     /// Resolves all stored bookmarks into URLs with security access started.
@@ -54,36 +60,32 @@ final class BookmarkStore {
     /// user has to re-pick every folder.
     func resumeAccess() -> [URL] {
         var urls: [URL] = []
+        accessFailures = []
         do {
             let folders: [FolderRecord] = try database.read { db in
                 try FolderRecord.fetchAll(db)
             }
             for folder in folders {
-                var stale = false
-                guard let url = try? URL(
-                    resolvingBookmarkData: folder.bookmark,
-                    options: [.withSecurityScope],
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &stale
-                ) else { continue }
-
-                if stale {
-                    refreshBookmark(at: url)
-                }
-
-                if url.startAccessingSecurityScopedResource() {
-                    lock.lock()
-                    // Stop any scope already started for this path before
-                    // replacing it. resume isn't guaranteed to be paired with a
-                    // stop (dark wake, power nap, a missed will-sleep), so
-                    // without this each cycle leaks a kernel sandbox reference
-                    // until access eventually fails. (#18)
-                    if let prev = startedAccess[url.path] {
-                        prev.stopAccessingSecurityScopedResource()
+                do {
+                    var stale = false
+                    let url = try URL(resolvingBookmarkData: folder.bookmark,
+                        options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+                    let started = url.startAccessingSecurityScopedResource()
+                    var retained = false
+                    defer { if started && !retained { url.stopAccessingSecurityScopedResource() } }
+                    guard FileManager.default.isReadableFile(atPath: url.path) else {
+                        throw CocoaError(.fileReadNoPermission)
                     }
-                    startedAccess[url.path] = url
-                    lock.unlock()
+                    let bookmark = stale || folder.path != url.path
+                        ? try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                        : folder.bookmark
+                    if let id = folder.id { try relinkFolder(id: id, to: url, bookmark: bookmark) }
+                    if started { retainAccess(url, replacing: folder.path); retained = true }
                     urls.append(url)
+                } catch {
+                    accessFailures.append(folder.path)
+                    markUnavailable(folder.path)
+                    ClipxLog.bookmarks.error("Cannot access folder \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
                 }
             }
         } catch {
@@ -92,30 +94,44 @@ final class BookmarkStore {
         return urls
     }
 
-    /// Best-effort re-creation of a stale bookmark; failures are logged but
-    /// not surfaced because we still try to use the resolved URL this session.
-    private func refreshBookmark(at url: URL) {
-        do {
-            let fresh = try url.bookmarkData(
-                options: [.withSecurityScope],
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
-            try database.write { db in
-                try db.execute(
-                    sql: "UPDATE folders SET bookmark = ? WHERE path = ?",
-                    arguments: [fresh, url.path]
-                )
+    /// Folder identity is the row ID, not the last resolved path. Move source
+    /// paths in the same transaction so clips retain every association.
+    func relinkFolder(id: Int64, to url: URL, bookmark: Data) throws {
+        try database.write { db in
+            guard let folder = try FolderRecord.fetchOne(db, key: id) else { return }
+            if folder.path != url.path {
+                let prefix = folderDescendantPrefix(folder.path)
+                try db.execute(sql: """
+                    UPDATE sources SET path = ? || substr(path, length(?) + 1)
+                    WHERE substr(path, 1, length(?)) = ? COLLATE BINARY
+                    """, arguments: [folderDescendantPrefix(url.path), prefix, prefix, prefix])
             }
-            ClipxLog.bookmarks.info("refreshed stale bookmark for \(url.path, privacy: .public)")
-        } catch {
-            ClipxLog.bookmarks.error("refreshBookmark failed: \(String(describing: error), privacy: .public)")
+            try db.execute(sql: "UPDATE folders SET path = ?, bookmark = ?, online = 1 WHERE id = ?",
+                           arguments: [url.path, bookmark, id])
+        }
+    }
+
+    private func retainAccess(_ url: URL, replacing oldPath: String) {
+        lock.lock()
+        let old = startedAccess.removeValue(forKey: oldPath)
+        let duplicate = startedAccess.updateValue(url, forKey: url.path)
+        lock.unlock()
+        old?.stopAccessingSecurityScopedResource()
+        duplicate?.stopAccessingSecurityScopedResource()
+    }
+
+    private func markUnavailable(_ path: String) {
+        try? database.write { db in
+            try db.execute(sql: "UPDATE folders SET online = 0 WHERE path = ?", arguments: [path])
+            let prefix = folderDescendantPrefix(path)
+            try db.execute(sql: "UPDATE sources SET online = 0 WHERE substr(path, 1, length(?)) = ? COLLATE BINARY",
+                           arguments: [prefix, prefix])
         }
     }
 
     func stopAll() {
         lock.lock()
-        let urls = startedAccess.values
+        let urls = Array(startedAccess.values)
         startedAccess.removeAll()
         lock.unlock()
         for url in urls {
@@ -129,12 +145,12 @@ final class BookmarkStore {
                 try FolderRecord.fetchAll(db)
             }
             return folders.map { folder in
-                let escaped = sqlLikeEscape(folder.path)
+                let prefix = folderDescendantPrefix(folder.path)
                 let fileCount = (try? database.read { db in
                     try Int.fetchOne(
                         db,
-                        sql: "SELECT count(*) FROM sources WHERE path LIKE ? ESCAPE '\\'",
-                        arguments: ["\(escaped)/%"]
+                        sql: "SELECT count(*) FROM sources WHERE substr(path, 1, length(?)) = ? COLLATE BINARY",
+                        arguments: [prefix, prefix]
                     ) ?? 0
                 }) ?? 0
                 return LibraryFolderDescriptor(
@@ -148,7 +164,16 @@ final class BookmarkStore {
         }
     }
 
-    func removeFolder(path: String) {
+    @discardableResult
+    func removeFolder(path: String) -> Bool {
+        do {
+            _ = try database.write { db in
+                try FolderRecord.filter(FolderRecord.Columns.path == path).deleteAll(db)
+            }
+        } catch {
+            ClipxLog.bookmarks.error("removeFolder failed: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
         // Stop the matching security scope BEFORE deleting the row, otherwise
         // we leak a sandbox reference per remove.
         lock.lock()
@@ -156,8 +181,6 @@ final class BookmarkStore {
         lock.unlock()
         started?.stopAccessingSecurityScopedResource()
 
-        try? database.write { db in
-            try FolderRecord.filter(FolderRecord.Columns.path == path).deleteAll(db)
-        }
+        return true
     }
 }

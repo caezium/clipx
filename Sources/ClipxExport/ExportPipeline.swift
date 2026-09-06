@@ -1,174 +1,146 @@
 import Foundation
 import AppKit
-import AVFoundation
+import Combine
 
-/// Serial export queue with progress dock badge and cancellation.
-///
-/// Cancellation now actually propagates to the underlying
-/// `AVAssetExportSession` / ffmpeg `Process` via a job-scoped canceller
-/// closure — Swift task cancel alone doesn't stop them. Partial output files
-/// are removed on failure / cancel so the user doesn't end up with broken
-/// 0-byte mp4s scattered through the output folder.
+/// A single serial worker owns the queue until its final job has drained.
+/// Cancelling removes pending jobs but keeps the worker active during cleanup.
 @MainActor
 final class ExportPipeline: ObservableObject {
     private let database: Database
+    private let render: ClipRenderer.Operation
     @Published private(set) var jobs: [ExportJob] = []
     @Published private(set) var isRunning = false
-    /// The job currently encoding (removed from `jobs` while it runs). (#13)
+    @Published private(set) var isCancelling = false
     @Published private(set) var currentJob: ExportJob?
-    /// Per-job 0...1 progress for the queue UI. (#13)
     @Published private(set) var progress: [UUID: Double] = [:]
     private var currentTask: Task<Void, Never>?
-    /// Synchronous canceller for the running job — readable by cancelAll() with
-    /// no async window. (#10)
-    private let cancelBox = CancellerBox()
+    private var currentCancellation: CancellerBox?
+    private var workerID: UUID?
 
-    private func setProgress(_ id: UUID, _ value: Double) { progress[id] = value }
-
-    init(database: Database) {
+    init(database: Database, render: @escaping ClipRenderer.Operation = {
+        try await ClipRenderer.render($0, cancellation: $1, onProgress: $2)
+    }) {
         self.database = database
+        self.render = render
     }
 
-    /// Total in-flight + queued jobs. AppDelegate uses this for the
-    /// "exports still running" quit confirmation.
-    var activeJobCount: Int { jobs.count + (isRunning ? 1 : 0) }
+    var activeJobCount: Int { jobs.count + (currentJob == nil ? 0 : 1) }
 
-    func enqueue(clipID: Int64, preset: ExportPreset, outputDir: URL) {
-        let job = ExportJob(clipID: clipID, preset: preset, outputDir: outputDir)
-        jobs.append(job)
+    func enqueue(clipID: Int64, preset: ExportPreset, outputDir: URL, destination: DestinationAccess? = nil) {
+        jobs.append(ExportJob(clipID: clipID, preset: preset, outputDir: outputDir,
+                              destination: destination ?? DestinationAccess.open(outputDir)))
         if !isRunning { startProcessing() }
+        updateBadge()
     }
 
     func cancelAll() {
-        cancelBox.cancel()        // stops the in-flight backend synchronously (#10)
-        currentTask?.cancel()
         jobs.removeAll()
-        progress.removeAll()
-        isRunning = false
-        NSApp.dockTile.badgeLabel = nil
+        guard isRunning else { return }
+        isCancelling = true
+        currentCancellation?.cancel()
+        currentTask?.cancel()
+        updateBadge()
     }
 
     private func startProcessing() {
+        guard !isRunning else { return }
         isRunning = true
+        isCancelling = false
+        let generation = UUID()
+        workerID = generation
         currentTask = Task { [weak self] in
-            while let self, !self.jobs.isEmpty, !Task.isCancelled {
+            guard let self else { return }
+            while !self.jobs.isEmpty, !Task.isCancelled {
                 let job = self.jobs.removeFirst()
+                let cancellation = CancellerBox()
                 self.currentJob = job
+                self.currentCancellation = cancellation
                 self.progress[job.id] = 0
                 self.updateBadge()
-                await self.runJob(job)
-                self.currentJob = nil
+                await self.runJob(job, cancellation: cancellation, generation: generation)
                 self.progress[job.id] = nil
+                self.currentJob = nil
+                self.currentCancellation = nil
             }
-            self?.isRunning = false
-            self?.currentJob = nil
-            NSApp.dockTile.badgeLabel = nil
+            guard self.workerID == generation else { return }
+            self.workerID = nil
+            self.currentTask = nil
+            self.isRunning = false
+            self.isCancelling = false
+            self.updateBadge()
+            // Jobs queued while cancellation was draining belong to a fresh
+            // worker; the cancelled task must never process or clear them.
+            if !self.jobs.isEmpty { self.startProcessing() }
         }
     }
 
     private func updateBadge() {
-        // "current + queued" — was previously off by one in the visible total.
-        let total = (isRunning ? 1 : 0) + jobs.count
-        NSApp.dockTile.badgeLabel = total > 0 ? "\(total)" : nil
+        NSApp?.dockTile.badgeLabel = activeJobCount > 0 ? "\(activeJobCount)" : nil
     }
 
-    private func runJob(_ job: ExportJob) async {
-        var outputURL: URL?
+    private func runJob(_ job: ExportJob, cancellation: CancellerBox, generation: UUID) async {
+        var record: ExportRecord?
         do {
-            guard let clip: Clip = try database.read({ db in
-                try Clip.fetchOne(db, key: job.clipID)
-            }) else { return }
-            guard let source: Source = try database.read({ db in
-                try Source.fetchOne(db, key: clip.sourceID)
-            }) else { return }
-
-            // Sanitize + disambiguate across clips AND across repeated exports of
-            // the same clip+preset, so a prior render is never silently
-            // overwritten — `name-id.mp4`, then `name-id-2.mp4`, … (#16)
-            let base = ExportPipeline.sanitizeFilename(clip.name ?? "clip-\(clip.id ?? 0)")
-                + (clip.id.map { "-\($0)" } ?? "")
-            let url = ExportPipeline.uniqueOutputURL(
-                dir: job.outputDir, base: base, ext: job.preset.containerExt
-            ) { FileManager.default.fileExists(atPath: $0.path) }
-            let filename = url.lastPathComponent
-            outputURL = url
-
-            // Snap the cut to the source's frame grid so the exported length
-            // matches the marks deterministically, not quantized to output fps. (#15)
-            let fps = Double(source.fps ?? 0)
-            let inMs = fps > 0 ? FrameMath.snapToFrame(ms: clip.inMs, fps: fps) : clip.inMs
-            let outMs = fps > 0 ? FrameMath.snapToFrame(ms: clip.outMs, fps: fps) : clip.outMs
-
-            var record = ExportRecord(
-                id: nil, clipID: clip.id, preset: job.preset.id,
-                outputPath: url.path, bytes: nil, durationMs: outMs - inMs,
-                exportedAt: Int64(Date().timeIntervalSince1970),
+            try cancellation.checkCancellation()
+            guard let clip: Clip = try database.read({ try Clip.fetchOne($0, key: job.clipID) }),
+                  let source: Source = try database.read({ try Source.fetchOne($0, key: clip.sourceID) }) else {
+                throw NSError(domain: "clipx.export", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "The clip or its source is no longer in the library."])
+            }
+            let base = Self.sanitizeFilename(clip.name ?? "clip-\(job.clipID)") + "-\(job.clipID)"
+            let url = Self.uniqueOutputURL(dir: job.outputDir, base: base, ext: job.preset.containerExt) {
+                FileManager.default.fileExists(atPath: $0.path)
+            }
+            let output = try StagedRenderOutput(destination: url)
+            defer { output.cleanup() }
+            let request = try ClipRenderRequest(clip: clip, source: source, preset: job.preset, outputURL: output.url)
+            var entry = ExportRecord(
+                id: nil, clipID: clip.id, preset: job.preset.id, outputPath: url.path,
+                bytes: nil, durationMs: nil, exportedAt: Int64(Date().timeIntervalSince1970),
                 status: ExportStatus.inProgress.rawValue
             )
-            // One history row per output path — no duplicate records. (#16)
+            try database.write { try entry.insert($0) }
+            record = entry
+            let result = try await render(request, cancellation) { [weak self] fraction in
+                Task { @MainActor in
+                    guard let self, self.workerID == generation, self.currentJob?.id == job.id,
+                          !self.isCancelling else { return }
+                    self.progress[job.id] = fraction.isFinite ? max(0, min(1, fraction)) : 0
+                }
+            }
+            try cancellation.checkCancellation()
+            try output.publish()
+            entry.bytes = result.bytes
+            entry.durationMs = result.durationMs
+            entry.status = ExportStatus.success.rawValue
             try database.write { db in
-                try db.execute(sql: "DELETE FROM exports WHERE output_path = ?", arguments: [url.path])
-                try record.insert(db)
+                // A clip can be deleted while its export is running. Preserve
+                // the FK's SET NULL result instead of writing a stale clip ID.
+                try db.execute(sql: "UPDATE exports SET bytes = ?, duration_ms = ?, status = ? WHERE id = ?",
+                               arguments: [entry.bytes, entry.durationMs, entry.status, entry.id])
+                try db.execute(sql: "UPDATE clips SET used_count = used_count + 1 WHERE id = ?", arguments: [job.clipID])
             }
-
-            let jobID = job.id
-            #if DIRECT_BUILD
-            let args = FFmpegBackend.buildArguments(
-                sourcePath: source.path,
-                inMs: inMs, outMs: outMs,
-                preset: job.preset, outputPath: url.path,
-                rotation: source.rotation,
-                speed: source.speed
-            )
-            let exitCode = try await FFmpegBackend.run(
-                arguments: args,
-                durationSec: Double(outMs - inMs) / 1000.0,
-                onCancellerRegistered: { [cancelBox] c in cancelBox.set(c) },           // synchronous (#10)
-                onProgress: { [weak self] p in Task { @MainActor in self?.setProgress(jobID, p) } } // (#13)
-            )
-            cancelBox.set(nil)
-            if exitCode != 0 {
-                throw NSError(domain: "clipx.export", code: Int(exitCode),
-                              userInfo: [NSLocalizedDescriptionKey: "ffmpeg exited with code \(exitCode)"])
-            }
-            #else
-            try await AVFoundationBackend.export(
-                sourcePath: source.path,
-                inMs: inMs, outMs: outMs,
-                preset: job.preset, outputPath: url.path,
-                rotation: source.rotation,
-                speed: source.speed,
-                onCancellerRegistered: { [cancelBox] c in cancelBox.set(c) },           // synchronous (#10)
-                onProgress: { [weak self] p in Task { @MainActor in self?.setProgress(jobID, p) } } // (#13)
-            )
-            cancelBox.set(nil)
-            #endif
-
-            let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
-            record.bytes = (attrs?[.size] as? Int64) ?? 0
-            record.status = ExportStatus.success.rawValue
-            try database.write { try record.update($0) }
-
-            // Guarded — was previously a force-unwrap inside force-unwrap.
-            if let clipID = clip.id {
-                try? AppEnvironment.shared.markerStore?.incrementUsed(clipID)
-            }
-
-            AppState.shared.showToast(
-                "Exported \(filename)",
-                level: .success,
-                actionLabel: "Show in Finder"     // reveal the output (#32)
-            ) {
+            record = entry
+            AppState.shared.libraryRevision &+= 1
+            AppState.shared.showToast("Exported \(url.lastPathComponent)", level: .success,
+                                      actionLabel: "Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([url])
             }
         } catch {
-            cancelBox.set(nil)
-            // Clean up the partial output so the user doesn't end up with
-            // junk files on disk.
-            if let outputURL {
-                try? FileManager.default.removeItem(at: outputURL)
+            let wasCancelled = error is CancellationError || cancellation.isCancelled || Task.isCancelled
+            var historyError: Error?
+            if var entry = record {
+                entry.status = wasCancelled ? ExportStatus.cancelled.rawValue : ExportStatus.failed.rawValue
+                do {
+                    try database.write { db in
+                        try db.execute(sql: "UPDATE exports SET status = ? WHERE id = ?", arguments: [entry.status, entry.id])
+                    }
+                }
+                catch { historyError = error }
             }
-            if !(error is CancellationError) {
+            if let historyError {
+                AppState.shared.showToast("Couldn't save export status: \(historyError.localizedDescription)", level: .error)
+            } else if !wasCancelled {
                 AppState.shared.showToast("Export failed: \(error.localizedDescription)", level: .error)
             }
         }
@@ -207,17 +179,11 @@ final class ExportPipeline: ObservableObject {
         }
     }
 
-    /// Close out exports left "in progress" by a crash: mark them failed and
-    /// delete any partial output. Run once at launch so no record survives as
-    /// in-progress across restarts. (#17)
+    /// Close history left in progress by an interrupted process. A final path
+    /// does not prove ownership: another export or application may now use it.
+    /// Renderers publish only complete files and clean their private staging.
     nonisolated static func reconcileInterruptedExports(database: Database) {
         let inProgress = ExportStatus.inProgress.rawValue
-        let stuck: [ExportRecord] = (try? database.read { db in
-            try ExportRecord.fetchAll(db, sql: "SELECT * FROM exports WHERE status = ?", arguments: [inProgress])
-        }) ?? []
-        for rec in stuck {
-            if let path = rec.outputPath { try? FileManager.default.removeItem(atPath: path) }
-        }
         try? database.write { db in
             try db.execute(
                 sql: "UPDATE exports SET status = ? WHERE status = ?",
@@ -227,9 +193,11 @@ final class ExportPipeline: ObservableObject {
     }
 }
 
+
 struct ExportJob: Identifiable {
     let id = UUID()
     let clipID: Int64
     let preset: ExportPreset
     let outputDir: URL
+    let destination: DestinationAccess?
 }

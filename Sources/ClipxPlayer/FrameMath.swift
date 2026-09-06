@@ -13,14 +13,14 @@ import Foundation
 enum FrameMath {
     /// Nearest frame index for a time given in milliseconds.
     static func frameIndex(ms: Int64, fps: Double) -> Int64 {
-        guard fps > 0 else { return 0 }
-        return Int64((Double(ms) / 1000.0 * fps).rounded())
+        guard fps.isFinite, fps > 0 else { return 0 }
+        return saturatedInteger((Double(max(0, ms)) / 1000.0 * fps).rounded())
     }
 
     /// The millisecond start of a given frame index.
     static func msForFrame(_ index: Int64, fps: Double) -> Int64 {
-        guard fps > 0 else { return 0 }
-        return Int64((Double(index) / fps * 1000.0).rounded())
+        guard fps.isFinite, fps > 0 else { return 0 }
+        return saturatedInteger((Double(max(0, index)) / fps * 1000.0).rounded())
     }
 
     /// Snap a millisecond time onto the nearest frame boundary. Used when
@@ -32,8 +32,27 @@ enum FrameMath {
     /// Result of stepping `frames` (±) from a time, computed in frame space so
     /// repeated steps never accumulate rounding error. Floors at frame 0. (#14)
     static func steppedMs(fromMs current: Int64, frames: Int, fps: Double) -> Int64 {
-        guard fps > 0 else { return max(0, current) }
-        let target = max(0, frameIndex(ms: current, fps: fps) + Int64(frames))
+        guard fps.isFinite, fps > 0 else { return max(0, current) }
+        let (sum, overflow) = frameIndex(ms: current, fps: fps).addingReportingOverflow(Int64(frames))
+        let target = overflow ? (frames > 0 ? Int64.max : 0) : max(0, sum)
         return msForFrame(target, fps: fps)
+    }
+
+    static func rangeDuration(inMs: Int64, outMs: Int64) -> Int64 {
+        guard inMs >= 0, outMs > inMs else { return 0 }
+        return outMs - inMs
+    }
+
+    static func totalDuration(_ values: [Int64]) -> Int64 {
+        values.reduce(0) { total, value in
+            let (sum, overflow) = total.addingReportingOverflow(max(0, value))
+            return overflow ? .max : sum
+        }
+    }
+
+    private static func saturatedInteger(_ value: Double) -> Int64 {
+        guard !value.isNaN, value > 0 else { return 0 }
+        if value >= Double(Int64.max) { return .max }
+        return Int64(value)
     }
 }

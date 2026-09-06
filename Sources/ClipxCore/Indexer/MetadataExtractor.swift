@@ -27,7 +27,10 @@ enum MetadataExtractor {
 
         do {
             let duration = try await asset.load(.duration)
-            meta.durationMs = Int64(CMTimeGetSeconds(duration) * 1000)
+            let milliseconds = CMTimeGetSeconds(duration) * 1000
+            if milliseconds.isFinite, milliseconds > 0, milliseconds < Double(Int64.max) {
+                meta.durationMs = Int64(milliseconds)
+            }
         } catch {
             ClipxLog.indexer.debug("duration load failed for \(url.path, privacy: .public): \(String(describing: error), privacy: .public)")
         }
@@ -38,16 +41,24 @@ enum MetadataExtractor {
                 let naturalSize = try await videoTrack.load(.naturalSize)
                 let transform = try await videoTrack.load(.preferredTransform)
                 let applied = naturalSize.applying(transform)
-                meta.width = Int(abs(applied.width))
-                meta.height = Int(abs(applied.height))
+                if applied.width.isFinite, applied.height.isFinite,
+                   abs(applied.width) < CGFloat(Int.max), abs(applied.height) < CGFloat(Int.max) {
+                    meta.width = Int(abs(applied.width))
+                    meta.height = Int(abs(applied.height))
+                }
 
                 let frameRate = try await videoTrack.load(.nominalFrameRate)
-                meta.fps = Double(frameRate)
+                if frameRate.isFinite, frameRate > 0 { meta.fps = Double(frameRate) }
 
                 let descriptions = try await videoTrack.load(.formatDescriptions)
                 if let first = descriptions.first {
                     let mediaSubType = CMFormatDescriptionGetMediaSubType(first)
                     meta.codec = fourCCToString(mediaSubType)
+                    let extensions = (CMFormatDescriptionGetExtensions(first) as NSDictionary?) ?? [:]
+                    let primaries = extensions[kCMFormatDescriptionExtension_ColorPrimaries] as? String
+                    let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction] as? String
+                    let values = [primaries, transfer].compactMap { $0 }
+                    if !values.isEmpty { meta.colorSpace = values.joined(separator: "/") }
                 }
             }
         } catch {
@@ -78,10 +89,6 @@ enum MetadataExtractor {
             meta.createdAt = Int64(date.timeIntervalSince1970)
         }
 
-        // Leave colorSpace nil rather than fabricating "rec709" — downstream
-        // tooling (color grading, HDR badges) would mislabel Rec.2020 or
-        // P3 footage. ffprobe sidecar can fill this in later when implemented.
-        meta.colorSpace = nil
         return meta
     }
 

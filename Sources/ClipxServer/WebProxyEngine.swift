@@ -1,185 +1,287 @@
 import Foundation
 import AVFoundation
 import CoreMedia
+import CryptoKit
 
-/// Generates and caches small, aggressively-compressed web proxies of source
-/// videos so the phone / laptop browser can stream them over Wi-Fi. Raw DJI
-/// 1080p50 onboard footage is tens of Mbps — unusable remotely. The proxy is
-/// ~540p, capped at 30fps, re-encoded H.264 at a low bitrate (roughly 1/20th
-/// the size), and stored at ~/Library/Caches/Clipx/proxies/<hash>.mp4.
-///
-/// An `actor` so the in-flight job table and progress map are race-free. The
-/// heavy `AVAssetExportSession.export()` awaits suspend the actor, leaving it
-/// free to answer status queries while a transcode runs.
+/// Owns the bounded transcode queue and its cached results. A failed job stays
+/// failed until an explicit retry; status polling never restarts failed work.
 actor WebProxyEngine {
-    /// Target proxy height (px). 540p is plenty for phone review and a big cut
-    /// from 1080p. Drop to 480/360 here if footage still feels heavy.
     static let targetHeight = 540
-    /// Cap frame rate — DJI shoots 50/60fps; 30 is smooth for review and
-    /// roughly halves the bitrate.
     static let maxFPS = 30
 
-    private let cacheDir: URL
-    /// One transcode per source hash; concurrent requests share the job.
-    private var jobs: [String: Task<URL, Error>] = [:]
-    /// 0...1 transcode progress per hash, for the status endpoint.
-    private var progressByHash: [String: Double] = [:]
+    struct Status {
+        let ready: Bool
+        let progress: Double
+        let state: String
+        let error: String?
+    }
+    private struct Job {
+        let id: UUID
+        let sourcePath: String
+        let hash: String
+        let rotation: Int
+        var progress: Double = 0
+        var state = "queued"
+        var error: String?
+        var task: Task<Void, Never>?
+        var accessedAt = Date()
+    }
 
-    init() {
+    private let cacheDir: URL
+    private let maxConcurrent: Int
+    private let maxCacheBytes: Int64
+    private var jobs: [String: Job] = [:]
+    private var queued: [String] = []
+    private var isShuttingDown = false
+
+    init(cacheDir: URL? = nil, maxConcurrent: Int = 2, maxCacheBytes: Int64 = 1_073_741_824) {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        cacheDir = caches.appendingPathComponent("Clipx/proxies", isDirectory: true)
-        try? FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
+        self.cacheDir = cacheDir ?? AppPreferences.cacheDirectory?.appendingPathComponent("proxies", isDirectory: true)
+            ?? caches.appendingPathComponent("Clipx/proxies", isDirectory: true)
+        self.maxConcurrent = max(1, maxConcurrent)
+        self.maxCacheBytes = max(1, maxCacheBytes)
+        try? FileManager.default.createDirectory(at: self.cacheDir, withIntermediateDirectories: true)
     }
 
-    nonisolated func proxyPath(forHash hash: String) -> URL {
-        cacheDir.appendingPathComponent("\(hash).mp4")
+    /// Rotation changes rendered bytes; playback speed is applied by the browser
+    /// so video.currentTime, seek positions and saved marks remain source time.
+    nonisolated func proxyPath(forHash hash: String, rotation: Int = 0) -> URL {
+        cacheDir.appendingPathComponent(Self.key(hash: hash, rotation: rotation) + ".mp4")
     }
 
-    /// (ready, progress). `ready` means a finished proxy file exists on disk.
-    func status(forHash hash: String) -> (ready: Bool, progress: Double) {
-        if Self.fileExistsNonEmpty(proxyPath(forHash: hash)) { return (true, 1.0) }
-        if jobs[hash] != nil { return (false, max(0.01, progressByHash[hash] ?? 0)) }
-        return (false, 0)
+    private nonisolated static func key(hash: String, rotation: Int) -> String {
+        let identity = "v2:\(hash):\(VideoRotation.normalized(rotation))"
+        return SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// Kicks off a transcode if the proxy isn't already ready / building.
-    /// Fire-and-forget: returns immediately so the HTTP handler never blocks
-    /// for the length of a transcode.
-    func startProxyIfNeeded(sourcePath: String, hash: String) {
-        let dest = proxyPath(forHash: hash)
-        if Self.fileExistsNonEmpty(dest) || jobs[hash] != nil { return }
-        progressByHash[hash] = 0
-        let job = Task<URL, Error> {
-            try await self.transcode(sourcePath: sourcePath, hash: hash, dest: dest)
+    func status(forHash hash: String, rotation: Int = 0) -> Status {
+        let url = proxyPath(forHash: hash, rotation: rotation)
+        if Self.fileExistsNonEmpty(url) {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+            return Status(ready: true, progress: 1, state: "ready", error: nil)
         }
-        jobs[hash] = job
-        // Reap the job entry once it finishes, regardless of outcome.
-        Task {
-            _ = try? await job.value
-            await self.clearJob(hash: hash)
+        let key = Self.key(hash: hash, rotation: rotation)
+        guard let job = jobs[key] else { return Status(ready: false, progress: 0, state: "idle", error: nil) }
+        jobs[key]?.accessedAt = Date()
+        return Status(ready: false, progress: job.progress, state: job.state, error: job.error)
+    }
+
+    func startProxyIfNeeded(sourcePath: String, hash: String, rotation: Int = 0, retry: Bool = false) {
+        guard !Task.isCancelled, !isShuttingDown else { return }
+        let key = Self.key(hash: hash, rotation: rotation)
+        guard !Self.fileExistsNonEmpty(proxyPath(forHash: hash, rotation: rotation)) else { return }
+        if let existing = jobs[key] {
+            guard existing.state == "ready" || (retry && ["failed", "cancelled"].contains(existing.state)) else { return }
+        }
+        pruneFinishedJobs()
+        guard queued.count < 32 else {
+            jobs[key] = Job(id: UUID(), sourcePath: sourcePath, hash: hash, rotation: rotation,
+                            state: "failed", error: "The preparation queue is full. Try again after another video finishes.")
+            return
+        }
+        jobs[key] = Job(id: UUID(), sourcePath: sourcePath, hash: hash, rotation: rotation)
+        queued.append(key)
+        evictCache()
+        runQueuedJobs()
+    }
+
+    /// Cancels all queued and running exports when Remote is disabled or the
+    /// app shuts down. Drain each task before returning to its caller.
+    func shutdown() async {
+        isShuttingDown = true
+        defer { isShuttingDown = false }
+        queued.removeAll()
+        let running = jobs.values.compactMap(\.task)
+        for key in Array(jobs.keys) {
+            jobs[key]?.task?.cancel()
+            jobs[key]?.state = "cancelled"
+            jobs[key]?.error = "Preparation was cancelled. Try again to restart it."
+        }
+        for task in running { await task.value }
+    }
+
+    private func runQueuedJobs() {
+        while jobs.values.filter({ $0.task != nil }).count < maxConcurrent, !queued.isEmpty {
+            let key = queued.removeFirst()
+            guard let job = jobs[key], job.state == "queued" else { continue }
+            jobs[key]?.state = "preparing"
+            jobs[key]?.task = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await self.transcode(job: job, key: key)
+                    await self.finish(key: key, id: job.id, error: nil)
+                } catch {
+                    await self.finish(key: key, id: job.id, error: error)
+                }
+            }
         }
     }
 
-    private func clearJob(hash: String) {
-        jobs[hash] = nil
-        if Self.fileExistsNonEmpty(proxyPath(forHash: hash)) {
-            progressByHash[hash] = 1.0
+    private func finish(key: String, id: UUID, error: Error?) {
+        guard jobs[key]?.id == id else { return }
+        jobs[key]?.task = nil
+        if let error {
+            jobs[key]?.state = error is CancellationError ? "cancelled" : "failed"
+            jobs[key]?.error = error is CancellationError
+                ? "Preparation was cancelled. Try again to restart it."
+                : "This video could not be prepared. Try again, or check that it plays on the Mac."
+            ClipxLog.app.error("web proxy failed: \(String(describing: error), privacy: .public)")
         } else {
-            progressByHash[hash] = nil
+            jobs[key]?.state = "ready"
+            jobs[key]?.progress = 1
+            jobs[key]?.error = nil
+        }
+        evictCache()
+        runQueuedJobs()
+    }
+
+    private func setProgress(key: String, id: UUID, value: Double) {
+        guard jobs[key]?.id == id, jobs[key]?.state == "preparing" else { return }
+        jobs[key]?.progress = value.isFinite ? min(1, max(0, value)) : 0
+    }
+
+    private func pruneFinishedJobs() {
+        let finished = jobs.filter { $0.value.task == nil && $0.value.state != "queued" }
+            .sorted { $0.value.accessedAt < $1.value.accessedAt }
+        for (key, _) in finished.prefix(max(0, jobs.count - 127)) { jobs[key] = nil }
+    }
+
+    /// Keep at most a week's old previews and trim least-recently-used files
+    /// above the disk budget. A five-minute grace keeps current playback stable.
+    private func evictCache() {
+        let fm = FileManager.default
+        let now = Date()
+        guard let urls = try? fm.contentsOfDirectory(at: cacheDir,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
+        let files = urls.compactMap { url -> (URL, Int64, Date)? in
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
+            let date = values.contentModificationDate ?? .distantPast
+            if url.pathExtension != "mp4" {
+                if url.lastPathComponent.contains(".partial-"), now.timeIntervalSince(date) > 86_400 {
+                    try? fm.removeItem(at: url)
+                }
+                return nil
+            }
+            return (url, Int64(values.fileSize ?? 0), date)
+        }.sorted { $0.2 < $1.2 }
+        var total = files.reduce(Int64(0)) { $0 + $1.1 }
+        for (url, size, date) in files where now.timeIntervalSince(date) > 300 {
+            if total > maxCacheBytes || now.timeIntervalSince(date) > 7 * 86_400 {
+                if (try? fm.removeItem(at: url)) != nil { total -= size }
+            }
         }
     }
 
-    private func setProgress(hash: String, value: Double) {
-        // Don't let polling clobber a finished entry.
-        if jobs[hash] != nil { progressByHash[hash] = value }
-    }
-
-    // MARK: - Transcode
-
-    private func transcode(sourcePath: String, hash: String, dest: URL) async throws -> URL {
-        let asset = AVURLAsset(url: URL(fileURLWithPath: sourcePath))
-
+    private func transcode(job: Job, key: String) async throws {
+        try Task.checkCancellation()
+        let asset = AVURLAsset(url: URL(fileURLWithPath: job.sourcePath))
         guard let composition = try await Self.buildDownscaleComposition(
-            asset: asset, targetHeight: Self.targetHeight, maxFPS: Self.maxFPS
-        ) else {
-            throw NSError(domain: "clipx.proxy", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Source has no video track"])
-        }
-
-        // MediumQuality is a quality-based preset, so the encoder picks a
-        // bitrate appropriate to the small 540p render size — far smaller than a
-        // resolution preset tuned for full-res output.
+            asset: asset, targetHeight: Self.targetHeight, maxFPS: Self.maxFPS, rotation: job.rotation
+        ) else { throw CocoaError(.fileReadCorruptFile) }
+        try Task.checkCancellation()
         guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality) else {
-            throw NSError(domain: "clipx.proxy", code: -2,
-                          userInfo: [NSLocalizedDescriptionKey: "Couldn't create export session"])
+            throw CocoaError(.fileReadUnknown)
         }
-
-        // Write to a temp file and atomically move on success so the status
-        // check (file exists) never sees a half-written proxy.
-        let tmp = dest.appendingPathExtension("tmp")
-        try? FileManager.default.removeItem(at: tmp)
+        let dest = proxyPath(forHash: job.hash, rotation: job.rotation)
+        // AVFoundation can attempt its final file open after the cancellation
+        // completion has fired. Removing only the file can therefore leave a
+        // recreated orphan. A private parent directory makes cleanup durable.
+        let staging = cacheDir.appendingPathComponent(".partial-\(job.id.uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false)
+        let tmp = staging.appendingPathComponent("proxy.mp4")
+        defer { try? FileManager.default.removeItem(at: staging) }
         session.outputURL = tmp
         session.outputFileType = .mp4
         session.videoComposition = composition
-        // Move the moov atom to the front so the browser can start playing
-        // before the whole file downloads (progressive streaming).
         session.shouldOptimizeForNetworkUse = true
-
         let poll = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.setProgress(hash: hash, value: Double(session.progress))
-                try? await Task.sleep(nanoseconds: 400_000_000)
+                await self?.setProgress(key: key, id: job.id, value: Double(session.progress))
+                do { try await Task.sleep(nanoseconds: 400_000_000) }
+                catch { break }
             }
         }
-        await session.export()
-        poll.cancel()
-
-        switch session.status {
-        case .completed:
-            try? FileManager.default.removeItem(at: dest)
-            try FileManager.default.moveItem(at: tmp, to: dest)
-            ClipxLog.app.info("web proxy ready for \(hash, privacy: .public)")
-            return dest
-        case .cancelled:
-            try? FileManager.default.removeItem(at: tmp)
-            throw CancellationError()
-        default:
-            try? FileManager.default.removeItem(at: tmp)
-            throw session.error ?? NSError(
-                domain: "clipx.proxy", code: -3,
-                userInfo: [NSLocalizedDescriptionKey: "Transcode ended with status \(session.status.rawValue)"]
-            )
-        }
+        defer { poll.cancel() }
+        let cancellation = ExportCancellation(session)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                cancellation.start(continuation)
+            }
+        } onCancel: { cancellation.cancel() }
+        try Task.checkCancellation()
+        // Only this generation can publish its output. No stale cleanup touches
+        // a newer job's temporary path or final result.
+        guard jobs[key]?.id == job.id else { throw CancellationError() }
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.moveItem(at: tmp, to: dest)
     }
 
-    /// Builds a composition that scales the source to `targetHeight` (preserving
-    /// aspect, even dimensions for H.264) and caps the frame rate. Returns nil
-    /// when the asset has no video track.
     private static func buildDownscaleComposition(
-        asset: AVAsset, targetHeight: Int, maxFPS: Int
+        asset: AVAsset, targetHeight: Int, maxFPS: Int, rotation: Int
     ) async throws -> AVMutableVideoComposition? {
         let tracks = try await asset.loadTracks(withMediaType: .video)
         guard let track = tracks.first else { return nil }
         let natural = try await track.load(.naturalSize)
-        let transform = try await track.load(.preferredTransform)
-        let oriented = natural.applying(transform)
-        let srcW = abs(oriented.width), srcH = abs(oriented.height)
-        guard srcW > 0, srcH > 0 else { return nil }
-
-        let scale = CGFloat(targetHeight) / srcH
-        // Even dimensions — H.264 requires it.
-        let dstH = CGFloat(targetHeight)
-        let dstW = (((srcW * scale) / 2).rounded() * 2)
-        let scaledW = srcW * scale
-        let scaledH = srcH * scale
-
-        var t = transform
-        t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-        t = t.concatenating(CGAffineTransform(
-            translationX: (dstW - scaledW) / 2,
-            y: (dstH - scaledH) / 2
-        ))
-
+        let preferred = try await track.load(.preferredTransform)
+        let bounds = CGRect(origin: .zero, size: natural).applying(preferred)
+        let oriented = bounds.size
+        let rotated = VideoRotation.renderSize(oriented: oriented, degrees: rotation)
+        guard rotated.width.isFinite, rotated.height.isFinite,
+              rotated.width > 0, rotated.height > 0 else { return nil }
+        let scale = min(1, CGFloat(targetHeight) / rotated.height)
+        let dstW = max(2, ((rotated.width * scale / 2).rounded() * 2))
+        let dstH = max(2, ((rotated.height * scale / 2).rounded() * 2))
+        var transform = preferred.concatenating(CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
+        transform = transform.concatenating(VideoRotation.transform(oriented: oriented, degrees: rotation))
+        transform = transform.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+        transform = transform.concatenating(CGAffineTransform(
+            translationX: (dstW - rotated.width * scale) / 2,
+            y: (dstH - rotated.height * scale) / 2))
         let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-        layer.setTransform(t, at: .zero)
-
+        layer.setTransform(transform, at: .zero)
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: try await asset.load(.duration))
         instruction.layerInstructions = [layer]
-
-        let comp = AVMutableVideoComposition()
-        comp.renderSize = CGSize(width: dstW, height: dstH)
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = CGSize(width: dstW, height: dstH)
         let srcFPS = (try? await track.load(.nominalFrameRate)) ?? 30
-        let fps = min(maxFPS, max(24, Int(srcFPS.rounded())))
-        comp.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
-        comp.instructions = [instruction]
-        return comp
+        let fps = srcFPS.isFinite ? min(Float(maxFPS), max(1, srcFPS.rounded())) : 30
+        composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps))
+        composition.instructions = [instruction]
+        return composition
     }
 
     private static func fileExistsNonEmpty(_ url: URL) -> Bool {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
               let size = attrs[.size] as? Int64 else { return false }
         return size > 0
+    }
+
+    /// Only cancelExport crosses executors; all configuration and result reads
+    /// remain on the engine actor. AVFoundation supports cancelling a running export.
+    private final class ExportCancellation: @unchecked Sendable {
+        private let session: AVAssetExportSession
+        private let lock = NSLock()
+        private var cancelled = false
+        init(_ session: AVAssetExportSession) { self.session = session }
+        func start(_ continuation: CheckedContinuation<Void, Error>) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !cancelled else { continuation.resume(throwing: CancellationError()); return }
+            session.exportAsynchronously { [self] in
+                switch session.status {
+                case .completed: continuation.resume()
+                case .cancelled: continuation.resume(throwing: CancellationError())
+                default: continuation.resume(throwing: session.error ?? CocoaError(.fileWriteUnknown))
+                }
+            }
+        }
+        func cancel() {
+            lock.lock()
+            defer { lock.unlock() }
+            cancelled = true
+            session.cancelExport()
+        }
     }
 }

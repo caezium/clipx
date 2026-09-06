@@ -81,9 +81,7 @@ struct FilterSidebar: View {
 
             if appState.activeFilters.isActive || appState.selectedProjectID != nil || appState.selectedCollectionID != nil {
                 Button("Clear filters") {
-                    appState.activeFilters = ClipFilters()
-                    appState.selectedProjectID = nil
-                    appState.selectedCollectionID = nil
+                    appState.clearFilters()
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.red)

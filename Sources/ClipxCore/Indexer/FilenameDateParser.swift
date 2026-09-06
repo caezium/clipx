@@ -43,6 +43,8 @@ enum FilenameDateParser {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = .current
         guard let date = cal.date(from: comps) else { return nil }
+        let resolved = cal.dateComponents([.year, .month, .day], from: date)
+        guard resolved.year == year, resolved.month == month, resolved.day == day else { return nil }
         return Int64(date.timeIntervalSince1970)
     }
 }

@@ -11,7 +11,7 @@ A Mac-native clip workbench that sits between source footage and the NLE/social 
 - **Tagging** — color labels, free-text tags with autocomplete, structured fields (mood, shot type, camera movement, setting), star ratings
 - **Search** — SQLite FTS5 instant search, multi-faceted filter sidebar, Cmd+K command palette
 - **Export presets** — Reels (9:16), TikTok, YouTube Shorts, IG feed (4:5), YouTube 1080p, YouTube 4K
-- **Bridges** — FCPXML 1.13 export to Final Cut Pro, `.md` sidecar writer to Obsidian vault with YAML frontmatter
+- **Bridges** — FCPXML 1.10 export to Final Cut Pro, `.md` sidecar writer to Obsidian vault with YAML frontmatter
 - **Project grouping** — group clips into named output projects
 - **Two-track distribution** — Direct build (ffmpeg sidecar, full presets, global hotkey, Sparkle updates) and Mac App Store build (sandboxed, AVAssetExportSession backend, no loudness normalization)
 
@@ -20,7 +20,7 @@ A Mac-native clip workbench that sits between source footage and the NLE/social 
 - macOS 14+ (Sonoma or later)
 - Xcode 26+ with Swift 6.x
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
-- [ffmpeg](https://ffmpeg.org/) for the Direct build — `brew install ffmpeg` (dev) or download static binary for distribution
+- [ffmpeg](https://ffmpeg.org/) for the Direct build — `brew install ffmpeg` for development; distribution requires a verified portable binary with only system-library dependencies. The Direct target bundles the helper during every build.
 
 ## Getting started
 
@@ -48,12 +48,12 @@ Or build from the command line:
 ```bash
 # Direct (development, no signing)
 xcodebuild -project Clipx.xcodeproj -scheme Clipx-Direct \
-  -configuration Debug -derivedDataPath build/DerivedData \
+  -configuration Debug -derivedDataPath /tmp/clipx-build/Direct \
   CODE_SIGNING_ALLOWED=NO build
 
 # MAS (development, no signing)
 xcodebuild -project Clipx.xcodeproj -scheme Clipx-MAS \
-  -configuration Debug -derivedDataPath build/DerivedData \
+  -configuration Debug -derivedDataPath /tmp/clipx-build/MAS \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
@@ -83,10 +83,14 @@ clipx/
 ├── Helpers/
 │   └── ffmpeg                        # Static binary for Direct build (gitignored)
 ├── Tests/
-│   └── ClipxCoreTests/
+│   ├── ClipxCoreTests/               # Stores, real media, native rendering, HTTP/browser fixtures
+│   └── ClipxUITests/                 # Isolated native click workflow
 └── Scripts/
     ├── setup.sh                      # Dev setup
-    ├── bundle-ffmpeg.sh              # Download + bundle static ffmpeg
+    ├── bundle-ffmpeg.sh              # Install a verified portable ffmpeg
+    ├── copy-ffmpeg.sh                # Direct target's helper build phase
+    ├── validate-ffmpeg.sh            # Release portability/architecture check
+    ├── verify.sh                     # Isolated regression entry point
     └── sign.sh                       # Code-sign helper
 ```
 
@@ -95,8 +99,8 @@ clipx/
 Hybrid **AVFoundation + ffmpeg** stack:
 
 - **AVFoundation** handles all playback, scrubbing, thumbnail generation, and basic export (MAS build only)
-- **ffmpeg sidecar** handles loudness normalization (-10 / -14 LUFS), precise bitrate targeting, advanced codec features, color metadata stamping (Direct build only)
-- **Runtime chip detection** picks `h264_videotoolbox` on M1 base and `libx264` on M-series Pro/Max (where VideoToolbox is 20-40× slower)
+- **ffmpeg sidecar** handles loudness normalization (-10 / -14 LUFS), precise bitrate targeting, advanced codec features, and final encoding after native HDR/wide-gamut conversion to Rec.709 (Direct build only)
+- **Runtime chip detection** chooses the software or VideoToolbox encoder; export, drag, and Stint use one validated render request for source-time marks, rotation, and speed.
 
 Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. The MAS build excludes `ClipxHotkey/`, `ClipxSparkle/`, and `FFmpegBackend.swift` from its sources entirely.
 
@@ -104,21 +108,21 @@ Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. T
 
 ### Direct (recommended for power users)
 
-1. Enroll in Apple Developer Program ($99/yr)
+1. Configure your Apple developer account and release signing identity
 2. Generate a Developer ID Application certificate
 3. Set `CODE_SIGN_IDENTITY` and configure notarization credentials
-4. Run `./Scripts/sign.sh release`
+4. Set `APP_PATH` to the Release app and run `./Scripts/sign.sh`
 5. Bundle into a DMG
 6. Notarize via `xcrun notarytool submit`
 7. Staple the ticket: `xcrun stapler staple`
-8. Sparkle handles updates from `https://updates.clipx.app/appcast.xml`
+8. Configure a real Sparkle appcast and public Ed25519 key before enabling updates
 
 ### Mac App Store
 
 1. Generate a Mac App Distribution certificate
 2. Set up an App Store Connect listing
 3. Archive the `Clipx-MAS` scheme
-4. Upload via Xcode Organizer or `xcrun altool`
+4. Upload via Xcode Organizer
 
 ## Keyboard shortcuts
 
@@ -129,33 +133,33 @@ Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. T
 | `S` | Save range as clip |
 | `Space` | Play / pause |
 | `←` `→` | Step one frame back / forward |
-| `1`-`5` | Rate selected clip(s) ★ |
 | `⌘K` | Command palette |
 | `⌘F` | Search |
 | `⌘O` | Add folder |
 | `⌘⇧R` | Export selected as Reels |
 | `⌘⇧C` | (Direct only) Quick-add frontmost video to library |
 
-## Status
+Plain marking and transport keys apply while the player has focus. Rate clips from the inspector or Clip menu.
 
-**Beta v0.1 — both build targets compile, release binary runs, 36 unit tests pass.**
+## Verification
 
-Working:
-- Both `Clipx-Direct` and `Clipx-MAS` build clean (Debug + Release)
-- Release `.app` is 17 MB, launches and runs without crashing
-- Database, indexer, folder watcher, thumbnail engine, marker store, tag store, search engine, FCPXML/Obsidian bridges all unit-tested
-- All UI screens functional: library grid + list, inspector pane, sidebar, settings tabs, command palette, shortcut overlay, export progress, onboarding wizard, New Project / New Collection sheets
+The reviewed baseline is committed as `c700be3`. [CODE_REVIEW.md](CODE_REVIEW.md) records the original findings; [REPAIR_NOTES.md](REPAIR_NOTES.md) maps the repairs and verification limits.
 
-What still needs your hands to ship as a real product:
+```bash
+./Scripts/verify.sh doctor
+./Scripts/verify.sh core     # Direct backend and complete regression suite
+./Scripts/verify.sh mas      # App Store backend and complete regression suite
+./Scripts/verify.sh native   # Real SwiftUI screens with isolated media/data
+./Scripts/verify.sh browser  # Remote browser flows; requires Playwright
+```
 
-- **Apple Developer enrollment** + Developer ID Application cert + notarization credentials
-- **Real Sparkle appcast feed** — `SUFeedURL` is a placeholder; needs a real hosted XML and Ed25519 keypair
-- **Static ffmpeg binary** — `Scripts/bundle-ffmpeg.sh` exists with the URL stubbed; audit + sign whatever binary you ship
-- **Bundled sample clips** for onboarding's "ready" state
-- **Crash reporter** — choose KSCrash / PLCrashReporter / Sentry and wire it up
-- **Frame-step VFR accuracy** — current implementation uses average fps; for VFR sources a proper keyframe index (via AVAssetReader) would be more accurate
-- **FCPXML richness** — current output is single sequence, no markers, no audio sub-roles. Valid FCPXML 1.13, drops into FCP, but won't roundtrip rich metadata
-- **Premiere XML, Resolve EDL, Notion CSV bridges** — deferred to v0.2
+Builds live under `/tmp/clipx-verification-build` by default; `CLIPX_BUILD_ROOT` and `CLIPX_PACKAGES_DIR` can reuse existing caches. Test schemes use a separate app identity and isolated preferences, data, and caches. Native render captures are written to `/tmp/clipx-native-ui-evidence`; logs and `.xcresult` bundles stay with the build products. See the [project verification skill](.agents/skills/verify-clipx/SKILL.md) for browser setup, evidence, cleanup, and the optional native click workflow.
+
+## Release inputs
+
+Release builds reject a missing or nonportable FFmpeg helper, so a Homebrew development binary cannot silently produce an app that only works on its builder's Mac. To install an audited standalone binary, set `FFMPEG_URL` and its independently verified `FFMPEG_SHA256`, then run `Scripts/bundle-ffmpeg.sh`. Existing helpers remain in place if verification fails. `Scripts/setup.sh` preserves an already installed release helper.
+
+Developer ID/App Store signing credentials, notarization credentials, and a real Sparkle feed/key are still external release inputs. This repair does not publish a release. FCPXML structure and frame timing are covered by tests; importing into Final Cut Pro and validating against Apple's authenticated DTD download remain manual checks. Frame stepping on variable-frame-rate footage still uses nominal frame timing.
 
 ## License
 

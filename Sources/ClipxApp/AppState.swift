@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import Combine
+import AppKit
 
 /// Shared, observable app state. Owns the currently-selected clip, search
 /// query, and any other UI-wide reactive values. Heavy data layer
@@ -33,6 +34,51 @@ final class AppState: ObservableObject {
     @Published var playerSourceID: Int64?
     @Published var playerInMs: Int64?
     @Published var playerOutMs: Int64?
+    @Published var playerOpenRevision = 0
+
+    func openClip(_ clip: Clip) {
+        if let id = clip.id { selectedClipIDs = [id] }
+        guard clip.durationMs > 0 else {
+            showToast("This clip has an invalid range. Open its source to mark a new range.", level: .error)
+            return
+        }
+        if AppPreferences.defaults.object(forKey: "openClipsInBuiltInPlayer") as? Bool == false {
+            do {
+                guard let database = AppEnvironment.shared.database,
+                      let source = try database.read({ try Source.fetchOne($0, key: clip.sourceID) }),
+                      NSWorkspace.shared.open(source.url) else {
+                    showToast("Couldn't open this source in your default video app", level: .error)
+                    return
+                }
+            } catch { showToast("Couldn't open source: \(error.localizedDescription)", level: .error) }
+            return
+        }
+        playerInMs = clip.inMs
+        playerOutMs = clip.outMs
+        playerSourceID = clip.sourceID
+        playerOpenRevision &+= 1
+    }
+
+    /// Navigation scope and its query filters change together.
+    func selectProject(_ id: Int64?) {
+        selectedProjectID = id
+        selectedCollectionID = nil
+        activeFilters.projectIDs = id.map { [$0] } ?? []
+        activeFilters.collectionIDs = []
+    }
+
+    func selectCollection(_ id: Int64?) {
+        selectedCollectionID = id
+        selectedProjectID = nil
+        activeFilters.collectionIDs = id.map { [$0] } ?? []
+        activeFilters.projectIDs = []
+    }
+
+    func clearFilters() {
+        selectedProjectID = nil
+        selectedCollectionID = nil
+        activeFilters = ClipFilters()
+    }
 
     // MARK: Notifications
     @Published var toasts: [Toast] = []
@@ -90,8 +136,7 @@ final class AppState: ObservableObject {
             try? await Task.sleep(nanoseconds: ttl)
             guard !Task.isCancelled else { return }
             await MainActor.run {
-                self?.toasts.removeAll { $0.id == id }
-                self?.dismissTasks.removeValue(forKey: id)
+                self?.dismissToast(id)
             }
         }
     }
@@ -150,6 +195,7 @@ enum ClipSortOption: String, CaseIterable {
 }
 
 struct ClipFilters: Equatable {
+    enum DateField: String { case recorded, imported }
     var moods: Set<String> = []
     var shotTypes: Set<String> = []
     var cameraMoves: Set<String> = []
@@ -160,6 +206,7 @@ struct ClipFilters: Equatable {
     var projectIDs: Set<Int64> = []
     var dateFrom: Date?
     var dateTo: Date?
+    var dateField: DateField = .recorded
     var unusedOnly: Bool = false
     var onlineOnly: Bool = false
 

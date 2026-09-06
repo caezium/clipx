@@ -28,8 +28,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ws.addObserver(self, selector: #selector(handleVolumeMount(_:)), name: NSWorkspace.didMountNotification, object: nil)
 
         #if DIRECT_BUILD
-        GlobalHotkey.shared.register()
-        UpdateManager.shared.start()
+        if AppPreferences.dataDirectory == nil {
+            GlobalHotkey.shared.register()
+            UpdateManager.shared.start()
+        }
         #endif
     }
 
@@ -77,9 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let folders = AppEnvironment.shared.bookmarkStore?.allFolders(),
                   let idx = AppEnvironment.shared.indexer else { return }
             for f in folders where f.path == volPath || f.path.hasPrefix(volPath + "/") {
-                if online { await idx.markFolderOnline(f.path) }
-                else { await idx.markFolderOffline(f.path) }
+                if !online { await idx.markFolderOffline(f.path) }
             }
+            if online { AppEnvironment.shared.watcher?.resumeAll() }
         }
     }
 

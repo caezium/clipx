@@ -24,6 +24,8 @@
 	<string>14.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Clipx connects to your chosen review server and shares your library with paired browsers when you enable Remote.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
 </dict>

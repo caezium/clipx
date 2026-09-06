@@ -1,11 +1,7 @@
 import Foundation
 
-/// Detects the M-series chip variant at runtime to pick the right encoder.
-/// VideoToolbox h264_videotoolbox is 4x faster than libx264 on M1 base, but
-/// 20-40x slower on M1/M2/M3 Pro/Max. We must switch.
-///
-/// Detection is cached after the first call — sysctl + brand parsing isn't
-/// free and we used to run it on every export job.
+/// Cached chip detection for the existing encoder preference. Actual encoder
+/// throughput depends on the footage, preset, and current system load.
 enum ChipDetector {
     enum Tier { case appleSiliconBase, appleSiliconProMax, intel, unknown }
 
@@ -15,9 +11,9 @@ enum ChipDetector {
 
     private static func detectUncached() -> Tier {
         var size = 0
-        sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0)
+        guard sysctlbyname("machdep.cpu.brand_string", nil, &size, nil, 0) == 0, size > 0 else { return .unknown }
         var brand = [CChar](repeating: 0, count: size)
-        sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0)
+        guard sysctlbyname("machdep.cpu.brand_string", &brand, &size, nil, 0) == 0 else { return .unknown }
         let brandName = String(cString: brand).lowercased()
 
         if brandName.contains("apple") {
@@ -34,7 +30,7 @@ enum ChipDetector {
     static func recommendedH264Codec() -> String {
         switch detect() {
         case .appleSiliconBase: return "h264_videotoolbox"
-        case .appleSiliconProMax: return "libx264" // libx264 is faster on Pro/Max
+        case .appleSiliconProMax: return "libx264"
         case .intel: return "h264_videotoolbox"
         case .unknown: return "libx264"
         }

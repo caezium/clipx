@@ -4,9 +4,11 @@ import GRDB
 /// CRUD on tags and clip↔tag relationships. Provides autocomplete for tag UIs.
 final class TagStore {
     private let database: Database
+    private let didChange: () -> Void
 
-    init(database: Database) {
+    init(database: Database, didChange: @escaping () -> Void = LibraryChanges.publish) {
         self.database = database
+        self.didChange = didChange
     }
 
     /// Ensures a tag exists; returns its id.
@@ -34,23 +36,29 @@ final class TagStore {
     }
 
     func addTag(_ tagName: String, toClip clipID: Int64) throws {
-        let tagID = try upsertTag(name: tagName)
         try database.write { db in
-            try db.execute(
-                sql: "INSERT OR IGNORE INTO clip_tags(clip_id, tag_id) VALUES (?, ?)",
-                arguments: [clipID, tagID]
-            )
+            try Self.addTag(tagName, toClip: clipID, in: db)
         }
+        didChange()
+    }
+
+    static func addTag(_ name: String, toClip clipID: Int64, in db: GRDB.Database) throws {
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { throw TagError.empty }
+        try db.execute(sql: "INSERT OR IGNORE INTO tags(name) VALUES (?)", arguments: [normalized])
+        try db.execute(sql: "INSERT OR IGNORE INTO clip_tags(clip_id, tag_id) SELECT ?, id FROM tags WHERE name = ?",
+                       arguments: [clipID, normalized])
     }
 
     func removeTag(_ tagName: String, fromClip clipID: Int64) throws {
-        let lower = tagName.lowercased()
+        let lower = tagName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         try database.write { db in
             try db.execute(sql: """
                 DELETE FROM clip_tags
                 WHERE clip_id = ? AND tag_id IN (SELECT id FROM tags WHERE name = ?)
             """, arguments: [clipID, lower])
         }
+        didChange()
     }
 
     func tags(forClip clipID: Int64) throws -> [Tag] {

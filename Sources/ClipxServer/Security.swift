@@ -1,6 +1,7 @@
 import Foundation
 import CryptoKit
 import Security
+import Darwin
 
 /// Constant-time string comparison — its running time depends only on the
 /// longer input's length, never on the position of the first mismatch, so it
@@ -29,12 +30,40 @@ func clampLimit(_ raw: String?, default def: Int = 300, max maxValue: Int = 1000
 /// DNS-rebinding: an attacker page on `evil.com` whose DNS resolves to the
 /// victim's LAN IP still sends `Host: evil.com`, which is not in this set. (#4)
 func isAllowedHost(_ host: String?) -> Bool {
-    guard let host, !host.isEmpty else { return false }
-    let name = host.split(separator: ":", maxSplits: 1).first.map(String.init) ?? host
+    guard let host, !host.isEmpty,
+          !host.contains(where: { $0.isWhitespace || $0 == "/" || $0 == "@" }) else { return false }
+    let name: String
+    if host.hasPrefix("[") {
+        guard let closing = host.firstIndex(of: "]") else { return false }
+        name = String(host[host.index(after: host.startIndex)..<closing])
+        let suffix = host[host.index(after: closing)...]
+        guard validPortSuffix(String(suffix)) else { return false }
+        var address = in6_addr()
+        guard inet_pton(AF_INET6, name, &address) == 1 else { return false }
+        let bytes = withUnsafeBytes(of: address) { Array($0) }
+        // IPv6 equivalents of the existing loopback / private / link-local policy.
+        return (bytes.dropLast().allSatisfy { $0 == 0 } && bytes.last == 1)
+            || bytes[0] & 0xfe == 0xfc
+            || (bytes[0] == 0xfe && bytes[1] & 0xc0 == 0x80)
+    }
+    let components = host.split(separator: ":", omittingEmptySubsequences: false)
+    guard components.count <= 2 else { return false }
+    name = String(components[0])
+    if components.count == 2, !validPortSuffix(":" + components[1]) { return false }
     let lower = name.lowercased()
-    if lower == "localhost" || lower == "127.0.0.1" || lower == "::1" { return true }
-    if lower.hasSuffix(".local") { return true }   // Bonjour / mDNS name
+    if lower == "localhost" || lower == "127.0.0.1" { return true }
+    if lower.hasSuffix(".local"), lower.utf8.allSatisfy({
+        (97...122).contains($0) || (48...57).contains($0) || $0 == 45 || $0 == 46
+    }) { return true }
     return isPrivateIPv4(lower)                     // the Mac's LAN address
+}
+
+private func validPortSuffix(_ suffix: String) -> Bool {
+    if suffix.isEmpty { return true }
+    guard suffix.hasPrefix(":"), suffix.count > 1 else { return false }
+    let digits = suffix.dropFirst()
+    return digits.utf8.allSatisfy({ (48...57).contains($0) })
+        && UInt16(digits).map { $0 > 0 } == true
 }
 
 /// Sliding-window failed-attempt throttle for PIN pairing. After
@@ -119,21 +148,37 @@ struct SessionTokenStore: Codable {
 /// with no Range gets a bounded first chunk (the browser continues with
 /// Range requests). (#5)
 func resolveByteRange(_ header: String?, size: Int64, maxChunk: Int64 = 1_048_576) -> (start: Int64, end: Int64)? {
-    guard size > 0 else { return nil }
-    guard let header, header.hasPrefix("bytes=") else {
+    guard size > 0, maxChunk > 0 else { return nil }
+    guard let header else {
         return (0, Swift.min(size - 1, maxChunk - 1))
     }
-    let spec = String(header.dropFirst("bytes=".count))
+    guard header.hasPrefix("bytes="), !header.contains(",") else { return nil }
+    let spec = String(header.dropFirst("bytes=".count)).trimmingCharacters(in: .whitespaces)
     let parts = spec.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-    let start = Int64(parts.first ?? "0") ?? 0
-    let end: Int64
-    if parts.count > 1, !parts[1].isEmpty {
-        end = Swift.min(size - 1, Int64(parts[1]) ?? (size - 1))
-    } else {
-        end = Swift.min(size - 1, start + maxChunk - 1)
+    guard parts.count == 2 else { return nil }
+    func decimal(_ raw: String) -> Int64? {
+        guard !raw.isEmpty, raw.utf8.allSatisfy({ (48...57).contains($0) }) else { return nil }
+        return Int64(raw)
     }
-    guard start >= 0, start <= end, end < size else { return nil }
-    return (start, end)
+    let start: Int64
+    let requestedEnd: Int64
+    if parts[0].isEmpty {
+        guard let suffix = decimal(parts[1]), suffix > 0 else { return nil }
+        start = size - Swift.min(size, suffix)
+        requestedEnd = size - 1
+    } else {
+        guard let parsedStart = decimal(parts[0]), parsedStart < size else { return nil }
+        start = parsedStart
+        if parts[1].isEmpty { requestedEnd = size - 1 }
+        else {
+            guard let end = decimal(parts[1]), end >= start else { return nil }
+            requestedEnd = Swift.min(size - 1, end)
+        }
+    }
+    // Compute the length within EOF before adding it to the start. Even
+    // Int64.max input cannot overflow this arithmetic.
+    let count = Swift.min(maxChunk, requestedEnd - start + 1)
+    return (start, start + (count - 1))
 }
 
 /// Extracts a single cookie value from a `Cookie:` header. Lets the web client
@@ -160,8 +205,8 @@ func generateSecureToken(byteCount: Int = 24) -> String {
 }
 
 private func isPrivateIPv4(_ s: String) -> Bool {
-    let parts = s.split(separator: ".").map(String.init)
-    guard parts.count == 4 else { return false }
+    let parts = s.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
+    guard parts.count == 4, parts.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy({ (48...57).contains($0) }) }) else { return false }
     let octets = parts.compactMap { Int($0) }
     guard octets.count == 4, octets.allSatisfy({ (0...255).contains($0) }) else { return false }
     switch (octets[0], octets[1]) {

@@ -242,6 +242,47 @@ enum Migrations {
             }
         }
 
+        migrator.registerMigration("v8_durable_review_transfers") { db in
+            try db.create(table: "stint_transfer_batches") { t in
+                t.column("id", .text).primaryKey()
+                t.column("selection_key", .text).notNull()
+                t.column("project_id", .text).notNull().references("stint_projects", column: "project_id")
+                t.column("completed", .integer).notNull().defaults(to: 0)
+                t.column("created_at", .integer).notNull()
+            }
+            try db.create(index: "idx_stint_transfer_selection", on: "stint_transfer_batches", columns: ["selection_key", "completed"])
+            try db.create(table: "stint_transfer_items") { t in
+                t.column("batch_id", .text).notNull().references("stint_transfer_batches", column: "id", onDelete: .cascade)
+                // Snapshot identity survives deletion and Undo of a local clip.
+                t.column("clip_id", .integer).notNull()
+                t.column("stint_clip_id", .text)
+                t.column("uploaded", .integer).notNull().defaults(to: 0)
+                t.primaryKey(["batch_id", "clip_id"])
+            }
+        }
+
+        migrator.registerMigration("v9_validate_media_values") { db in
+            try db.execute(sql: "UPDATE sources SET speed = 1 WHERE speed IS NULL OR speed <= 0 OR speed > 1000")
+            // Existing records remain recoverable; reject new malformed ranges
+            // even if a future caller bypasses MarkerStore.
+            for operation in ["INSERT", "UPDATE OF in_ms, out_ms, source_id"] {
+                let suffix = operation == "INSERT" ? "insert" : "update"
+                try db.execute(sql: """
+                    CREATE TRIGGER clips_valid_range_\(suffix) BEFORE \(operation) ON clips
+                    WHEN new.in_ms < 0 OR new.out_ms <= new.in_ms
+                    BEGIN SELECT RAISE(ABORT, 'Clip range must be positive and start at or after zero'); END;
+                    """)
+            }
+            for operation in ["INSERT", "UPDATE OF speed"] {
+                let suffix = operation == "INSERT" ? "insert" : "update"
+                try db.execute(sql: """
+                    CREATE TRIGGER sources_valid_speed_\(suffix) BEFORE \(operation) ON sources
+                    WHEN new.speed IS NULL OR new.speed <= 0 OR new.speed > 1000
+                    BEGIN SELECT RAISE(ABORT, 'Playback speed must be finite and positive'); END;
+                    """)
+            }
+        }
+
         return migrator
     }
 }

@@ -77,4 +77,129 @@ final class ExportPipelineTests: XCTestCase {
         XCTAssertEqual(statuses, [ExportStatus.failed.rawValue, ExportStatus.success.rawValue],
                        "stuck in-progress → failed; success untouched")
     }
+
+    func testInterruptedHistoryCannotDeleteSuccessfulRetryAtSamePath() throws {
+        let folder = try MediaRegressionTests.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let output = folder.appendingPathComponent("retry.mp4")
+        let completed = Data("successful retry".utf8)
+        try completed.write(to: output)
+        let database = try Database.inMemory()
+        try database.write { db in
+            for status in [ExportStatus.inProgress, .success] {
+                try db.execute(sql: "INSERT INTO exports(preset,output_path,exported_at,status) VALUES('reels',?,0,?)",
+                               arguments: [output.path, status.rawValue])
+            }
+        }
+        ExportPipeline.reconcileInterruptedExports(database: database)
+        XCTAssertEqual(try Data(contentsOf: output), completed)
+        XCTAssertEqual(try database.read { try String.fetchAll($0, sql: "SELECT status FROM exports ORDER BY id") },
+                       [ExportStatus.failed.rawValue, ExportStatus.success.rawValue])
+    }
+}
+
+@MainActor
+final class ExportLifecycleTests: XCTestCase {
+    private actor Gate {
+        private(set) var calls = 0
+        private var waiter: CheckedContinuation<Void, Never>?
+        func enter() async {
+            calls += 1
+            if calls == 1 { await withCheckedContinuation { waiter = $0 } }
+        }
+        func release() { waiter?.resume(); waiter = nil }
+    }
+
+    func testCancelThenEnqueueWaitsForCleanupAndWritesTerminalHistory() async throws {
+        let database = try databaseWithClip()
+        let folder = try MediaRegressionTests.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let gate = Gate()
+        let pipeline = ExportPipeline(database: database) { request, _, progress in
+            try Data([1, 2, 3]).write(to: request.outputURL)
+            await gate.enter()
+            progress(0.75)
+            return ClipRenderResult(durationMs: 1234, bytes: 3)
+        }
+        pipeline.enqueue(clipID: 1, preset: .reels, outputDir: folder)
+        for _ in 0..<200 {
+            if await gate.calls == 1 { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        let started = await gate.calls
+        XCTAssertEqual(started, 1)
+        pipeline.cancelAll()
+        pipeline.enqueue(clipID: 1, preset: .reels, outputDir: folder)
+        XCTAssertTrue(pipeline.isRunning, "Cancelled worker stays active until it drains")
+        XCTAssertTrue(pipeline.isCancelling)
+        XCTAssertEqual(pipeline.jobs.count, 1)
+        let callsBeforeRelease = await gate.calls
+        XCTAssertEqual(callsBeforeRelease, 1, "A second worker must not overlap old cleanup")
+        await gate.release()
+        await drain(pipeline)
+        let records = try database.read { try ExportRecord.fetchAll($0, sql: "SELECT * FROM exports ORDER BY id") }
+        XCTAssertEqual(records.map(\.status), [ExportStatus.cancelled.rawValue, ExportStatus.success.rawValue])
+        XCTAssertEqual(records.last?.durationMs, 1234, "History records measured output duration")
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 1)
+        XCTAssertEqual(try database.read { try Clip.fetchOne($0, key: 1)?.usedCount }, 1)
+        XCTAssertNil(pipeline.currentJob)
+        XCTAssertTrue(pipeline.progress.isEmpty)
+    }
+
+    func testFailureRemovesPartialOutputAndClosesHistory() async throws {
+        let database = try databaseWithClip()
+        let folder = try MediaRegressionTests.temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let pipeline = ExportPipeline(database: database) { request, _, _ in
+            try Data([1]).write(to: request.outputURL)
+            throw CocoaError(.fileWriteUnknown)
+        }
+        pipeline.enqueue(clipID: 1, preset: .reels, outputDir: folder)
+        await drain(pipeline)
+        let statuses = try database.read { try String.fetchAll($0, sql: "SELECT status FROM exports") }
+        XCTAssertEqual(statuses, [ExportStatus.failed.rawValue])
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+    }
+
+    func testFailureAndPublicationCollisionPreserveOtherWriterAtFinalPath() async throws {
+        for failBeforePublication in [true, false] {
+            let database = try databaseWithClip()
+            let folder = try MediaRegressionTests.temporaryFolder()
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let otherFile = Data("Another process owns this file".utf8)
+            let pipeline = ExportPipeline(database: database) { request, _, _ in
+                try Data([1, 2, 3]).write(to: request.outputURL)
+                let finalPath = try database.read {
+                    try String.fetchOne($0, sql: "SELECT output_path FROM exports ORDER BY id DESC LIMIT 1")!
+                }
+                try otherFile.write(to: URL(fileURLWithPath: finalPath))
+                if failBeforePublication { throw CocoaError(.fileWriteUnknown) }
+                return ClipRenderResult(durationMs: 1234, bytes: 3)
+            }
+            pipeline.enqueue(clipID: 1, preset: .reels, outputDir: folder)
+            await drain(pipeline)
+            let entry = try database.read { try ExportRecord.fetchOne($0) }
+            XCTAssertEqual(entry?.status, ExportStatus.failed.rawValue)
+            let path = try XCTUnwrap(entry?.outputPath)
+            XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: path)), otherFile)
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 1)
+        }
+    }
+
+    private func databaseWithClip() throws -> Database {
+        let database = try Database.inMemory()
+        try database.write { db in
+            try db.execute(sql: "INSERT INTO sources(id,path,hash,mtime,imported_at,duration_ms,fps,speed) VALUES(1,'/fixture','fixture',0,0,8000,30,2)")
+            try db.execute(sql: "INSERT INTO clips(id,source_id,in_ms,out_ms,created_at) VALUES(1,1,2000,6000,0)")
+        }
+        return database
+    }
+
+    private func drain(_ pipeline: ExportPipeline) async {
+        for _ in 0..<400 {
+            if !pipeline.isRunning { return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Export queue did not drain")
+    }
 }

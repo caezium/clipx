@@ -9,7 +9,10 @@ struct PlayerView: View {
     @EnvironmentObject private var appState: AppState
     @StateObject private var controller = PlayerController()
     @State private var source: Source?
+    @State private var sourceError: String?
     @State private var savedClips: [Clip] = []
+    @State private var savedClipsTask: Task<Void, Never>?
+    @State private var savedClipsGeneration = UUID()
     @FocusState private var keyboardFocused: Bool
     // Tag-at-the-cut: pressing Save opens an inline capture instead of writing a
     // nameless clip and forcing a trip to the Inspector.
@@ -36,17 +39,33 @@ struct PlayerView: View {
                     PlayerSurface(player: player)
                         .contentShape(Rectangle())
                 }
+                if let error = sourceError ?? controller.loadError {
+                    VStack(spacing: 10) {
+                        Image(systemName: "video.slash").font(.title)
+                        Text("Couldn't open this video").font(.headline)
+                        Text(error).font(.callout).foregroundStyle(Theme.textSecondary)
+                            .multilineTextAlignment(.center)
+                        HStack {
+                            Button("Try Again", action: load)
+                            Button("Back to Library", action: exitToLibrary)
+                        }
+                    }
+                    .padding(24).frame(maxWidth: 400)
+                } else if controller.isLoading {
+                    ProgressView("Opening video…")
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(-1)
             // Tap to focus, double-tap a side to skip ±, press-and-hold for 2×.
             // Hidden while the capture card is up so it gets the events.
-            .overlay { if !capturing { videoGestureZones } }
+            .overlay { if !capturing && playbackReady { videoGestureZones } }
             // The capture card floats over the bottom of the video so marking
             // → naming → tagging never leaves the player.
             .overlay(alignment: .bottom) {
                 if capturing {
                     captureCard
+                        .padding(.horizontal, 12)
                         .padding(.bottom, 18)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -86,10 +105,20 @@ struct PlayerView: View {
             keyboardFocused = true
         }
         .onChange(of: appState.libraryRevision) { _, _ in reloadSavedClips() }
+        .onChange(of: appState.playerOpenRevision) { _, _ in
+            if appState.playerSourceID == sourceID, let inMs = appState.playerInMs {
+                controller.seek(toMs: inMs)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .systemWillSleep)) { _ in
             controller.pause()
         }
-        .onDisappear { controller.tearDown() }
+        .onDisappear {
+            spaceHoldTask?.cancel()
+            savedClipsTask?.cancel()
+            savedClipsGeneration = UUID()
+            controller.tearDown()
+        }
         // All player hotkeys route through `key()`, which returns `.ignored`
         // while a text field is being edited (the capture card's name/tag
         // fields, etc.) so typing "s" doesn't fire Save. (onKeyPress on this
@@ -150,129 +179,171 @@ struct PlayerView: View {
         .onReceive(NotificationCenter.default.publisher(for: .playerStepForward)) { _ in controller.stepForward() }
     }
 
+    private var playbackReady: Bool {
+        sourceError == nil && controller.loadError == nil && !controller.isLoading && controller.durationMs > 0
+    }
+
+    private var hasValidRange: Bool {
+        guard let start = appState.playerInMs, let end = appState.playerOutMs else { return false }
+        return start >= 0 && end > start && end <= controller.durationMs
+    }
+
     private var controlBar: some View {
-        HStack(spacing: 12) {
-            // Transport cluster: -5s | prev frame | play/pause | next frame | +5s
-            HStack(spacing: 2) {
-                Button { controller.jumpBackward(seconds: 5) } label: {
-                    Image(systemName: "gobackward.5").font(.system(size: 15))
-                }
-                .buttonStyle(.plain).clipxIconButton()
-                .help("Back 5s (J or ⇧←)")
-
-                Button { controller.stepBackward() } label: {
-                    Image(systemName: "backward.frame.fill").font(.system(size: 13))
-                }
-                .buttonStyle(.plain).clipxIconButton()
-                .help("Previous frame (←)")
-
-                Button { controller.togglePlayPause() } label: {
-                    Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 15))
-                }
-                .buttonStyle(.plain).clipxIconButton(size: 36, active: false)
-                .help("Play / Pause (Space or K)")
-
-                Button { controller.stepForward() } label: {
-                    Image(systemName: "forward.frame.fill").font(.system(size: 13))
-                }
-                .buttonStyle(.plain).clipxIconButton()
-                .help("Next frame (→)")
-
-                Button { controller.jumpForward(seconds: 5) } label: {
-                    Image(systemName: "goforward.5").font(.system(size: 15))
-                }
-                .buttonStyle(.plain).clipxIconButton()
-                .help("Forward 5s (L or ⇧→)")
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                transportControls
+                playbackTime
+                rangeSummary
+                Spacer(minLength: 8)
+                playbackOptions
+                markControls
             }
-
-            // Time display. The current-time read-out observes the playback
-            // clock directly (a leaf view) so it can update every frame without
-            // re-rendering the whole control bar / player on each tick.
-            HStack(spacing: 4) {
-                PlaybackTimeLabel(clock: controller.clock)
-                Text("/").foregroundStyle(Theme.textTertiary)
-                Text(controller.durationLabel)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize()
-            }
-            .padding(.horizontal, 10).padding(.vertical, 5)
-            .background(Theme.surface, in: Capsule())
-
-            // In/Out range indicator
-            if let inMs = appState.playerInMs {
-                HStack(spacing: 4) {
-                    Image(systemName: "scissors").font(.caption2)
-                    Text(PlayerController.formatMs(inMs))
-                        .font(.caption.monospacedDigit())
-                    if let outMs = appState.playerOutMs {
-                        Text("→")
-                        Text(PlayerController.formatMs(outMs))
-                            .font(.caption.monospacedDigit())
-                        Text("(\(PlayerController.formatMs(outMs - inMs)))")
-                            .font(.caption2.monospacedDigit())
-                            .opacity(0.8)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    transportControls
+                    Spacer(minLength: 0)
+                    ViewThatFits(in: .horizontal) {
+                        playbackTime
+                        PlaybackTimeLabel(clock: controller.clock)
                     }
                 }
-                .padding(.horizontal, 9).padding(.vertical, 5)
-                .background(Theme.success.opacity(0.14), in: Capsule())
-                .overlay(Capsule().strokeBorder(Theme.success.opacity(0.35), lineWidth: 1))
-                .foregroundStyle(Theme.success)
-                .fixedSize()
+                HStack(spacing: 8) {
+                    markControls
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    playbackOptions
+                    Spacer(minLength: 0)
+                    if let start = appState.playerInMs, let end = appState.playerOutMs {
+                        Text("Range " + PlayerController.formatMs(FrameMath.rangeDuration(inMs: start, outMs: end)))
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(hasValidRange ? Theme.success : Theme.textSecondary)
+                            .lineLimit(1)
+                            .help("In \(PlayerController.formatMs(start)) → Out \(PlayerController.formatMs(end))")
+                    } else if appState.playerInMs != nil {
+                        Text("Set Out next").font(.caption).foregroundStyle(Theme.textSecondary)
+                    }
+                }
             }
+        }
+        .disabled(!playbackReady || capturing)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .background(Theme.bgRaised)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+    }
 
-            Spacer()
+    private var transportControls: some View {
+        HStack(spacing: 2) {
+            Button { controller.jumpBackward(seconds: 5) } label: {
+                Image(systemName: "gobackward.5").font(.system(size: 15))
+            }
+            .buttonStyle(.plain).clipxIconButton()
+            .help("Back 5s (J or ⇧←)").accessibilityLabel("Back five seconds")
+            Button { controller.stepBackward() } label: {
+                Image(systemName: "backward.frame.fill").font(.system(size: 13))
+            }
+            .buttonStyle(.plain).clipxIconButton()
+            .help("Previous frame (←)").accessibilityLabel("Previous frame")
+            Button { controller.togglePlayPause() } label: {
+                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 15))
+            }
+            .buttonStyle(.plain).clipxIconButton(size: 36)
+            .help("Play / Pause (Space or K)")
+            .accessibilityIdentifier("player.playPause")
+            .accessibilityLabel(controller.isPlaying ? "Pause" : "Play")
+            Button { controller.stepForward() } label: {
+                Image(systemName: "forward.frame.fill").font(.system(size: 13))
+            }
+            .buttonStyle(.plain).clipxIconButton()
+            .help("Next frame (→)")
+            .accessibilityIdentifier("player.nextFrame").accessibilityLabel("Next frame")
+            Button { controller.jumpForward(seconds: 5) } label: {
+                Image(systemName: "goforward.5").font(.system(size: 15))
+            }
+            .buttonStyle(.plain).clipxIconButton()
+            .help("Forward 5s (L or ⇧→)").accessibilityLabel("Forward five seconds")
+        }
+        .fixedSize()
+    }
 
+    private var playbackTime: some View {
+        HStack(spacing: 4) {
+            PlaybackTimeLabel(clock: controller.clock)
+            Text("/").foregroundStyle(Theme.textTertiary)
+            Text(controller.durationLabel)
+                .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
+        }
+        .fixedSize()
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(Theme.surface, in: Capsule())
+        .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder
+    private var rangeSummary: some View {
+        if let start = appState.playerInMs {
+            HStack(spacing: 4) {
+                Image(systemName: "scissors").font(.caption2)
+                Text(PlayerController.formatMs(start))
+                if let end = appState.playerOutMs {
+                    Text("→ " + PlayerController.formatMs(end))
+                    Text("(" + PlayerController.formatMs(FrameMath.rangeDuration(inMs: start, outMs: end)) + ")")
+                        .opacity(0.8)
+                }
+            }
+            .font(.caption.monospacedDigit())
+            .padding(.horizontal, 9).padding(.vertical, 5)
+            .background(Theme.success.opacity(0.14), in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.success.opacity(0.35), lineWidth: 1))
+            .foregroundStyle(Theme.success).fixedSize()
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private var playbackOptions: some View {
+        HStack(spacing: 10) {
             volumeControl
             speedMenu
-
-            // Rotate 90° — persists per source and is baked into exports.
             Button { rotate() } label: {
                 Image(systemName: "rotate.right").font(.system(size: 14))
             }
-            .buttonStyle(.plain)
-            .clipxIconButton(active: controller.rotation != 0)
+            .buttonStyle(.plain).clipxIconButton(active: controller.rotation != 0)
             .help(controller.rotation == 0 ? "Rotate 90°" : "Rotated \(controller.rotation)° — click to rotate")
-
-            // Mark cluster
-            HStack(spacing: 6) {
-                Button { markIn() } label: {
-                    Label("In", systemImage: "i.square")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
-                .fixedSize()
-                .help("Mark In (I)")
-                Button { markOut() } label: {
-                    Label("Out", systemImage: "o.square")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
-                .fixedSize()
-                .help("Mark Out (O)")
-                Button { saveRange() } label: {
-                    Label("Save Clip", systemImage: "checkmark")
-                        .labelStyle(.titleAndIcon)
-                }
-                .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
-                .fixedSize()
-                // No keyboardShortcut here — menu shortcuts hijack focused
-                // TextFields. The .onKeyPress("s") on the view handles the
-                // keyboard path when the player has focus.
-                .help("Save range as clip (S)")
-            }
+            .accessibilityLabel("Rotate video 90 degrees")
         }
-        .padding(.horizontal, 14).padding(.vertical, 9)
-        .background(Theme.bgRaised)
+        .fixedSize()
+    }
+
+    private var markControls: some View {
+        HStack(spacing: 6) {
+            Button(action: markIn) { Label("In", systemImage: "i.square") }
+                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                .help("Mark In (I)")
+                .accessibilityIdentifier("player.markIn").accessibilityLabel("Mark In")
+            Button(action: markOut) { Label("Out", systemImage: "o.square") }
+                .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
+                .help("Mark Out (O)")
+                .accessibilityIdentifier("player.markOut").accessibilityLabel("Mark Out")
+            Button(action: saveRange) { Label("Save Clip", systemImage: "checkmark") }
+                .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
+                .disabled(!hasValidRange)
+                .help(hasValidRange ? "Save range as clip (S)" : "Mark In and Out to save a clip")
+                .accessibilityIdentifier("player.saveRange").accessibilityLabel("Save Clip")
+        }
+        .fixedSize()
     }
 
     private func load() {
         guard let database = AppEnvironment.shared.database else { return }
+        sourceError = nil
         do {
             guard let src: Source = try database.read({
                 try Source.fetchOne($0, key: sourceID)
-            }) else { return }
+            }) else {
+                controller.tearDown()
+                sourceError = "This source is no longer in the library."
+                return
+            }
             self.source = src
             controller.load(url: src.url)
             controller.setRotation(src.rotation)   // restore the source's rotation
@@ -281,6 +352,8 @@ struct PlayerView: View {
                 controller.seek(toMs: inMs)
             }
         } catch {
+            controller.tearDown()
+            sourceError = error.localizedDescription
             ClipxLog.player.error("PlayerView.load failed: \(String(describing: error), privacy: .public)")
         }
     }
@@ -289,7 +362,7 @@ struct PlayerView: View {
     /// (the capture card's name/tag fields, etc.), in which case the key is
     /// ignored so it reaches the field instead of firing a player shortcut.
     private func key(_ action: () -> Void) -> KeyPress.Result {
-        if capturing || PlayerView.isEditingText() { return .ignored }
+        if capturing || !playbackReady || PlayerView.isEditingText() { return .ignored }
         action()
         return .handled
     }
@@ -305,14 +378,18 @@ struct PlayerView: View {
     /// Rotate the source 90° CW, persist it, and re-apply to the preview.
     private func rotate() {
         let newRotation = (controller.rotation + 90) % 360
-        controller.setRotation(newRotation)
-        guard var src = source, let id = src.id else { return }
-        src.rotation = newRotation
-        source = src
-        try? AppEnvironment.shared.database?.write { db in
-            try db.execute(sql: "UPDATE sources SET rotation = ? WHERE id = ?", arguments: [newRotation, id])
+        guard var src = source, let id = src.id, let database = AppEnvironment.shared.database else { return }
+        do {
+            try database.write { db in
+                try db.execute(sql: "UPDATE sources SET rotation = ? WHERE id = ?", arguments: [newRotation, id])
+            }
+            controller.setRotation(newRotation)
+            src.rotation = newRotation
+            source = src
+            AppState.shared.libraryRevision &+= 1
+        } catch {
+            appState.showToast("Couldn't save rotation: \(error.localizedDescription)", level: .error)
         }
-        AppState.shared.libraryRevision &+= 1
     }
 
     // MARK: - Speed & volume controls
@@ -324,14 +401,20 @@ struct PlayerView: View {
     /// Set the permanent per-source speed, persist it, and apply to the preview.
     /// Mirrors `rotate()`; baked into exports via `Source.speed`.
     private func setSpeed(_ newSpeed: Double) {
-        controller.setSpeed(newSpeed)
-        guard var src = source, let id = src.id else { return }
-        src.speed = controller.speed
-        source = src
-        try? AppEnvironment.shared.database?.write { db in
-            try db.execute(sql: "UPDATE sources SET speed = ? WHERE id = ?", arguments: [controller.speed, id])
+        guard newSpeed.isFinite, var src = source, let id = src.id,
+              let database = AppEnvironment.shared.database else { return }
+        let speed = max(0.1, min(PlayerController.maxSpeed, newSpeed))
+        do {
+            try database.write { db in
+                try db.execute(sql: "UPDATE sources SET speed = ? WHERE id = ?", arguments: [speed, id])
+            }
+            controller.setSpeed(speed)
+            src.speed = speed
+            source = src
+            AppState.shared.libraryRevision &+= 1
+        } catch {
+            appState.showToast("Couldn't save speed: \(error.localizedDescription)", level: .error)
         }
-        AppState.shared.libraryRevision &+= 1
     }
 
     /// True when the current speed isn't one of the presets (a custom value).
@@ -391,7 +474,12 @@ struct PlayerView: View {
             .replacingOccurrences(of: "×", with: "")
             .replacingOccurrences(of: "x", with: "", options: [.caseInsensitive])
             .trimmingCharacters(in: .whitespaces)
-        if let v = Double(cleaned), v > 0 { setSpeed(v) }
+        guard let value = Double(cleaned), value.isFinite,
+              (0.1...PlayerController.maxSpeed).contains(value) else {
+            appState.showToast("Enter a speed from 0.1× to \(speedLabel(PlayerController.maxSpeed)).", level: .warning)
+            return
+        }
+        setSpeed(value)
     }
 
     private var volumeIcon: String {
@@ -409,6 +497,7 @@ struct PlayerView: View {
             .buttonStyle(.plain)
             .foregroundStyle(controller.muted ? Theme.accent : Theme.textSecondary)
             .help(controller.muted ? "Unmute" : "Mute")
+            .accessibilityLabel(controller.muted ? "Unmute" : "Mute")
             Slider(
                 value: Binding(
                     get: { controller.muted ? 0 : controller.volume },
@@ -419,6 +508,7 @@ struct PlayerView: View {
             .controlSize(.mini)
             .frame(width: 64)
             .help("Volume — above the midpoint boosts gain above the source")
+            .accessibilityLabel("Playback volume")
         }
     }
 
@@ -458,12 +548,14 @@ struct PlayerView: View {
     }
 
     private func markIn() {
+        guard playbackReady, !capturing else { return }
         // Snap to the displayed frame so the mark matches what the user saw. (#14)
         appState.playerInMs = controller.currentFrameMs
         NotificationCenter.default.post(name: .markerDidChange, object: nil)
     }
 
     private func markOut() {
+        guard playbackReady, !capturing else { return }
         appState.playerOutMs = controller.currentFrameMs
         NotificationCenter.default.post(name: .markerDidChange, object: nil)
     }
@@ -471,7 +563,7 @@ struct PlayerView: View {
     /// Save (S) no longer writes a nameless clip — it opens the inline capture
     /// so the clip is named, tagged, and rated at the moment of the cut.
     private func saveRange() {
-        guard !capturing else { return }
+        guard !capturing, playbackReady else { return }
         guard let inMs = appState.playerInMs, let outMs = appState.playerOutMs, outMs > inMs else {
             AppState.shared.showToast("Mark in and out points first (I, O)", level: .warning)
             return
@@ -483,6 +575,7 @@ struct PlayerView: View {
         // Pull existing tags so the user can one-tap the labels they already use.
         captureSuggestions = (try? AppEnvironment.shared.tagStore?
             .suggestions(prefix: "", limit: 14).map(\.name)) ?? []
+        controller.pause()
         withAnimation(.easeOut(duration: 0.16)) { capturing = true }
     }
 
@@ -495,22 +588,17 @@ struct PlayerView: View {
         do {
             let clip = try markerStore.saveRange(
                 sourceID: sourceID, inMs: inMs, outMs: outMs,
-                name: trimmedName.isEmpty ? nil : trimmedName
+                name: trimmedName.isEmpty ? nil : trimmedName,
+                rating: rating, tags: tags, purposes: purposes,
+                projectIDs: appState.selectedProjectID.map { [$0] } ?? [],
+                collectionIDs: appState.selectedCollectionID.map { [$0] } ?? []
             )
-            if let id = clip.id {
-                if rating > 0 { try? markerStore.updateRating(id, rating: rating) }
-                if !purposes.isEmpty {
-                    try? markerStore.updatePurpose(id, purpose: purposes.joined(separator: ","))
-                }
-                if let tagStore = AppEnvironment.shared.tagStore {
-                    for tag in tags { try? tagStore.addTag(tag, toClip: id) }
-                }
-            }
+            if let id = clip.id { appState.selectedClipIDs = [id] }
             let count = savedClips.count + 1
             AppState.shared.showToast(
                 trimmedName.isEmpty
-                    ? "Saved clip \(count) (\(PlayerController.formatMs(outMs - inMs)))"
-                    : "Saved “\(trimmedName)” (\(PlayerController.formatMs(outMs - inMs)))",
+                    ? "Saved clip \(count) (\(PlayerController.formatMs(FrameMath.rangeDuration(inMs: inMs, outMs: outMs))))"
+                    : "Saved “\(trimmedName)” (\(PlayerController.formatMs(FrameMath.rangeDuration(inMs: inMs, outMs: outMs))))",
                 level: .success
             )
             // Park just past the out point so the next clip can be marked without
@@ -520,6 +608,7 @@ struct PlayerView: View {
             appState.playerOutMs = nil
         } catch {
             AppState.shared.showToast("Failed to save: \(error.localizedDescription)", level: .error)
+            return
         }
         withAnimation(.easeOut(duration: 0.16)) { capturing = false }
         keyboardFocused = true
@@ -541,7 +630,7 @@ struct PlayerView: View {
 
     private var captureCard: some View {
         ClipCaptureCard(
-            durationMs: (appState.playerOutMs ?? 0) - (appState.playerInMs ?? 0),
+            durationMs: FrameMath.rangeDuration(inMs: appState.playerInMs ?? 0, outMs: appState.playerOutMs ?? 0),
             suggestions: captureSuggestions,
             onCommit: { name, rating, tags, purposes in
                 commitCapture(name: name, rating: rating, tags: tags, purposes: purposes)
@@ -553,10 +642,16 @@ struct PlayerView: View {
     }
 
     private func reloadSavedClips() {
-        Task.detached(priority: .userInitiated) { [sourceID] in
-            guard let store = AppEnvironment.shared.markerStore else { return }
-            let clips = (try? store.fetchClips(forSource: sourceID)) ?? []
-            await MainActor.run { self.savedClips = clips }
+        savedClipsTask?.cancel()
+        let generation = UUID()
+        savedClipsGeneration = generation
+        guard let store = AppEnvironment.shared.markerStore else { return }
+        savedClipsTask = Task { @MainActor in
+            let clips = await Task.detached(priority: .userInitiated) { [sourceID] in
+                (try? store.fetchClips(forSource: sourceID)) ?? []
+            }.value
+            guard !Task.isCancelled, savedClipsGeneration == generation else { return }
+            self.savedClips = clips
         }
     }
 
@@ -620,7 +715,7 @@ struct PlayerView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
-                Text(PlayerController.formatMs(clip.outMs - clip.inMs))
+                Text(PlayerController.formatMs(clip.durationMs))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(Theme.textTertiary)
             }
@@ -657,19 +752,11 @@ struct PlayerView: View {
     }
 
     private func exportClip(_ clipID: Int64, preset: ExportPreset) {
-        appState.selectedClipIDs = [clipID]
-        ExportActions.exportSelected(preset)
+        ExportActions.export(clipIDs: [clipID], preset: preset)
     }
 
     private func deleteClip(_ clipID: Int64) {
-        guard let markerStore = AppEnvironment.shared.markerStore else { return }
-        do {
-            try markerStore.deleteClip(clipID)
-            appState.selectedClipIDs.remove(clipID)
-            AppState.shared.showToast("Clip deleted", level: .info)
-        } catch {
-            AppState.shared.showToast("Delete failed: \(error.localizedDescription)", level: .error)
-        }
+        MarkerActions.deleteClips([clipID])
     }
 }
 
@@ -737,10 +824,12 @@ struct ClipCaptureCard: View {
                 Spacer()
                 Button(action: onCancel) { Image(systemName: "xmark").font(.system(size: 11)) }
                     .buttonStyle(.plain).clipxIconButton(size: 24)
+                    .accessibilityLabel("Cancel new clip")
             }
 
             // Name — autofocused, Enter saves.
             TextField("Name this clip…", text: $name)
+                .accessibilityIdentifier("capture.name")
                 .textFieldStyle(.plain)
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textPrimary)
@@ -759,6 +848,8 @@ struct ClipCaptureCard: View {
                             .foregroundStyle(i <= rating ? Theme.star : Theme.textTertiary)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Rate \(i) star\(i == 1 ? "" : "s")")
+                    .accessibilityValue(rating == i ? "Selected" : "")
                 }
                 Spacer()
             }
@@ -782,6 +873,7 @@ struct ClipCaptureCard: View {
                                 .clipxChip(selected: selectedPurposes.contains(label.key))
                             }
                             .buttonStyle(.plain)
+                            .accessibilityValue(selectedPurposes.contains(label.key) ? "Selected" : "Not selected")
                         }
                     }
                 }
@@ -804,6 +896,8 @@ struct ClipCaptureCard: View {
                 HStack(spacing: 5) {
                     Image(systemName: "tag").font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
                     TextField("add tag", text: $newTag)
+                        .accessibilityLabel("Add a tag")
+                        .accessibilityIdentifier("capture.tag")
                         .textFieldStyle(.plain)
                         .font(.system(size: 12))
                         .onSubmit(addCurrentTag)
@@ -819,13 +913,13 @@ struct ClipCaptureCard: View {
                     .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                     .keyboardShortcut(.cancelAction)
                 Button("Save", action: commit)
+                    .accessibilityIdentifier("capture.save")
                     .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
             }
         }
         .padding(14)
-        .frame(width: 390)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.r3))
-        .background(Theme.surfaceActive, in: RoundedRectangle(cornerRadius: Theme.r3))
+        .frame(maxWidth: 390)
+        .background(Theme.bgRaised, in: RoundedRectangle(cornerRadius: Theme.r3))
         .overlay(RoundedRectangle(cornerRadius: Theme.r3).strokeBorder(Theme.borderStrong, lineWidth: 1))
         .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
         .onAppear { nameFocused = true }

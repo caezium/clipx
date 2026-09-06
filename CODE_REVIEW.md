@@ -1,3 +1,5 @@
+> Historical review of the baseline preserved in commit `c700be3`. See [REPAIR_NOTES.md](REPAIR_NOTES.md) for subsequent changes and verification. Source line references below describe the reviewed baseline.
+
 # Clipx code review — 2026-09-06
 
 This codebase is worth repairing. It has useful foundations—versioned migrations, parameterized SQL, small stores, separate rendering backends, native media APIs, and tests—but several existing workflows can crash, lose metadata, or produce the wrong output. The evidence supports fixing those failures and clarifying ownership of persistent operations before deciding how much to restructure.

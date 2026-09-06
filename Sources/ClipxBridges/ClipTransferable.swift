@@ -6,10 +6,8 @@ import UniformTypeIdentifiers
 /// site (Finder, FCP, Premiere, Slack…). Uses ffmpeg in Direct builds and
 /// AVAssetExportSession in MAS builds.
 ///
-/// The export runs synchronously inside the transfer callback because the
-/// destination won't accept the drop until we hand back a real URL. For very
-/// long clips this can briefly hang the cursor — future versions should
-/// surface a progress sheet during the drag completion.
+/// The transfer callback awaits the shared renderer and propagates its
+/// cancellation; failed transfers leave no partial file behind.
 struct ClipTransferable: Transferable {
     let clipID: Int64
     let preset: ExportPreset
@@ -43,25 +41,8 @@ struct ClipTransferable: Transferable {
         let temp = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("clipx-drag-\(clipID)-\(preset.id)-\(UUID().uuidString).\(preset.containerExt)")
 
-        #if DIRECT_BUILD
-        let args = FFmpegBackend.buildArguments(
-            sourcePath: source.path,
-            inMs: clip.inMs, outMs: clip.outMs,
-            preset: preset, outputPath: temp.path
-        )
-        let code = try await FFmpegBackend.run(arguments: args)
-        if code != 0 {
-            throw NSError(domain: "clipx.transferable", code: Int(code),
-                          userInfo: [NSLocalizedDescriptionKey: "ffmpeg exited \(code)"])
-        }
-        #else
-        try await AVFoundationBackend.export(
-            sourcePath: source.path,
-            inMs: clip.inMs, outMs: clip.outMs,
-            preset: preset, outputPath: temp.path,
-            onProgress: { _ in }
-        )
-        #endif
+        let request = try ClipRenderRequest(clip: clip, source: source, preset: preset, outputURL: temp)
+        _ = try await ClipRenderer.render(request)
         return temp
     }
 }

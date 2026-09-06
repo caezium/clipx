@@ -19,6 +19,7 @@ struct CommandPaletteView: View {
                         .font(.system(size: 15))
                         .foregroundStyle(Theme.textTertiary)
                     TextField("Type a command, clip name, or tag…", text: $query)
+                        .accessibilityLabel("Search commands and clips")
                         .textFieldStyle(.plain)
                         .font(.system(size: 18))
                         .foregroundStyle(Theme.textPrimary)
@@ -30,6 +31,11 @@ struct CommandPaletteView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
+                            if results.isEmpty {
+                                Text("No matching commands or clips")
+                                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                                    .padding(20).frame(maxWidth: .infinity)
+                            }
                             ForEach(Array(results.enumerated()), id: \.element.id) { idx, item in
                                 let isSelected = idx == selectedIndex
                                 Button {
@@ -152,14 +158,12 @@ struct CommandPaletteView: View {
             appState.inspectorVisible.toggle()
         })
         items.append(PaletteItem(id: "all-clips", title: "Show All Clips", icon: "rectangle.stack") {
-            appState.activeFilters = ClipFilters()
-            appState.selectedProjectID = nil
-            appState.selectedCollectionID = nil
+            appState.clearFilters()
         })
         items.append(PaletteItem(id: "unused", title: "Show Unused Clips", icon: "sparkles") {
             var f = ClipFilters(); f.unusedOnly = true
+            appState.clearFilters()
             appState.activeFilters = f
-            appState.selectedProjectID = nil
         })
         items.append(PaletteItem(id: "export-reels", title: "Export Selected as Reels", icon: "square.and.arrow.up", shortcut: "⇧⌘R") {
             ExportActions.exportSelected(.reels)
@@ -198,16 +202,13 @@ struct CommandPaletteView: View {
                 id: "clip-\(clip.id ?? 0)",
                 title: clip.name ?? "Clip #\(clip.id ?? 0)",
                 icon: "scissors",
-                shortcut: PlayerController.formatMs(clip.outMs - clip.inMs)
+                shortcut: PlayerController.formatMs(clip.durationMs)
             ) { openClip(clip) }
         }
     }
 
     private func openClip(_ clip: Clip) {
-        if let id = clip.id { appState.selectedClipIDs = [id] }
-        appState.playerSourceID = clip.sourceID
-        appState.playerInMs = clip.inMs
-        appState.playerOutMs = clip.outMs
+        appState.openClip(clip)
     }
 
     private func runSelected() {

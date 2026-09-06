@@ -21,7 +21,7 @@ final class SearchEngine {
     func isIndexHealthy() -> Bool {
         do {
             try database.write { db in
-                try db.execute(sql: "INSERT INTO clips_fts(clips_fts) VALUES('integrity-check')")
+                try db.execute(sql: "INSERT INTO clips_fts(clips_fts, rank) VALUES('integrity-check', 1)")
             }
             return true
         } catch {
@@ -47,7 +47,8 @@ final class SearchEngine {
         query: String,
         filters: ClipFilters,
         sort: ClipSortOption,
-        limit: Int = 500
+        limit: Int? = nil,
+        offset: Int = 0
     ) throws -> [Clip] {
         try database.read { db in
             // Join the source so "filmed" sorts can order by the source's
@@ -58,9 +59,23 @@ final class SearchEngine {
 
             let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmedQuery.isEmpty {
-                sql += " JOIN clips_fts ON clips_fts.rowid = c.id"
-                wheres.append("clips_fts MATCH ?")
-                arguments.append(SearchEngine.compileFTS(trimmedQuery))
+                if trimmedQuery.hasPrefix(":") {
+                    wheres.append("c.id IN (SELECT rowid FROM clips_fts WHERE clips_fts MATCH ?)")
+                    arguments.append(SearchEngine.compileFTS(trimmedQuery))
+                } else {
+                    // A clip must match every token, but each token can come
+                    // from its text or its tags. Subqueries keep MATCH in an
+                    // FTS scan and avoid duplicate clips for multiple tags.
+                    for token in trimmedQuery.split(whereSeparator: \.isWhitespace) {
+                        wheres.append("""
+                            (c.id IN (SELECT rowid FROM clips_fts WHERE clips_fts MATCH ?)
+                             OR EXISTS (SELECT 1 FROM clip_tags ct JOIN tags t ON t.id = ct.tag_id
+                                        WHERE ct.clip_id = c.id AND t.name LIKE ? ESCAPE '\\'))
+                            """)
+                        arguments.append(SearchEngine.escapeFTS(String(token)))
+                        arguments.append("%\(sqlLikeEscape(token.lowercased()))%")
+                    }
+                }
             }
 
             if filters.minRating > 0 {
@@ -108,11 +123,23 @@ final class SearchEngine {
                 arguments.append(contentsOf: filters.collectionIDs.map { $0 as DatabaseValueConvertible })
             }
 
+            let dateColumn = filters.dateField == .imported ? "s.imported_at" : "COALESCE(s.created_at, s.imported_at)"
+            if let from = filters.dateFrom {
+                wheres.append("\(dateColumn) >= ?")
+                arguments.append(from.timeIntervalSince1970)
+            }
+            if let to = filters.dateTo {
+                wheres.append("\(dateColumn) <= ?")
+                arguments.append(to.timeIntervalSince1970)
+            }
+            if filters.onlineOnly { wheres.append("s.online = 1") }
+
             if !wheres.isEmpty {
                 sql += " WHERE " + wheres.joined(separator: " AND ")
             }
-            sql += " ORDER BY \(SearchEngine.orderBy(sort)) LIMIT ?"
-            arguments.append(limit)
+            sql += " ORDER BY \(SearchEngine.orderBy(sort)), c.id ASC LIMIT ? OFFSET ?"
+            arguments.append(limit.map { max(0, $0) } ?? -1)
+            arguments.append(max(0, offset))
 
             return try Clip.fetchAll(db, sql: sql, arguments: StatementArguments(arguments))
         }
@@ -155,11 +182,76 @@ final class SearchEngine {
             return filmedAsc
         // "Recently / first imported" legitimately tracks when the clip was
         // added (marked) — clips have no separate import timestamp.
-        case .importedDesc: return "c.created_at DESC"
-        case .importedAsc:  return "c.created_at ASC"
+        case .importedDesc: return "s.imported_at DESC"
+        case .importedAsc:  return "s.imported_at ASC"
         case .ratingDesc:   return "c.rating DESC, " + filmedDesc
         case .durationDesc: return "(c.out_ms - c.in_ms) DESC"
         case .nameAsc:      return "c.name ASC"
         }
     }
+    func searchSources(query: String, filters: ClipFilters, sort: ClipSortOption,
+                       limit: Int? = nil, offset: Int = 0) throws -> [Source] {
+        let (whereSQL, args) = Self.sourcesWhere(query: query, filters: filters)
+        var arguments = args
+        arguments.append(limit.map { max(0, $0) } ?? -1)
+        arguments.append(max(0, offset))
+        return try database.read { db in
+            try Source.fetchAll(db, sql: "SELECT * FROM sources \(whereSQL) ORDER BY \(Self.sourcesOrderBy(sort)), id ASC LIMIT ? OFFSET ?",
+                                arguments: StatementArguments(arguments))
+        }
+    }
+
+    static func sourcesWhere(query: String, filters: ClipFilters) -> (String, [DatabaseValueConvertible]) {
+        var clauses: [String] = []
+        var args: [DatabaseValueConvertible] = []
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !q.isEmpty {
+            clauses.append("LOWER(path) LIKE ? ESCAPE '\\'")
+            args.append("%\(sqlLikeEscape(q.lowercased()))%")
+        }
+        if let from = filters.dateFrom {
+            clauses.append("\(filters.dateField == .imported ? "imported_at" : "COALESCE(created_at, imported_at)") >= ?")
+            args.append(from.timeIntervalSince1970)
+        }
+        if let to = filters.dateTo {
+            clauses.append("\(filters.dateField == .imported ? "imported_at" : "COALESCE(created_at, imported_at)") <= ?")
+            args.append(to.timeIntervalSince1970)
+        }
+        if filters.onlineOnly { clauses.append("online = 1") }
+        // Clip-attribute filters can't match whole sources; when one is active
+        // hide sources so the view focuses on the matching clips.
+        let clipOnly = !filters.moods.isEmpty || !filters.shotTypes.isEmpty
+            || !filters.cameraMoves.isEmpty || !filters.settings.isEmpty
+            || !filters.colorLabels.isEmpty || filters.minRating > 0 || filters.unusedOnly
+            || !filters.projectIDs.isEmpty || !filters.collectionIDs.isEmpty
+        if clipOnly { clauses.append("1 = 0") }
+        let sql = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
+        return (sql, args)
+    }
+
+    /// Maps the user-selected sort option into a SQL ORDER BY clause for the
+    /// sources table. "Newest / Oldest" uses the source's own recording date
+    /// (`created_at`, pulled from file metadata) instead of the import date —
+    /// you want to find the day you shot it, not the day you imported it.
+    /// Imported-at is used as a fallback for sources whose metadata didn't
+    /// produce a creation date.
+    static func sourcesOrderBy(_ sort: ClipSortOption) -> String {
+        switch sort {
+        case .sourceDateDesc, .dateImportedDesc:
+            return "COALESCE(created_at, imported_at) DESC"
+        case .sourceDateAsc, .dateImportedAsc:
+            return "COALESCE(created_at, imported_at) ASC"
+        case .importedDesc:
+            return "imported_at DESC"
+        case .importedAsc:
+            return "imported_at ASC"
+        case .durationDesc:
+            return "COALESCE(duration_ms, 0) DESC"
+        case .nameAsc:
+            return "LOWER(path) ASC"
+        case .ratingDesc:
+            return "COALESCE(created_at, imported_at) DESC" // sources have no rating
+        }
+    }
+
 }

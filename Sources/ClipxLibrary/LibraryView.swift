@@ -7,6 +7,10 @@ struct LibraryView: View {
     @State private var clips: [Clip] = []
     @State private var loading = false
     @State private var hitLimit = false
+    @State private var resultLimit = 500
+    @State private var reloadTask: Task<Void, Never>?
+    @State private var loadGeneration = UUID()
+    @State private var loadError: String?
 
     /// True when a query or filter is narrowing the library — distinguishes a
     /// "no results" state from a genuinely empty library. (#38)
@@ -28,31 +32,52 @@ struct LibraryView: View {
                 ProjectHeaderView(projectID: pid)
                 Divider().overlay(Theme.border)
             }
+            if let loadError, !sources.isEmpty || !clips.isEmpty {
+                HStack(spacing: 8) {
+                    Label("Refresh failed. Showing previous results.", systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                        .help(loadError)
+                    Spacer()
+                    Button("Try again") { reload() }.controlSize(.small)
+                }
+                .padding(10)
+                .background(Theme.bgRaised)
+            }
             content
         }
         .background(Theme.bg)
-        .onAppear(perform: reload)
+        .onAppear { reload() }
         // Search debounced — every other change reloads immediately.
         .onChange(of: appState.searchQuery) { _, _ in scheduleDebouncedReload() }
-        .onChange(of: appState.activeFilters) { _, _ in reload() }
-        .onChange(of: appState.sortOption) { _, _ in reload() }
+        .onChange(of: appState.activeFilters) { _, _ in resetAndReload() }
+        .onChange(of: appState.sortOption) { _, _ in resetAndReload() }
         .onChange(of: appState.libraryRevision) { _, _ in reload() }
         .onChange(of: appState.bootstrapped) { _, ready in if ready { reload() } }
+        .onDisappear { searchReloadTask?.cancel(); reloadTask?.cancel(); loadGeneration = UUID() }
+        .overlay(alignment: .topTrailing) {
+            if loading && (!sources.isEmpty || !clips.isEmpty) { ProgressView().controlSize(.small).padding(10) }
+        }
     }
 
     @ViewBuilder
     private var content: some View {
-        if appState.viewMode == .lightTable {
+        if !appState.bootstrapped {
+            ProgressView("Opening library…").frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if appState.viewMode == .lightTable {
             // The Light Table harvests all purposed clips itself, independent of
             // the current search/filter narrowing.
             LightTableView()
-        } else if loading {
+        } else if loading && sources.isEmpty && clips.isEmpty {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let loadError, sources.isEmpty && clips.isEmpty {
+            ContentUnavailableView {
+                Label("Couldn't load your library", systemImage: "exclamationmark.triangle")
+            } description: { Text(loadError) } actions: { Button("Try again") { reload() } }
         } else if sources.isEmpty && clips.isEmpty {
             if isFiltering {
                 NoResultsView {                    // per-query no-results (#38)
                     appState.searchQuery = ""
-                    appState.activeFilters = ClipFilters()
+                    appState.clearFilters()
                 }
             } else {
                 EmptyLibraryView()
@@ -65,7 +90,7 @@ struct LibraryView: View {
                 case .list:
                     ClipListView(sources: sources, clips: clips)
                 case .calendar:
-                    CalendarBrowseView(sources: sources)
+                    CalendarBrowseView(sources: sources, clips: clips)
                 case .lightTable:
                     EmptyView()   // handled above, before the empty-state guard
                 }
@@ -81,141 +106,66 @@ struct LibraryView: View {
             Image(systemName: "ellipsis.circle")
                 .font(.caption)
                 .foregroundStyle(Theme.textTertiary)
-            Text("Showing first \(Self.sourcesLimit) sources — refine search or filters to see more.")
+            Text("Showing \(sources.count) sources and \(clips.count) clips")
                 .font(.caption)
                 .foregroundStyle(Theme.textTertiary)
             Spacer()
+            Button("Load more") { resultLimit += Self.sourcesLimit; reload() }
+                .disabled(loading)
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
         .background(Theme.bgRaised)
     }
 
     private func scheduleDebouncedReload() {
+        reloadTask?.cancel()
+        loadGeneration = UUID()
         searchReloadTask?.cancel()
         searchReloadTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: Self.searchDebounceMs)
             guard !Task.isCancelled else { return }
-            reload()
+            resetAndReload()
         }
+    }
+
+    private func resetAndReload() {
+        resultLimit = Self.sourcesLimit
+        reload()
     }
 
     private func reload() {
+        reloadTask?.cancel()
+        let generation = UUID()
+        loadGeneration = generation
+        guard let search = AppEnvironment.shared.searchEngine else { loading = false; return }
+        let query = appState.searchQuery
+        let filters = appState.activeFilters
+        let sort = appState.sortOption
+        let limit = resultLimit
         loading = true
-        ClipxLog.library.debug("reload() called")
-        Task.detached(priority: .userInitiated) {
-            guard let database = AppEnvironment.shared.database,
-                  let search = AppEnvironment.shared.searchEngine else {
-                ClipxLog.library.debug("reload: env not ready, bailing")
-                await MainActor.run { self.loading = false }
-                return
-            }
-            var fetchedSources: [Source] = []
-            var fetchedClips: [Clip] = []
-            var truncated = false
+        reloadTask = Task { @MainActor in
             do {
-                let sortSQL = LibraryView.sourcesOrderBy(AppState.shared.sortOption)
-                // Narrow the sources by the same query/filters as the clips —
-                // previously every source stayed on screen regardless. (#28)
-                let (whereSQL, whereArgs) = LibraryView.sourcesWhere(
-                    query: AppState.shared.searchQuery,
-                    filters: AppState.shared.activeFilters
-                )
-                var args = whereArgs
-                args.append(Int64(Self.sourcesLimit))
-                fetchedSources = try database.read { db in
-                    try Source.fetchAll(
-                        db,
-                        sql: "SELECT * FROM sources \(whereSQL) ORDER BY \(sortSQL) LIMIT ?",
-                        arguments: StatementArguments(args)
-                    )
-                }
-                // If we hit the limit, surface a footer so the user knows.
-                if fetchedSources.count == Self.sourcesLimit {
-                    let total = (try? database.read { db in
-                        try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM sources") ?? 0
-                    }) ?? 0
-                    truncated = total > Self.sourcesLimit
-                }
-                ClipxLog.library.debug("reload: fetched \(fetchedSources.count) sources")
+                let result = try await Task.detached(priority: .userInitiated) {
+                    let sources = try search.searchSources(query: query, filters: filters, sort: sort, limit: limit + 1)
+                    let clips = try search.search(query: query, filters: filters, sort: sort, limit: limit + 1)
+                    return (sources, clips)
+                }.value
+                guard !Task.isCancelled, loadGeneration == generation else { return }
+                sources = Array(result.0.prefix(limit))
+                clips = Array(result.1.prefix(limit))
+                hitLimit = result.0.count > limit || result.1.count > limit
+                loadError = nil
             } catch {
-                ClipxLog.library.error("reload: sources query failed: \(String(describing: error), privacy: .public)")
+                guard !Task.isCancelled, loadGeneration == generation else { return }
+                loadError = error.localizedDescription
+                if !sources.isEmpty || !clips.isEmpty {
+                    appState.showToast("Couldn't refresh library: \(error.localizedDescription)", level: .error)
+                }
             }
-            do {
-                fetchedClips = try search.search(
-                    query: AppState.shared.searchQuery,
-                    filters: AppState.shared.activeFilters,
-                    sort: AppState.shared.sortOption
-                )
-                ClipxLog.library.debug("reload: fetched \(fetchedClips.count) clips")
-            } catch {
-                ClipxLog.library.error("reload: clips search failed: \(String(describing: error), privacy: .public)")
-            }
-            let finalSources = fetchedSources
-            let finalClips = fetchedClips
-            let finalTruncated = truncated
-            await MainActor.run {
-                self.sources = finalSources
-                self.clips = finalClips
-                self.hitLimit = finalTruncated
-                self.loading = false
-            }
+            loading = false
         }
     }
 
-    /// Builds the WHERE clause that narrows the sources grid by the active query
-    /// and filters, matching how clips are filtered. (#28)
-    private static func sourcesWhere(query: String, filters: ClipFilters) -> (String, [DatabaseValueConvertible]) {
-        var clauses: [String] = []
-        var args: [DatabaseValueConvertible] = []
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !q.isEmpty {
-            clauses.append("LOWER(path) LIKE ? ESCAPE '\\'")
-            args.append("%\(sqlLikeEscape(q.lowercased()))%")
-        }
-        if let from = filters.dateFrom {
-            clauses.append("COALESCE(created_at, imported_at) >= ?")
-            args.append(Int64(from.timeIntervalSince1970))
-        }
-        if let to = filters.dateTo {
-            clauses.append("COALESCE(created_at, imported_at) <= ?")
-            args.append(Int64(to.timeIntervalSince1970))
-        }
-        if filters.onlineOnly { clauses.append("online = 1") }
-        // Clip-attribute filters can't match whole sources; when one is active
-        // hide sources so the view focuses on the matching clips.
-        let clipOnly = !filters.moods.isEmpty || !filters.shotTypes.isEmpty
-            || !filters.cameraMoves.isEmpty || !filters.settings.isEmpty
-            || !filters.colorLabels.isEmpty || filters.minRating > 0 || filters.unusedOnly
-            || !filters.projectIDs.isEmpty || !filters.collectionIDs.isEmpty
-        if clipOnly { clauses.append("1 = 0") }
-        let sql = clauses.isEmpty ? "" : "WHERE " + clauses.joined(separator: " AND ")
-        return (sql, args)
-    }
-
-    /// Maps the user-selected sort option into a SQL ORDER BY clause for the
-    /// sources table. "Newest / Oldest" uses the source's own recording date
-    /// (`created_at`, pulled from file metadata) instead of the import date —
-    /// you want to find the day you shot it, not the day you imported it.
-    /// Imported-at is used as a fallback for sources whose metadata didn't
-    /// produce a creation date.
-    private static func sourcesOrderBy(_ sort: ClipSortOption) -> String {
-        switch sort {
-        case .sourceDateDesc, .dateImportedDesc:
-            return "COALESCE(created_at, imported_at) DESC"
-        case .sourceDateAsc, .dateImportedAsc:
-            return "COALESCE(created_at, imported_at) ASC"
-        case .importedDesc:
-            return "imported_at DESC"
-        case .importedAsc:
-            return "imported_at ASC"
-        case .durationDesc:
-            return "COALESCE(duration_ms, 0) DESC"
-        case .nameAsc:
-            return "LOWER(path) ASC"
-        case .ratingDesc:
-            return "COALESCE(created_at, imported_at) DESC" // sources have no rating
-        }
-    }
 }
 
 /// Shown when a query/filter matches nothing in a non-empty library. (#38)

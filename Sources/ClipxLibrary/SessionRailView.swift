@@ -12,6 +12,8 @@ struct SessionRailView: View {
     var onPick: (Int64) -> Void
 
     @EnvironmentObject private var appState: AppState
+    @State private var loadTask: Task<Void, Never>?
+    @State private var loadGeneration = UUID()
     @State private var sources: [Source] = []
     @State private var clipCounts: [Int64: Int] = [:]
     @State private var dayLabel: String = ""
@@ -70,6 +72,7 @@ struct SessionRailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .background(Theme.bgRaised)
         .onAppear(perform: load)
+        .onDisappear { loadTask?.cancel(); loadGeneration = UUID() }
         .onChange(of: currentSourceID) { _, _ in load() }
         .onChange(of: appState.libraryRevision) { _, _ in load() }
     }
@@ -125,7 +128,12 @@ struct SessionRailView: View {
     }
 
     private func markReviewedAndNext() {
-        try? AppEnvironment.shared.markerStore?.markSourceReviewed(currentSourceID, reviewed: true)
+        guard let store = AppEnvironment.shared.markerStore else { return }
+        do { try store.markSourceReviewed(currentSourceID, reviewed: true) }
+        catch {
+            appState.showToast("Couldn't mark source reviewed: \(error.localizedDescription)", level: .error)
+            return
+        }
         // Reflect the change locally right away so the next-pick and progress
         // label don't depend on the async reload landing first.
         if let i = sources.firstIndex(where: { $0.id == currentSourceID }) {
@@ -142,8 +150,13 @@ struct SessionRailView: View {
 
     private func load() {
         let current = currentSourceID
-        Task.detached(priority: .userInitiated) {
-            guard let db = AppEnvironment.shared.database else { return }
+        let dayFormatter = Self.dayFmt
+        loadTask?.cancel()
+        let generation = UUID()
+        loadGeneration = generation
+        guard let db = AppEnvironment.shared.database else { return }
+        loadTask = Task { @MainActor in
+            let result = await Task.detached(priority: .userInitiated) {
             let cur: Source? = try? db.read { try Source.fetchOne($0, key: current) }
             var rows: [Source] = []
             var label = ""
@@ -166,13 +179,13 @@ struct SessionRailView: View {
                         arguments: [s, e]
                     )
                 }) ?? []
-                label = Self.dayFmt.string(from: date)
+                label = dayFormatter.string(from: date)
             }
             // Fallback when the source has no recording date: show the most
             // recently imported sources so the rail is never empty.
             if rows.isEmpty {
                 rows = (try? db.read { dbc in
-                    try Source.fetchAll(dbc, sql: "SELECT * FROM sources ORDER BY imported_at DESC LIMIT 40")
+                    try Source.fetchAll(dbc, sql: "SELECT * FROM sources ORDER BY imported_at DESC, id ASC")
                 }) ?? []
             }
             let counts: [Int64: Int] = (try? db.read { dbc -> [Int64: Int] in
@@ -185,12 +198,12 @@ struct SessionRailView: View {
                 }
                 return m
             }) ?? [:]
-            let finalRows = rows, finalLabel = label, finalCounts = counts
-            await MainActor.run {
-                self.sources = finalRows
-                self.dayLabel = finalLabel
-                self.clipCounts = finalCounts
-            }
+            return (rows, label, counts)
+            }.value
+            guard !Task.isCancelled, loadGeneration == generation, currentSourceID == current else { return }
+            self.sources = result.0
+            self.dayLabel = result.1
+            self.clipCounts = result.2
         }
     }
 }
@@ -201,6 +214,7 @@ struct SessionRailView: View {
 private struct SessionThumb: View {
     let source: Source
     @State private var img: NSImage?
+    @State private var generation = UUID()
 
     var body: some View {
         Group {
@@ -217,17 +231,24 @@ private struct SessionThumb: View {
         }
         .clipped()
         .task(id: source.hash) { loadThumb() }
+        .onDisappear { generation = UUID() }
     }
 
     private func loadThumb() {
-        guard img == nil, let engine = AppEnvironment.shared.thumbnailEngine else { return }
+        guard let engine = AppEnvironment.shared.thumbnailEngine else { return }
+        let requested = UUID()
+        generation = requested
+        img = nil
         let p = engine.thumbPath(for: source.hash)
         if let i = NSImage(contentsOf: p) { img = i; return }
         // Missing (never generated, or cache purged) — build it on demand. The
         // engine de-dupes concurrent requests internally.
         engine.generateThumbnail(source: source) { resultURL in
             guard let resultURL, let i = NSImage(contentsOf: resultURL) else { return }
-            DispatchQueue.main.async { self.img = i }
+            Task { @MainActor in
+                guard generation == requested else { return }
+                self.img = i
+            }
         }
     }
 }

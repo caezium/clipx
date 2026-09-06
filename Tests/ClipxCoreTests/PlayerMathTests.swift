@@ -29,4 +29,12 @@ final class PlayerMathTests: XCTestCase {
         XCTAssertEqual(FrameMath.steppedMs(fromMs: 500, frames: 1, fps: 0), 500)
         XCTAssertEqual(FrameMath.snapToFrame(ms: 500, fps: 0), 0)
     }
+
+    func test_extremeLegacyTimesAndNonfiniteRatesDoNotTrap() {
+        XCTAssertEqual(FrameMath.frameIndex(ms: .max, fps: .infinity), 0)
+        XCTAssertEqual(FrameMath.msForFrame(.max, fps: 0.1), .max)
+        XCTAssertEqual(FrameMath.steppedMs(fromMs: .max, frames: Int.max, fps: 1000), .max)
+        XCTAssertEqual(FrameMath.rangeDuration(inMs: .min, outMs: .max), 0)
+        XCTAssertEqual(FrameMath.rangeDuration(inMs: 0, outMs: .max), .max)
+    }
 }

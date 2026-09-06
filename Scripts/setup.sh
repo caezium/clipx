@@ -16,7 +16,7 @@ if ! command -v ffmpeg >/dev/null; then
 else
     FFMPEG_PATH="$(which ffmpeg)"
     mkdir -p Helpers
-    if [ ! -L Helpers/ffmpeg ] || [ "$(readlink Helpers/ffmpeg)" != "$FFMPEG_PATH" ]; then
+    if [ ! -e Helpers/ffmpeg ]; then
         ln -sf "$FFMPEG_PATH" Helpers/ffmpeg
         echo "✓ Symlinked $FFMPEG_PATH → Helpers/ffmpeg"
     fi

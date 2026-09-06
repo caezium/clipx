@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import UniformTypeIdentifiers
 
 /// Wraps NSOpenPanel for picking a folder. Returns the chosen path as a
 /// String (the security-scoped bookmark is created by BookmarkStore).
@@ -32,5 +33,20 @@ enum FolderPicker {
         }
         guard response == .OK, let url = panel.url else { return nil }
         return url
+    }
+
+    @MainActor
+    static func pickMarkdownNoteURL() async -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
+        panel.prompt = "Choose Note"
+        panel.message = "Choose an existing Markdown note to reference from this project."
+        let response = await withCheckedContinuation { (continuation: CheckedContinuation<NSApplication.ModalResponse, Never>) in
+            panel.begin { continuation.resume(returning: $0) }
+        }
+        return response == .OK ? panel.url : nil
     }
 }
