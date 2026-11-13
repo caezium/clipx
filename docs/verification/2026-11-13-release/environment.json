@@ -1,0 +1,10 @@
+{
+  "checked_at": "2026-11-13T02:50:15.538631+00:00",
+  "screen_lock_flags": [
+    "Yes"
+  ],
+  "codesigning_identities": "0 valid identities found",
+  "automation_status": "Automation Mode is disabled.\nThis device requires user authentication to enable Automation Mode.",
+  "developer_tools_status": "Developer mode is currently disabled.",
+  "public_releases": []
+}

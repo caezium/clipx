@@ -39,8 +39,8 @@ targets:
       path: Configs/Info.plist
       properties:
         CFBundleDisplayName: Clipx
-        CFBundleShortVersionString: "0.1.0"
-        CFBundleVersion: "1"
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: "14.0"
         NSHighResolutionCapable: true
         NSPrincipalClass: NSApplication
@@ -51,8 +51,8 @@ targets:
         NSDownloadsFolderUsageDescription: Clipx needs to read video files stored in Downloads to index and generate thumbnails for your library.
         NSRemovableVolumesUsageDescription: Clipx reads video files from removable drives so you can clip footage stored on external media.
         NSNetworkVolumesUsageDescription: Clipx reads video files from network volumes so you can clip footage stored on NAS or shared drives.
-        SUFeedURL: https://updates.clipx.app/appcast.xml
-        SUPublicEDKey: PLACEHOLDER_REPLACE_WITH_GENERATED_KEY
+        SUFeedURL: https://raw.githubusercontent.com/caezium/clipx-releases/main/appcast.xml
+        SUPublicEDKey: KfAz47CUlAoArH5MAwyJhOO5Xfy5t29x2E4TXMsgFlg=
     entitlements:
       path: Configs/Clipx-Direct.entitlements
       properties:
@@ -65,6 +65,8 @@ targets:
         CLIPX_BUNDLE_IDENTIFIER: com.clipx.Clipx
         PRODUCT_BUNDLE_IDENTIFIER: $(CLIPX_BUNDLE_IDENTIFIER)
         PRODUCT_NAME: Clipx
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: DIRECT_BUILD
         CODE_SIGN_STYLE: Automatic
         ENABLE_APP_SANDBOX: NO

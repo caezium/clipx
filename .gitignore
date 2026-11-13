@@ -29,6 +29,7 @@ Pods/
 # ffmpeg binary (downloaded by script)
 Helpers/ffmpeg
 Helpers/ffprobe
+Helpers/ffmpeg-support/
 
 # App Store / signing
 *.p12
@@ -41,6 +42,8 @@ ExportOptions.plist
 secrets.json
 
 # Build artifacts
+__pycache__/
+*.pyc
 *.dmg
 *.pkg
 *.app

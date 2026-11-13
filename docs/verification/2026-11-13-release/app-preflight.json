@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "app": "/Users/henry/Desktop/clipx/build/release/app/DerivedData/Build/Products/Release/Clipx.app",
+  "version": "0.1.0",
+  "build": "1",
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "feed": "https://raw.githubusercontent.com/caezium/clipx-releases/main/appcast.xml",
+  "ad_hoc_signing_rejected": true,
+  "packaging_without_Developer_ID_rejected": true,
+  "signature_status": "unsigned; Apple credentials unavailable"
+}

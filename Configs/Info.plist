@@ -17,9 +17,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 	<key>NSAppleEventsUsageDescription</key>
@@ -41,8 +41,8 @@
 	<key>NSRemovableVolumesUsageDescription</key>
 	<string>Clipx reads video files from removable drives so you can clip footage stored on external media.</string>
 	<key>SUFeedURL</key>
-	<string>https://updates.clipx.app/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/caezium/clipx-releases/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
-	<string>PLACEHOLDER_REPLACE_WITH_GENERATED_KEY</string>
+	<string>KfAz47CUlAoArH5MAwyJhOO5Xfy5t29x2E4TXMsgFlg=</string>
 </dict>
 </plist>

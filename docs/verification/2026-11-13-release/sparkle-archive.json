@@ -1,0 +1,10 @@
+{
+  "status": "PASS",
+  "fixture": "Local unsigned Clipx app; never published",
+  "archive_bytes": 31774702,
+  "archive_sha256": "b24508bf260c7d25d0f4dbbc5aaaff8c2f4778c4d4ef58180be8b92c3f364044",
+  "appcast_version": "1",
+  "minimum_system_version": "14.0",
+  "feed_signature_valid": true,
+  "archive_signature_valid": true
+}

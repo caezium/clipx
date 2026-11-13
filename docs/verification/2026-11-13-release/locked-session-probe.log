@@ -1,0 +1,12 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -xctestrun /tmp/clipx-verification-20261112/Direct/Build/Products/Clipx-Direct_macosx27.2-arm64.xctestrun -destination platform=macOS,arch=arm64 "-only-testing:ClipxCoreTests/DatabaseTests/test_inMemoryDatabaseOpensAndMigrates" -resultBundlePath /tmp/clipx-runner-diagnosis/baseline-8efaac84-021e-455e-b073-4369940050f6.xcresult
+
+Writing result bundle at path:
+	/tmp/clipx-runner-diagnosis/baseline-8efaac84-021e-455e-b073-4369940050f6.xcresult
+
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+{ platform:macOS, arch:arm64, id:00006041-001268190A81401C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:Mac Catalyst, id:00006041-001268190A81401C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:DriverKit, id:00006041-001268190A81401C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:00006041-001268190A81401C, name:My Mac }
+** BUILD INTERRUPTED **

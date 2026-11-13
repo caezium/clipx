@@ -87,11 +87,13 @@ clipx/
 │   └── ClipxUITests/                 # Isolated native click workflow
 └── Scripts/
     ├── setup.sh                      # Dev setup
-    ├── bundle-ffmpeg.sh              # Install a verified portable ffmpeg
+    ├── build-ffmpeg.py               # Build universal FFmpeg and matching sources
+    ├── bundle-ffmpeg.sh              # Install a checksum-verified external helper
     ├── copy-ffmpeg.sh                # Direct target's helper build phase
     ├── validate-ffmpeg.sh            # Release portability/architecture check
     ├── verify.sh                     # Isolated regression entry point
-    └── sign.sh                       # Code-sign helper
+    ├── release.py                    # Build, sign, notarize, verify and publish
+    └── verify-release.py             # Headless media and update-signature checks
 ```
 
 ## Architecture
@@ -108,14 +110,14 @@ Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. T
 
 ### Direct (recommended for power users)
 
-1. Configure your Apple developer account and release signing identity
-2. Generate a Developer ID Application certificate
-3. Set `CODE_SIGN_IDENTITY` and configure notarization credentials
-4. Set `APP_PATH` to the Release app and run `./Scripts/sign.sh`
-5. Bundle into a DMG
-6. Notarize via `xcrun notarytool submit`
-7. Staple the ticket: `xcrun stapler staple`
-8. Configure a real Sparkle appcast and public Ed25519 key before enabling updates
+Public download hosting and the signed Sparkle feed are configured at [clipx-releases](https://github.com/caezium/clipx-releases). No application release is published yet; Developer ID signing and notarization still require Apple credentials.
+
+```sh
+python3 Scripts/build-ffmpeg.py
+python3 Scripts/release.py build --version 0.1.0 --build 1
+```
+
+The [distribution guide](docs/DISTRIBUTION.md) covers verification, credentials, matching FFmpeg sources, and the separate package/publish commands.
 
 ### Mac App Store
 
@@ -157,9 +159,9 @@ Builds live under `/tmp/clipx-verification-build` by default; `CLIPX_BUILD_ROOT`
 
 ## Release inputs
 
-Release builds reject a missing or nonportable FFmpeg helper, so a Homebrew development binary cannot silently produce an app that only works on its builder's Mac. To install an audited standalone binary, set `FFMPEG_URL` and its independently verified `FFMPEG_SHA256`, then run `Scripts/bundle-ffmpeg.sh`. Existing helpers remain in place if verification fails. `Scripts/setup.sh` preserves an already installed release helper.
+Release builds require a universal FFmpeg helper with only system-library dependencies, matching source metadata and license notices. `Scripts/build-ffmpeg.py` supplies the complete package, and `Scripts/setup.sh` preserves an installed release helper. Apple Developer ID/notarization credentials remain external inputs; the feed and update key are configured.
 
-Developer ID/App Store signing credentials, notarization credentials, and a real Sparkle feed/key are still external release inputs. This repair does not publish a release. FCPXML structure and frame timing are covered by tests; importing into Final Cut Pro and validating against Apple's authenticated DTD download remain manual checks. Frame stepping on variable-frame-rate footage still uses nominal frame timing.
+Full Apple FCPXML DTD validation and a real isolated Stint round trip passed in the [integration follow-up](docs/verification/2026-11-13/README.md). Native click testing, actual Final Cut Pro import, signed App Store sandbox behavior and a physical phone session remain unverified. Frame stepping on variable-frame-rate footage still uses nominal frame timing.
 
 ## License
 

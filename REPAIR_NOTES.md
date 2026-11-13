@@ -1,6 +1,6 @@
 # Clipx repairs and UI pass — 2026-09-06
 
-For fresh checks and current blockers, see the [November 12–13 verification follow-up](docs/verification/2026-11-13/README.md). Full Apple DTD validation and a real local Stint round trip now pass; native click authorization, subsequent full-suite initialization, and distribution prerequisites remain open. The counts below describe the original repair session.
+For fresh checks, see the [integration follow-up](docs/verification/2026-11-13/README.md) and [distribution follow-up](docs/verification/2026-11-13-release/README.md). Full Apple DTD validation, a real local Stint round trip, portable FFmpeg exports and a universal Release build now pass. Public update hosting and an Ed25519 key are configured. Apple signing credentials, native click authorization, and subsequent full-suite initialization remain open; the user chose to keep the Mac locked. The counts below describe the original repair session.
 
 The reviewed baseline is preserved in `c700be3` (`Snapshot before reliability and UI improvements`). The repairs address all 35 primary findings in [CODE_REVIEW.md](CODE_REVIEW.md), plus the smaller behavior defects listed there. The existing SwiftUI/GRDB architecture and dark visual identity remain the basis of the app. The future features in `plans/ai-features.md` are still planned work.
 
@@ -88,6 +88,6 @@ Run the checked-in [verification script](Scripts/verify.sh) and [project verific
 
 The build toolchain was Xcode 26.6 (17F113), Swift compiler 6.3.3, XcodeGen 2.45.4, and FFmpeg 8.1.2 on Apple Silicon. GRDB 6.29.3 and Sparkle 2.9.6 are pinned in the build manifest. The project remains in Swift 5 language mode; this work does not claim a completed Swift 6 strict-concurrency migration.
 
-Release signing/notarization, a portable audited FFmpeg binary, and real Sparkle feed/key values remain external distribution inputs. Signed MAS filesystem/network enforcement, a physical phone session, live Stint integration, and Final Cut Pro import/full authenticated DTD validation have not been established by these fixtures. Variable-frame-rate stepping still follows nominal frame timing. No release was published.
+At the original repair baseline, signing/notarization, a portable FFmpeg binary and Sparkle feed/key values were missing. The follow-ups above record the subsequent integration and distribution work. Signed MAS filesystem/network enforcement, a physical phone session and Final Cut Pro import remain unverified. Variable-frame-rate stepping still follows nominal frame timing. No application release has been published.
 
 Full logs and `.xcresult` bundles are under `/tmp/clipx-repair-build`, and original media probes are under `/tmp/clipx-repair-media-probes`. Selected durable artifacts are in [docs/verification](docs/verification/README.md); temporary paths may be cleaned by macOS. The decision log is [.audit/repair.tsv](.audit/repair.tsv).

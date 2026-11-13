@@ -17,4 +17,4 @@ chmod 755 "$scratch/ffmpeg"
 bash Scripts/validate-ffmpeg.sh "$scratch/ffmpeg"
 mkdir -p Helpers
 mv -f "$scratch/ffmpeg" Helpers/ffmpeg
-printf 'Installed verified FFmpeg (%s). The Direct build phase bundles and signs it.\n' "$actual"
+printf 'Installed verified FFmpeg (%s). Release builds also require matching source metadata and notices; build-ffmpeg.py creates the complete release helper.\n' "$actual"

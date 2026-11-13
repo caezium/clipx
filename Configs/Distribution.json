@@ -1,0 +1,7 @@
+{
+  "repository": "caezium/clipx-releases",
+  "branch": "main",
+  "feed_url": "https://raw.githubusercontent.com/caezium/clipx-releases/main/appcast.xml",
+  "sparkle_account": "com.clipx.Clipx",
+  "sparkle_public_key": "KfAz47CUlAoArH5MAwyJhOO5Xfy5t29x2E4TXMsgFlg="
+}

@@ -1,0 +1,11 @@
+⚙️  Generating plists...
+⚙️  Generating project...
+⚙️  Writing project...
+Created project at /Users/henry/Desktop/clipx/Clipx.xcodeproj
+Building universal Clipx; log: /Users/henry/Desktop/clipx/build/release/app/build.log
+{
+  "app": "/Users/henry/Desktop/clipx/build/release/app/DerivedData/Build/Products/Release/Clipx.app",
+  "version": "0.1.0",
+  "build": "1",
+  "signed": false
+}

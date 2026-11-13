@@ -22,6 +22,8 @@ These commands use `com.clipx.Clipx.Verification`, never the user's `com.clipx.C
 
 For opt-in FCPXML schema validation and a real round trip against a disposable local Stint server, use `Scripts/verify-integrations.py` as described in [Exports and bridges](features/exports.md). Its Stint uploads contain generated footage and use a fresh temporary store on loopback.
 
+For distribution changes, follow the [distribution guide](../../../docs/DISTRIBUTION.md) and run `Scripts/verify-release.py` with the resolved Sparkle tools. It compiles production export arguments into a command-line fixture, exercises the portable helper and verifies the public appcast signature without a GUI session. Preserve architecture skips; a built Intel slice is not proof of Intel execution. Apple signing/notarization and native click verification are separate requirements.
+
 ## Doctor
 
 `Scripts/verify.sh doctor` checks Xcode/XcodeGen, the Direct helper, and the selected build paths. Require a passing exit code and confirm the bundle identifier in the test invocation is `com.clipx.Clipx.Verification`. Native render evidence contains requested/actual window dimensions and capture method beside every PNG. Never drive `/Applications/Clipx.app` or a process not launched by this run.
@@ -37,6 +39,8 @@ Read [features/README.md](features/README.md), then the matching feature. Tests 
 ```
 
 The optional `ui` mode drives import → mark → capture → inspector edit and reads the saved SQLite row. It signs the disposable Debug build ad-hoc with hardened runtime disabled so the XCTest runner can load its unsigned-team test bundle. It requires working macOS UI automation: inspect `automationmodetool` without arguments for its status. On Xcode 27.2, the runner loaded but timed out enabling Automation Mode; the machine required user authentication. Do not change machine security settings implicitly, and do not report that click workflow as passed. Its artifacts, when available, live under `/tmp/clipx-ui-evidence` with the latest run path in `/tmp/clipx-ui-evidence-latest`.
+
+The November 13 single-test probe also stalled while `CGSSessionScreenIsLocked` was `Yes`. Unlocking has not been tested as a fix because the user chose to keep the Mac locked. Do not retry GUI-hosted tests repeatedly in that state or change automation/authentication settings. Continue headless checks and retain the native limitation.
 
 ## Remote browser setup
 
