@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+    <resources>
+        <format id="r1" frameDuration="1/30s" width="160" height="90"/>
+            <format id="r2" frameDuration="1001/24000s" width="160" height="90"/>
+        <asset id="a1" name="silent &amp; special#name.mov" start="0s" duration="240/30s" hasVideo="1" format="r1" videoSources="1" hasAudio="0">
+    <media-rep kind="original-media" src="file:///tmp/silent%20&amp;%20special%23name.mov"/>
+</asset>
+            <asset id="a2" name="fractional.mov" start="0s" duration="192192/24000s" hasVideo="1" format="r2" videoSources="1" hasAudio="1" audioSources="1" audioChannels="1">
+    <media-rep kind="original-media" src="file:///tmp/fractional.mov"/>
+</asset>
+            <asset id="a3" name="silent &amp; special#name.mov" start="0s" duration="240/30s" hasVideo="1" format="r1" videoSources="1" hasAudio="0">
+    <media-rep kind="original-media" src="file:///tmp/silent%20&amp;%20special%23name.mov"/>
+</asset>
+    </resources>
+    <library>
+        <event name="Clipx Export">
+            <project name="Clipx Selection">
+                <sequence format="r1" duration="32/30s" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+                    <spine>
+                        <asset-clip name="One frame &amp; &quot;quote&quot;" ref="a1" offset="0/30s" start="1/30s" duration="1/30s" format="r1"/>
+                            <asset-clip name="fractional.mov" ref="a2" offset="1/30s" start="1001/24000s" duration="30/30s" format="r2"/>
+                            <asset-clip name="One frame &amp; &quot;quote&quot;" ref="a3" offset="31/30s" start="1/30s" duration="1/30s" format="r1"/>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

@@ -1,5 +1,7 @@
 # Clipx repairs and UI pass — 2026-09-06
 
+For fresh checks and current blockers, see the [November 12–13 verification follow-up](docs/verification/2026-11-13/README.md). Full Apple DTD validation and a real local Stint round trip now pass; native click authorization, subsequent full-suite initialization, and distribution prerequisites remain open. The counts below describe the original repair session.
+
 The reviewed baseline is preserved in `c700be3` (`Snapshot before reliability and UI improvements`). The repairs address all 35 primary findings in [CODE_REVIEW.md](CODE_REVIEW.md), plus the smaller behavior defects listed there. The existing SwiftUI/GRDB architecture and dark visual identity remain the basis of the app. The future features in `plans/ai-features.md` are still planned work.
 
 ## Storage, indexing, and builds
@@ -75,7 +77,7 @@ The native harness renders 29 real SwiftUI/AppKit states with isolated footage a
 
 Run the checked-in [verification script](Scripts/verify.sh) and [project verification skill](.agents/skills/verify-clipx/SKILL.md). The test app has a separate bundle identity, temporary library/preferences/cache, and disabled global hotkeys/updates. The user's running app and real library were not used as fixtures.
 
-| Verification | Latest result |
+| Verification | 2026-09-06 result |
 | --- | --- |
 | Direct Debug regression suite | 186 tests passed, zero failures, including actual media rendering and 29 native screen states. |
 | MAS Debug regression suite | 180 tests passed, zero failures, after the final native cleanup. Signing was disabled. |

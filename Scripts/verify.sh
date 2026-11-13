@@ -28,11 +28,13 @@ esac
 xcodegen generate
 signing=(CODE_SIGNING_ALLOWED=NO)
 if [ "$mode" = ui ]; then
-    signing=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= CODE_SIGNING_ALLOWED=YES)
+    # The ad-hoc XCTest runner must load a test bundle without a Team ID.
+    # This override is confined to the disposable Debug verification build.
+    signing=(CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= CODE_SIGNING_ALLOWED=YES ENABLE_HARDENED_RUNTIME=NO)
 fi
 log="$build_root/evidence/$mode.log"
 if xcodebuild -project Clipx.xcodeproj -scheme "$scheme" -configuration Debug \
-    -derivedDataPath "$build_root/$variant" -clonedSourcePackagesDirPath "$packages" \
+    -derivedDataPath "$build_root/$variant" -clonedSourcePackagesDirPath "$packages" -skipPackageUpdates \
     -destination "platform=macOS,arch=$(uname -m)" \
     CLIPX_BUNDLE_IDENTIFIER=com.clipx.Clipx.Verification "${signing[@]}" \
     "${only[@]}" > "$log" 2>&1; then

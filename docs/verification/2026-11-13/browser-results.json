@@ -1,0 +1,16 @@
+{
+  "status": "PASS",
+  "checks": [
+    "saved clip playback",
+    "source and clip pagination",
+    "search clear and request ownership",
+    "detail request ownership",
+    "phone modal close on error",
+    "closed proxy polling cancellation",
+    "permanent speed with source-time marks",
+    "save response ownership",
+    "failed sprite retry and blob disposal",
+    "320\u20131280px layout"
+  ],
+  "artifacts": "/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-browser-regression-LfU7Jx"
+}

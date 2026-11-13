@@ -1,0 +1,40 @@
+Command line invocation:
+    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -xctestrun /private/tmp/clipx-verification-20261112/Direct/Build/Products/Clipx-External.xctestrun -destination platform=macOS,arch=arm64 -resultBundlePath /private/tmp/clipx-verification-20261112/evidence/integrations-hy_nvxyt/integrations.xcresult "-only-testing:ClipxCoreTests/ExternalIntegrationTests/testGeneratedFCPXMLAgainstAppleDTD" "-only-testing:ClipxCoreTests/ExternalIntegrationTests/testStintRenderUploadShareAndCommentRoundTrip"
+
+Writing result bundle at path:
+	/private/tmp/clipx-verification-20261112/evidence/integrations-hy_nvxyt/integrations.xcresult
+
+--- xcodebuild: WARNING: Using the first of multiple matching destinations:
+{ platform:macOS, arch:arm64, id:00006041-001268190A81401C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:Mac Catalyst, id:00006041-001268190A81401C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:DriverKit, id:00006041-001268190A81401C, name:My Mac }
+{ platform:macOS, arch:arm64, variant:Designed for [iPad,iPhone], id:00006041-001268190A81401C, name:My Mac }
+2026-11-13 00:01:13.995487+0800 Clipx[56014:947354] [Connection] Unable to get remoteObjectProxy, error: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-13 00:01:13.995627+0800 Clipx[56014:947354] [Application] Error registering app with AppIntents framework: Error Domain=NSCocoaErrorDomain Code=4097 "connection to service named com.apple.linkd.autoShortcut" UserInfo={NSDebugDescription=connection to service named com.apple.linkd.autoShortcut}
+2026-11-13 00:01:14.030654+0800 Clipx[56014:947180] ApplePersistenceIgnoreState: Existing state will not be touched. New state will be written to /var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/com.clipx.Clipx.Verification.savedState
+Test Suite 'Selected tests' started at 2026-11-13 00:01:14.328.
+Test Suite 'ClipxCoreTests.xctest' started at 2026-11-13 00:01:14.328.
+Test Suite 'ExternalIntegrationTests' started at 2026-11-13 00:01:14.328.
+Test Case '-[ClipxCoreTests.ExternalIntegrationTests testGeneratedFCPXMLAgainstAppleDTD]' started.
+FCPXML_DTD_INTEGRATION: 2 production documents validated against Apple's full 1.10 DTD
+Test Case '-[ClipxCoreTests.ExternalIntegrationTests testGeneratedFCPXMLAgainstAppleDTD]' passed (0.009 seconds).
+Test Case '-[ClipxCoreTests.ExternalIntegrationTests testStintRenderUploadShareAndCommentRoundTrip]' started.
+2026-11-13 00:01:14.602159+0800 Clipx[56014:947376] [ClientDonation] (+[PPSClientDonation isRegisteredSubsystem:category:]) Permission denied: CoreMedia / CM-ASSETCREATION
+STINT_INTEGRATION: production render/upload, guest media access, threaded comment pull-back, local receipts
+Test Case '-[ClipxCoreTests.ExternalIntegrationTests testStintRenderUploadShareAndCommentRoundTrip]' passed (0.482 seconds).
+Test Suite 'ExternalIntegrationTests' passed at 2026-11-13 00:01:14.821.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.492 (0.493) seconds
+Test Suite 'ClipxCoreTests.xctest' passed at 2026-11-13 00:01:14.821.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.492 (0.493) seconds
+Test Suite 'Selected tests' passed at 2026-11-13 00:01:14.821.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.492 (0.493) seconds
+2026-11-13 00:01:15.100 xcodebuild[56001:947065] [MT] IDETestOperationsObserverDebug: 4.485 elapsed -- Testing started completed.
+2026-11-13 00:01:15.100 xcodebuild[56001:947065] [MT] IDETestOperationsObserverDebug: 0.000 sec, +0.000 sec -- start
+2026-11-13 00:01:15.100 xcodebuild[56001:947065] [MT] IDETestOperationsObserverDebug: 4.485 sec, +4.485 sec -- end
+
+Test session results, code coverage, and logs:
+	/tmp/clipx-verification-20261112/evidence/integrations-hy_nvxyt/integrations.xcresult
+
+** TEST EXECUTE SUCCEEDED **
+
+Testing started

@@ -24,4 +24,4 @@ Preconditions: isolated test schemes; a working AVFoundation environment.
 
 ## Gotchas
 
-The repair machine's XCUITest runner is blocked before app code with developer mode disabled. Native bitmap fallback cannot composite every system surface or video layer; the text files identify the fallback. Do not mistake white material/black video capture artifacts for product colors, or claim click coverage from rendering alone.
+On Xcode 27.2 the ad-hoc runner required hardened runtime to be disabled for the temporary Debug test build; `verify.sh ui` supplies that override. It then timed out enabling Automation Mode, before any test ran. `automationmodetool` reports whether UI automation requires authentication; `DevToolsSecurity -status` is a separate developer-policy check, not proof of the cause. Machine security changes require explicit authorization. Native bitmap fallback cannot composite every system surface or video layer; the text files identify the fallback. Do not mistake white material/black video capture artifacts for product colors, or claim click coverage from rendering alone.

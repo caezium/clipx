@@ -1,0 +1,7 @@
+Keep my personal notes
+
+<!-- clipx:review -->
+Review comments:
+- [0:01] Fixture reviewer: Keep this moment
+    - reply Fixture reviewer: Agreed on this selection
+<!-- /clipx:review -->

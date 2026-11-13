@@ -1,0 +1,16 @@
+{
+  "status": "PASS",
+  "tests": [
+    "testGeneratedFCPXMLAgainstAppleDTD",
+    "testStintRenderUploadShareAndCommentRoundTrip"
+  ],
+  "provenance": {
+    "dtd": {
+      "url": "https://developer.apple.com/documentation/professional-video-applications/document-type-definition.md",
+      "sha256": "6044527401b6cc92a9d86383437794d8de801c1904b6d08409ce81720fd23f33"
+    },
+    "stint_commit": "a13087c887de6f3cba4b9fbb067504183fc9f934",
+    "stint_dirty": false
+  },
+  "evidence": "/private/tmp/clipx-verification-20261112/evidence/integrations-hy_nvxyt"
+}

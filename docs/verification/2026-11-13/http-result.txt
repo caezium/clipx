@@ -1,0 +1,3 @@
+Command: python3 Tests/ClipxCoreTests/ServerHTTPRegression.py
+Observed exit code: 0
+PASS: actual loopback HTTP parser rejection, subsequent auth response, full/suffix/large explicit streaming, server shutdown connection and handler cancellation

@@ -1,0 +1,73 @@
+{
+  "session": "2026-11-12–13 Asia/Shanghai",
+  "baseline_commit": "cc60b19da153ef2d2b572ec31b412b7476d1550b",
+  "worktree_changes": "Verification scripts, opt-in tests, and documentation only; not committed.",
+  "isolation": {
+    "bundle_identifier": "com.clipx.Clipx.Verification",
+    "real_library_used": false,
+    "stint": "Fresh temporary store, ephemeral loopback port; production server stopped after test."
+  },
+  "passed": {
+    "external_integration_tests": {
+      "passed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "evidence": "integrations-summary.json"
+    },
+    "remote_browser": {
+      "checks": 10,
+      "evidence": "browser-results.json"
+    },
+    "real_http_server": {
+      "evidence": "http-result.txt"
+    }
+  },
+  "not_established": {
+    "native_click": "Runner signing problem fixed. UI testing then timed out enabling Automation Mode; tool reports disabled and user authentication required. User declined changes to machine security settings.",
+    "direct_full_suite": "Compiled, but subsequent XCTest runs did not start test cases. Host sample shows XCTestDriver waiting for test configuration / IDE session. Interrupted only owned processes.",
+    "mas_full_suite": "Compiled, but XCTest did not start test cases. Explicit target selection did not resolve the initialization stall. Interrupted only owned processes.",
+    "fresh_native_layout": "No new full native render suite completed.",
+    "distribution": "No valid signing identities, FFmpeg depends on Homebrew libraries, Sparkle public key is a placeholder; no signing/notarization or release attempted.",
+    "signed_mas_runtime": "The MAS build used CODE_SIGNING_ALLOWED=NO; sandbox enforcement is not established.",
+    "final_cut_import": "DTD conformity passed; actual Final Cut import remains untested. No Final Cut Pro.app at the standard /Applications path.",
+    "physical_phone": "No physical phone/Wi-Fi workflow performed.",
+    "deployed_stint": "The actual local Stint source was tested; no external deployment was contacted."
+  },
+  "security_changes": false,
+  "logs": {
+    "ui.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/ui.log",
+      "sha256": "75887afa3fbd89a645b8b52d5e16134abc45053738439ee2e3bf9eee371f983d"
+    },
+    "ui-library-validation.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/ui-library-validation.log",
+      "sha256": "bba8ae601a229adfa34543667477c4e9df59ef4ca6df06b83585db668313ce99"
+    },
+    "core-session-timeout.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/core-session-timeout.log",
+      "sha256": "fb8a77f2f918391fd3f508784a8203582ebcaa4e6540f0d5ab4ed4f8b7f10e95"
+    },
+    "core-explicit-session.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/core-explicit-session.log",
+      "sha256": "fd60176aee7916ced757aef96f5d8bf0aca284f0512630d711f1350485b31180"
+    },
+    "mas.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/mas.log",
+      "sha256": "b2bdd54bd75535b48517a90d8117d7ee843b1b943f074112e5e19c7f53079ac5"
+    },
+    "mas-session-timeout.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/mas-session-timeout.log",
+      "sha256": "245a39aa69be9d0e13bbf902cdbc88ca397d0eb5590218cad3788797c47c55eb"
+    },
+    "database-focus.log": {
+      "path": "/tmp/clipx-verification-20261112/evidence/database-focus.log",
+      "sha256": "e2889d83b4510b8a45cb0af21ad557dc7dfdcbe39cebdab37e0798c0ebab72e9"
+    }
+  },
+  "test_source_sha256": {
+    "Scripts/verify.sh": "03e47dc6221c0fbca23ce4f4ae28197b38b0fda86692edd3d31d115501786853",
+    "Scripts/verify-integrations.py": "8c754000619a3ccb979191978fcf75fcee0c6d24dd50b53bbdeae1660eb47a4d",
+    "Tests/ClipxCoreTests/ExternalIntegrationTests.swift": "5fa0893d122c9c6b7f6b6e15a6225a45ce198e4fb0e5f9825d7301d838726908"
+  },
+  "stint_download_sha256": "4f531b16839f975bd4cc195124e1614338ab40bdbd355b5718805c252058170d"
+}

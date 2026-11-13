@@ -1,0 +1,15 @@
+{
+  "checked_at": "2026-11-12T15:55:06.020790+00:00",
+  "head": "cc60b19da153ef2d2b572ec31b412b7476d1550b",
+  "developer_mode": "Developer mode is currently disabled.",
+  "signing_identities": "0 valid identities found",
+  "xcode": "Xcode 27.2\nBuild version 27B52",
+  "swift": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0",
+  "ffmpeg": "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers",
+  "final_cut_standard_install_present": false,
+  "sparkle_key_placeholder": true,
+  "release_ffmpeg_preflight": {
+    "exit_code": 1,
+    "output": "error: FFmpeg depends on /opt/homebrew/Cellar/ffmpeg/9.0.2_1/lib/libavdevice.63.dylib. Release builds require a portable binary with only system libraries.\n"
+  }
+}

@@ -1,5 +1,7 @@
 # Repair verification evidence
 
+The [November 12–13 follow-up](2026-11-13/README.md) adds passing full-DTD and real local Stint checks, refreshed browser/HTTP evidence, and the current native-runner and release blockers. The original results below remain historical; the follow-up did not reproduce the complete 186/180-test suites.
+
 These artifacts use synthetic footage and disposable libraries. The original snapshot is `c700be3`; [REPAIR_NOTES.md](../../REPAIR_NOTES.md) describes the changes and remaining limits. [results.json](results.json) records the passing suite counts, exact commands, and original log hashes. Build products and full `.xcresult` bundles remain in `/tmp/clipx-repair-build`.
 
 ## Native screens

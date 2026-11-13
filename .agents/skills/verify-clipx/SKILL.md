@@ -20,6 +20,8 @@ Run from the repository root on macOS 14+ with Xcode, XcodeGen, and FFmpeg insta
 
 These commands use `com.clipx.Clipx.Verification`, never the user's `com.clipx.Clipx` instance. Test schemes set `CLIPX_ISOLATED_TESTS=1`; AppPreferences chooses a unique temporary data directory, separate preference suite, and cache root. AppDelegate skips ordinary test-host startup; the native renderer explicitly bootstraps the isolated library. Global hotkeys and Sparkle are disabled in isolated sessions. No live Stint uploads occur.
 
+For opt-in FCPXML schema validation and a real round trip against a disposable local Stint server, use `Scripts/verify-integrations.py` as described in [Exports and bridges](features/exports.md). Its Stint uploads contain generated footage and use a fresh temporary store on loopback.
+
 ## Doctor
 
 `Scripts/verify.sh doctor` checks Xcode/XcodeGen, the Direct helper, and the selected build paths. Require a passing exit code and confirm the bundle identifier in the test invocation is `com.clipx.Clipx.Verification`. Native render evidence contains requested/actual window dimensions and capture method beside every PNG. Never drive `/Applications/Clipx.app` or a process not launched by this run.
@@ -34,7 +36,7 @@ Read [features/README.md](features/README.md), then the matching feature. Tests 
 ./Scripts/verify.sh ui
 ```
 
-The optional `ui` mode drives import → mark → capture → inspector edit and reads the saved SQLite row. It requires a working macOS developer/automation configuration. During the repair session the XCUITest runner stalled before app code and `DevToolsSecurity -status` reported disabled developer mode. Do not change machine security settings implicitly, and do not report that click workflow as passed. Its artifacts, when available, live under `/tmp/clipx-ui-evidence` with the latest run path in `/tmp/clipx-ui-evidence-latest`.
+The optional `ui` mode drives import → mark → capture → inspector edit and reads the saved SQLite row. It signs the disposable Debug build ad-hoc with hardened runtime disabled so the XCTest runner can load its unsigned-team test bundle. It requires working macOS UI automation: inspect `automationmodetool` without arguments for its status. On Xcode 27.2, the runner loaded but timed out enabling Automation Mode; the machine required user authentication. Do not change machine security settings implicitly, and do not report that click workflow as passed. Its artifacts, when available, live under `/tmp/clipx-ui-evidence` with the latest run path in `/tmp/clipx-ui-evidence-latest`.
 
 ## Remote browser setup
 
