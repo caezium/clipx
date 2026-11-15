@@ -10,6 +10,7 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import urllib.request
@@ -117,9 +118,112 @@ def sign_app(app, signing_identity):
     assert_developer_id(app)
 
 
-def assert_developer_id(app):
+def developer_id_requirement():
+    team = CONFIG["apple_team_id"]
+    if not re.fullmatch(r"[A-Z0-9]{10}", team):
+        raise ValueError("Invalid configured Apple team ID")
     requirement = 'anchor apple generic and certificate leaf[field.1.2.840.113635.100.6.1.13] exists'
+    requirement += f' and certificate leaf[subject.OU] = "{team}"'
+    # An inline requirement needs '='; without it codesign treats the text as a filename.
+    return "=" + requirement
+
+
+def assert_developer_id(app):
+    requirement = developer_id_requirement()
     run(["codesign", "--verify", "--deep", "--strict", "-R", requirement, app])
+    framework = app / "Contents/Frameworks/Sparkle.framework"
+    version = (framework / "Versions/Current").resolve()
+    for target in [framework, version / "XPCServices/Installer.xpc", version / "XPCServices/Downloader.xpc",
+                   version / "Autoupdate", version / "Updater.app", app / "Contents/Helpers/ffmpeg"]:
+        run(["codesign", "--verify", "--strict", "-R", requirement, target])
+
+
+MACHO_MAGICS = {b"\xcf\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+                b"\xca\xfe\xba\xbf", b"\xbf\xba\xfe\xca"}
+
+
+def macho_payload(path):
+    """Hash signature-free slices, ignoring signing's __LINKEDIT virtual capacity."""
+    data = path.read_bytes()
+    fat = {b"\xca\xfe\xba\xbe": (">", False), b"\xbe\xba\xfe\xca": ("<", False),
+           b"\xca\xfe\xba\xbf": (">", True), b"\xbf\xba\xfe\xca": ("<", True)}
+    slices = []
+    if data[:4] in fat:
+        endian, wide = fat[data[:4]]
+        count = struct.unpack_from(endian + "I", data, 4)[0]
+        if not 1 <= count <= 64:
+            raise ValueError("Invalid Mach-O architecture count")
+        for index in range(count):
+            fields = struct.unpack_from(endian + ("IIQQII" if wide else "IIIII"), data, 8 + index * (32 if wide else 20))
+            offset, size = fields[2:4]
+            if offset + size > len(data):
+                raise ValueError("Invalid Mach-O slice bounds")
+            slices.append(bytearray(data[offset:offset + size]))
+    else:
+        slices.append(bytearray(data))
+    result = []
+    for data in slices:
+        endian = {b"\xcf\xfa\xed\xfe": "<", b"\xfe\xed\xfa\xcf": ">"}.get(bytes(data[:4]))
+        if endian is None:
+            raise ValueError("Expected a 64-bit Mach-O slice")
+        cpu, subtype = struct.unpack_from(endian + "II", data, 4)
+        count, command_bytes = struct.unpack_from(endian + "II", data, 16)
+        position, end = 32, 32 + command_bytes
+        if end > len(data):
+            raise ValueError("Invalid Mach-O load-command bounds")
+        for _ in range(count):
+            command, size = struct.unpack_from(endian + "II", data, position)
+            if size < 8 or position + size > end:
+                raise ValueError("Invalid Mach-O load command")
+            if command == 0x19 and data[position + 8:position + 24].rstrip(b"\0") == b"__LINKEDIT":
+                if size < 72:
+                    raise ValueError("Invalid __LINKEDIT segment")
+                # codesign --remove-signature retains the previous signature's
+                # virtual allocation. All mapped bytes and other load commands stay hashed.
+                struct.pack_into(endian + "Q", data, position + 32, 0)
+            position += size
+        if position != end:
+            raise ValueError("Incomplete Mach-O load commands")
+        result.append({"cpu": cpu, "subtype": subtype, "sha256": hashlib.sha256(data).hexdigest()})
+    return sorted(result, key=lambda item: (item["cpu"], item["subtype"]))
+
+
+def unsigned_payload_manifest(app):
+    """Compare transported builds without touching either original application's signatures."""
+    manifest = {}
+    with tempfile.TemporaryDirectory(prefix="clipx-signing-payload-") as temporary:
+        copy = Path(temporary) / "Clipx.app"
+        shutil.copytree(app, copy, symlinks=True)
+        for path in sorted(copy.rglob("*")):
+            relative = path.relative_to(copy)
+            if "_CodeSignature" in relative.parts:
+                continue
+            if path.is_symlink():
+                manifest[str(relative)] = {"link": os.readlink(path)}
+            elif path.is_file():
+                with path.open("rb") as stream:
+                    magic = stream.read(4)
+                if magic in MACHO_MAGICS:
+                    run(["codesign", "--remove-signature", path], capture_output=True, text=True)
+                    value = {"mach_o": macho_payload(path)}
+                else:
+                    value = {"sha256": digest(path)}
+                manifest[str(relative)] = {**value, "mode": path.stat().st_mode & 0o777}
+    return manifest
+
+
+def verify_signed_app(app, unsigned_reference):
+    if unsigned_reference is None:
+        raise ValueError("An already-signed app requires --unsigned-reference from this build machine")
+    app_preflight(app)
+    app_preflight(unsigned_reference)
+    manifest = check_helper(unsigned_reference / "Contents/Helpers/ffmpeg", unsigned_reference / "Contents/Resources/FFmpeg")
+    assert_developer_id(app)
+    before, after = unsigned_payload_manifest(unsigned_reference), unsigned_payload_manifest(app)
+    changed = sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name))
+    if changed:
+        raise ValueError(f"Signed app differs from the original build beyond code signatures: {changed[:8]}")
+    return manifest
 
 
 def fetch_feed(destination):
@@ -155,12 +259,18 @@ def package(args):
     if destination.exists() and any(destination.iterdir()):
         raise ValueError("Package output must be empty; use a fresh directory for each attempt")
     info = app_preflight(original)
-    manifest = check_helper(original / "Contents/Helpers/ffmpeg", original / "Contents/Resources/FFmpeg")
+    if args.signed:
+        reference = args.unsigned_reference.resolve() if args.unsigned_reference else None
+        manifest = verify_signed_app(original, reference)
+    else:
+        if args.unsigned_reference:
+            raise ValueError("--unsigned-reference is only used with --signed")
+        manifest = check_helper(original / "Contents/Helpers/ffmpeg", original / "Contents/Resources/FFmpeg")
     sources = (args.sources or ROOT / "build/ffmpeg" / manifest["source_archive"]).resolve()
     if digest(sources) != manifest["source_archive_sha256"]:
         raise ValueError("FFmpeg corresponding sources do not match the bundled helper")
     tools = sparkle_tools(args.sparkle_bin)
-    selected_identity = identity(args.identity)
+    selected_identity = None if args.signed else identity(args.identity)
     if not args.notary_profile:
         raise ValueError("Set --notary-profile or NOTARY_PROFILE to a notarytool Keychain profile")
     run(["xcrun", "notarytool", "history", "--keychain-profile", args.notary_profile, "--output-format", "json"], stdout=subprocess.DEVNULL)
@@ -180,7 +290,10 @@ def package(args):
     app = destination / "staging/Clipx.app"
     app.parent.mkdir()
     run(["ditto", original, app])
-    sign_app(app, selected_identity)
+    if args.signed:
+        assert_developer_id(app)
+    else:
+        sign_app(app, selected_identity)
     submission = destination / "notarization.zip"
     run(["ditto", "-c", "-k", "--keepParent", app, submission])
     result = subprocess.run(["xcrun", "notarytool", "submit", str(submission), "--keychain-profile", args.notary_profile, "--wait", "--output-format", "json"], capture_output=True, text=True)
@@ -292,11 +405,16 @@ def main():
     builder.add_argument("--version", default="0.1.0")
     builder.add_argument("--build", default="1", type=lambda value: str(int(value)))
     signer = commands.add_parser("sign")
+    signed_verifier = commands.add_parser("verify-signed", help="Check a remotely signed app against its original unsigned build")
+    signed_verifier.add_argument("--app", type=Path, required=True)
+    signed_verifier.add_argument("--unsigned-reference", type=Path, required=True)
     packager = commands.add_parser("package", help="Sign, notarize, staple, archive and sign the appcast; does not publish")
     for command in [signer, packager]:
         command.add_argument("--app", type=Path, required=True)
         command.add_argument("--identity", default=os.environ.get("DEVELOPER_ID"))
     packager.add_argument("--notary-profile", default=os.environ.get("NOTARY_PROFILE"))
+    packager.add_argument("--signed", action="store_true", help="Preserve existing Developer ID signatures from the signing Mac")
+    packager.add_argument("--unsigned-reference", type=Path, help="Original build for payload comparison when --signed is used")
     packager.add_argument("--sources", type=Path)
     packager.add_argument("--notes", type=Path, required=True)
     for command in [packager, commands.add_parser("verify"), commands.add_parser("publish")]:
@@ -312,6 +430,9 @@ def main():
             build(args)
         elif args.command == "sign":
             sign_app(args.app.resolve(), identity(args.identity))
+        elif args.command == "verify-signed":
+            verify_signed_app(args.app.resolve(), args.unsigned_reference.resolve())
+            print("Developer ID team, nested signatures, and original build payload verified")
         elif args.command == "package":
             package(args)
         elif args.command == "verify":

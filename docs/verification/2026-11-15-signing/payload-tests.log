@@ -1,0 +1,12 @@
+test_ad_hoc_signature_cannot_pass_developer_id_gate (test_signing_payload.SigningPayloadTests.test_ad_hoc_signature_cannot_pass_developer_id_gate) ... test-requirement: code failed to satisfy specified code requirement(s)
+ok
+test_changed_executable_is_detected (test_signing_payload.SigningPayloadTests.test_changed_executable_is_detected) ... ok
+test_changed_resource_is_detected (test_signing_payload.SigningPayloadTests.test_changed_resource_is_detected) ... ok
+test_changed_symlink_is_detected (test_signing_payload.SigningPayloadTests.test_changed_symlink_is_detected) ... ok
+test_real_code_signature_changes_preserve_payload (test_signing_payload.SigningPayloadTests.test_real_code_signature_changes_preserve_payload) ... ok
+test_signed_mode_requires_original_build (test_signing_payload.SigningPayloadTests.test_signed_mode_requires_original_build) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.312s
+
+OK

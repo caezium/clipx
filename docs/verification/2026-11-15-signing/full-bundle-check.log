@@ -1,0 +1,30 @@
+/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc: replacing existing signature
+/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc: replacing existing signature
+/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate: replacing existing signature
+/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app: replacing existing signature
+/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework: replacing existing signature
+/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Helpers/ffmpeg: replacing existing signature
+/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app: replacing existing signature
+--prepared:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/.
+--prepared:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/Autoupdate
+--validated:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/Autoupdate
+--prepared:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/Updater.app
+--prepared:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/XPCServices/Downloader.xpc
+--prepared:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/XPCServices/Installer.xpc
+--validated:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/Updater.app
+--validated:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/XPCServices/Downloader.xpc
+--validated:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/XPCServices/Installer.xpc
+--validated:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Frameworks/Sparkle.framework/Versions/Current/.
+--prepared:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Helpers/ffmpeg
+--validated:/private/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app/Contents/Helpers/ffmpeg
+/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app: valid on disk
+/var/folders/15/9tv_yhr53rs5s6yb6yh54gy40000gn/T/clipx-full-signing-check-r6s9hbgh/Clipx.app: satisfies its Designated Requirement
+test-requirement: code failed to satisfy specified code requirement(s)
+{
+  "status": "PASS",
+  "scope": "Disposable copy of the actual universal Clipx app",
+  "nested_ad_hoc_signing_integrity": true,
+  "developer_id_gate_rejected_ad_hoc": true,
+  "unsigned_payload_unchanged": true,
+  "apple_signing_or_notarization_proven": false
+}

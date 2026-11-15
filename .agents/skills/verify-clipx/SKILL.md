@@ -24,6 +24,8 @@ For opt-in FCPXML schema validation and a real round trip against a disposable l
 
 For distribution changes, follow the [distribution guide](../../../docs/DISTRIBUTION.md) and run `Scripts/verify-release.py` with the resolved Sparkle tools. It compiles production export arguments into a command-line fixture, exercises the portable helper and verifies the public appcast signature without a GUI session. Preserve architecture skips; a built Intel slice is not proof of Intel execution. Apple signing/notarization and native click verification are separate requirements.
 
+For signing/handoff script changes, run `python3 -m unittest discover -s Tests/Release -p 'test_*.py' -v`. These use real universal Mach-O fixtures and temporary ad-hoc signatures: they prove payload comparison and rejection behavior, not Developer ID signing or notarization. A returned MacBook build must pass `release.py verify-signed` against the Studio's original before `package --signed` is used.
+
 ## Doctor
 
 `Scripts/verify.sh doctor` checks Xcode/XcodeGen, the Direct helper, and the selected build paths. Require a passing exit code and confirm the bundle identifier in the test invocation is `com.clipx.Clipx.Verification`. Native render evidence contains requested/actual window dimensions and capture method beside every PNG. Never drive `/Applications/Clipx.app` or a process not launched by this run.

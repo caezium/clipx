@@ -6,7 +6,7 @@ Clipx uses [public GitHub Releases](https://github.com/caezium/clipx-releases/re
 
 The universal Release app and portable FFmpeg build successfully for arm64 and x86_64, targeting macOS 14. All six presets and a VideoToolbox export passed on Apple Silicon using production argument generation, with Homebrew excluded from the encoder's environment. Intel execution remains unverified because this Mac has no Rosetta. Native click testing remains pending while the Mac is locked; no automation or security settings were changed.
 
-Apple signing and notarization are not complete: this Mac has no valid Developer ID Application identity. Nothing in this pipeline treats an ad-hoc signature as distributable. See [the retained evidence](verification/2026-11-13-release/README.md) for the exact checks and gaps.
+The MacBook agent subsequently reported a valid Developer ID Application identity for team `YGSM2722TZ`, expiring August 1, 2031. Its private key stays on the MacBook; the Studio has the build and Sparkle key. No signing operation or notarization authentication has yet been demonstrated. Nothing in this pipeline treats an ad-hoc signature as distributable. See [the retained build evidence](verification/2026-11-13-release/README.md) for the earlier checks and gaps.
 
 ## Build the portable helper
 
@@ -49,6 +49,36 @@ Clipx's Ed25519 key is already stored in the login Keychain under account `com.c
 Back up the update private key in your secure credential store before relying on this Mac as the sole release signer. Sparkle's `generate_keys --account com.clipx.Clipx -x /secure/path/key` exports it; `-f /secure/path/key` imports it on another signing Mac. Use `umask 077`, keep the destination outside the repository, and never upload the private key as a release asset. The release script checks that the loaded key matches the app's public key before signing.
 
 ## Package, review, then publish
+
+### Signing on the MacBook
+
+The prepared draft transfer and exact MacBook-agent commands are in [MacBook signing handoff](MACBOOK_SIGNING.md).
+
+Transfer the unsigned application in a `ditto -c -k --keepParent` ZIP and verify its SHA-256 before extracting it. `Scripts/release.py`, `Scripts/validate-ffmpeg.sh`, `Configs/Distribution.json`, and `Configs/Clipx-Direct.entitlements` are sufficient for the signing command; a full Xcode build and the Sparkle private key are not needed on the signing machine.
+
+```sh
+python3 Scripts/release.py sign --app /path/to/Clipx.app \
+  --identity 2B8D05A2470C0AC720996E5425E48B8FC4828953
+ditto -c -k --keepParent /path/to/Clipx.app Clipx-signed.zip
+```
+
+Return that signed archive to the Studio and extract it into a separate directory. Keep the original unsigned build for comparison. On the Studio:
+
+```sh
+python3 Scripts/release.py verify-signed \
+  --app /path/to/returned/Clipx.app \
+  --unsigned-reference "$PWD/build/release/app/DerivedData/Build/Products/Release/Clipx.app"
+
+python3 Scripts/release.py package --signed \
+  --app /path/to/returned/Clipx.app \
+  --unsigned-reference "$PWD/build/release/app/DerivedData/Build/Products/Release/Clipx.app" \
+  --directory "$PWD/build/release/0.1.0-1" \
+  --notes /path/to/release-notes.md
+```
+
+The returned app and every nested signing target must have a valid Developer ID signature from team `YGSM2722TZ`. The script also compares the app's code, resources, permissions and symlinks with the original build, excluding code signatures and their virtual allocation size. It normalizes temporary copies, leaving both originals untouched. The Studio can then notarize, staple and sign Sparkle updates without importing the MacBook's private key. A notarization Keychain profile is still required on the Studio.
+
+### Signing and packaging on one machine
 
 ```sh
 python3 Scripts/release.py package \
