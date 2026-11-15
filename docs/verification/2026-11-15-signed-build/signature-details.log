@@ -1,0 +1,30 @@
+Executable=/Users/henry/Desktop/clipx/build/release/macbook-return-0.1.0-1/extracted/Clipx.app/Contents/MacOS/Clipx
+Identifier=com.clipx.Clipx
+Format=app bundle with Mach-O universal (x86_64 arm64)
+CodeDirectory v=20500 size=26171 flags=0x10000(runtime) hashes=807+7 location=embedded
+VersionPlatform=1
+VersionMin=917504
+VersionSDK=1769984
+Hash type=sha256 size=32
+CandidateCDHash sha256=67b0261f6eb17e997592269419e5f973d4462f5b
+CandidateCDHashFull sha256=67b0261f6eb17e997592269419e5f973d4462f5bfbbad1af7e917a1db094493b
+Hash choices=sha256
+CMSDigest=67b0261f6eb17e997592269419e5f973d4462f5bfbbad1af7e917a1db094493b
+CMSDigestType=2
+Executable Segment base=0
+Executable Segment limit=4521984
+Executable Segment flags=0x1
+Page size=16384
+CDHash=67b0261f6eb17e997592269419e5f973d4462f5b
+Signature size=9049
+Authority=Developer ID Application: Wenzhang Zhang (YGSM2722TZ)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+Timestamp=Nov 15, 2026 at 23:20:39
+Info.plist entries=33
+TeamIdentifier=YGSM2722TZ
+Runtime Version=27.2.0
+Sealed Resources version=2 rules=13 files=11
+Internal requirements count=1 size=176
+Total signatures=1
+Chosen signature=1

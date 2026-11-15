@@ -1,0 +1,9 @@
+{
+  "archive": "Clipx-0.1.0-1-signed.zip",
+  "sha256": "77f996082332b9416dc9e8d9cb9e7e2f303202bc982dfae7579054216c2764b4",
+  "apple_team_id": "YGSM2722TZ",
+  "selected_identity_sha1": "2B8D05A2470C0AC720996E5425E48B8FC4828953",
+  "unsigned_archive_sha256": "5f7e5f89957c74513b730d85012ca6a38bf0607121e05966319822da950a5d3a",
+  "verification": "release.py verify-signed succeeded",
+  "notarized": false
+}

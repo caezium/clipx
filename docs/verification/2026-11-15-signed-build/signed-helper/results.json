@@ -1,0 +1,30 @@
+{
+  "signed_helper": "/Users/henry/Desktop/clipx/build/release/macbook-return-0.1.0-1/extracted/Clipx.app/Contents/Helpers/ffmpeg",
+  "checks": [
+    {
+      "codec": "libx264",
+      "architecture": "arm64",
+      "status": "PASS",
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "frames": 30,
+      "audio_and_video_duration_seconds": 1
+    },
+    {
+      "codec": "h264_videotoolbox",
+      "architecture": "arm64",
+      "status": "PASS",
+      "dimensions": [
+        1920,
+        1080
+      ],
+      "frames": 30,
+      "audio_and_video_duration_seconds": 1
+    }
+  ],
+  "native_app_launch": "NOT RUN",
+  "intel_execution": "NOT RUN; no Rosetta installed",
+  "notarization": "PENDING"
+}

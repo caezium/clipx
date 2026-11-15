@@ -1,0 +1,9 @@
+{
+  "verified_at": "2026-11-15T15:27:01.630248+00:00",
+  "signed_archive_sha256": "77f996082332b9416dc9e8d9cb9e7e2f303202bc982dfae7579054216c2764b4",
+  "apple_team_id": "YGSM2722TZ",
+  "studio_verification": "PASS",
+  "original_payload_unchanged": true,
+  "notarized": false,
+  "app": "/Users/henry/Desktop/clipx/build/release/macbook-return-0.1.0-1/extracted/Clipx.app"
+}

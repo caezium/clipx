@@ -6,7 +6,7 @@ Clipx uses [public GitHub Releases](https://github.com/caezium/clipx-releases/re
 
 The universal Release app and portable FFmpeg build successfully for arm64 and x86_64, targeting macOS 14. All six presets and a VideoToolbox export passed on Apple Silicon using production argument generation, with Homebrew excluded from the encoder's environment. Intel execution remains unverified because this Mac has no Rosetta. Native click testing remains pending while the Mac is locked; no automation or security settings were changed.
 
-The MacBook agent subsequently reported a valid Developer ID Application identity for team `YGSM2722TZ`, expiring August 1, 2031. Its private key stays on the MacBook; the Studio has the build and Sparkle key. No signing operation or notarization authentication has yet been demonstrated. Nothing in this pipeline treats an ad-hoc signature as distributable. See [the retained build evidence](verification/2026-11-13-release/README.md) for the earlier checks and gaps.
+Developer ID signing is complete. The MacBook signed with team `YGSM2722TZ`, and the Studio independently verified Apple's trust chain, nested signatures, and unchanged original payload. Both software and VideoToolbox exports passed with the returned signed helper. The private signing key stays on the MacBook; the Studio has the build and Sparkle key. Apple notarization still requires credentials. See [the returned-build evidence](verification/2026-11-15-signed-build/README.md) and [earlier build evidence](verification/2026-11-13-release/README.md) for exact checks and gaps.
 
 ## Build the portable helper
 

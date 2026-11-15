@@ -110,7 +110,7 @@ Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. T
 
 ### Direct (recommended for power users)
 
-Public download hosting and the signed Sparkle feed are configured at [clipx-releases](https://github.com/caezium/clipx-releases). No application release is published yet; Developer ID signing and notarization still require Apple credentials.
+Public download hosting and the signed Sparkle feed are configured at [clipx-releases](https://github.com/caezium/clipx-releases). Developer ID signing and independent verification of the returned build are complete. No application release is published yet; notarization still requires Apple credentials.
 
 ```sh
 python3 Scripts/build-ffmpeg.py

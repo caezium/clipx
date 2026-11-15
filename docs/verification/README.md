@@ -2,6 +2,8 @@
 
 The [November 12–13 follow-up](2026-11-13/README.md) adds passing full-DTD and real local Stint checks, refreshed browser/HTTP evidence, and the current native-runner and release blockers. The original results below remain historical; the follow-up did not reproduce the complete 186/180-test suites.
 
+The [November 15 signed-build follow-up](2026-11-15-signed-build/README.md) verifies the MacBook's Developer ID signatures and unchanged payload independently on the Studio, then exercises software and hardware exports with the signed helper. Notarization remains pending; these results do not establish native app launch or update installation.
+
 These artifacts use synthetic footage and disposable libraries. The original snapshot is `c700be3`; [REPAIR_NOTES.md](../../REPAIR_NOTES.md) describes the changes and remaining limits. [results.json](results.json) records the passing suite counts, exact commands, and original log hashes. Build products and full `.xcresult` bundles remain in `/tmp/clipx-repair-build`.
 
 ## Native screens
