@@ -1,0 +1,85 @@
+{
+  "checks": [
+    {
+      "name": "Developer ID team, nested signatures and original payload",
+      "status": "PASS"
+    },
+    {
+      "name": "universal helper, system libraries, matching sources and licenses",
+      "status": "PASS"
+    },
+    {
+      "name": "arm64-libx264-reels",
+      "status": "PASS",
+      "frames": 30,
+      "duration": "1.000000"
+    },
+    {
+      "name": "arm64-libx264-tiktok",
+      "status": "PASS",
+      "frames": 60,
+      "duration": "1.000000"
+    },
+    {
+      "name": "arm64-libx264-youtube-shorts",
+      "status": "PASS",
+      "frames": 30,
+      "duration": "1.000000"
+    },
+    {
+      "name": "arm64-libx264-instagram-feed",
+      "status": "PASS",
+      "frames": 30,
+      "duration": "1.000000"
+    },
+    {
+      "name": "arm64-libx264-youtube-1080p",
+      "status": "PASS",
+      "frames": 30,
+      "duration": "1.000000"
+    },
+    {
+      "name": "arm64-libx264-youtube-4k",
+      "status": "PASS",
+      "frames": 30,
+      "duration": "1.000000"
+    },
+    {
+      "name": "arm64-h264_videotoolbox-youtube-1080p",
+      "status": "PASS",
+      "frames": 30,
+      "duration": "1.000000"
+    },
+    {
+      "name": "x86_64-libx264-youtube-1080p",
+      "status": "SKIP",
+      "reason": "Host cannot execute this architecture; Rosetta was not installed by this check"
+    },
+    {
+      "name": "x86_64-h264_videotoolbox-youtube-1080p",
+      "status": "SKIP",
+      "reason": "Host cannot execute this architecture; Rosetta was not installed by this check"
+    },
+    {
+      "name": "anonymous public HTTPS appcast and Ed25519 signature",
+      "status": "PASS"
+    },
+    {
+      "name": "tampered appcast rejected",
+      "status": "PASS"
+    }
+  ],
+  "native_ui": "not run; no GUI session required by these checks",
+  "app": {
+    "path": "/Users/henry/Desktop/clipx/build/release/macbook-return-0.1.0-1/extracted/Clipx.app",
+    "version": "0.1.0",
+    "build": "1",
+    "developer_id_verified": true
+  },
+  "encoder": {
+    "path": "/Users/henry/Desktop/clipx/build/release/macbook-return-0.1.0-1/extracted/Clipx.app/Contents/Helpers/ffmpeg",
+    "sha256": "3183f52e2bb9a2326a19096d00052d745b5ab93a33a4265ea03dd1ab9e7ab98d",
+    "unsigned_manifest_sha256": "938aadbfdf43ec37ae3a0dda44703fe7e96cd0f304bfbb025ff22fd7cd74aada"
+  },
+  "status": "PASS_WITH_SKIPS"
+}

@@ -6,5 +6,6 @@ Use isolated test app bundles and fixture media only. Run `Scripts/verify.sh doc
 - [Native UI and playback](native.md): screen layout, player state, capture, settings, optional click workflow.
 - [Exports and bridges](exports.md): source-time renders, cancellation, sidecars, FCPXML, resumable review transfers.
 - [Remote](remote.md): browser paging, playback, auth/parser/ranges, proxy lifecycle.
+- [Distribution](distribution.md): bundled encoder, signed-build provenance, local update-packaging rehearsal, and publication gates.
 
 Record the entry point and actual proof. A view render does not prove a click, a fake review client does not prove a live service, and an unsigned App Store build does not prove sandboxed distribution. Preserve explicit skips and external prerequisites.

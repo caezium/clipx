@@ -112,6 +112,8 @@ Build-variant differences are gated with `#if DIRECT_BUILD` / `#if MAS_BUILD`. T
 
 Public download hosting and the signed Sparkle feed are configured at [clipx-releases](https://github.com/caezium/clipx-releases). Developer ID signing and independent verification of the returned build are complete. No application release is published yet; notarization still requires Apple credentials.
 
+All six export presets and the hardware export passed with the signed app's bundled helper. A [local release rehearsal](docs/verification/2026-11-18-release-prep/README.md) also verified real Sparkle archive/feed signatures, component-source checksums, and rejection of altered artifacts. Rehearsal output is explicitly unpublishable.
+
 ```sh
 python3 Scripts/build-ffmpeg.py
 python3 Scripts/release.py build --version 0.1.0 --build 1

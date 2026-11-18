@@ -4,7 +4,7 @@ Clipx uses [public GitHub Releases](https://github.com/caezium/clipx-releases/re
 
 ## Current state
 
-The universal Release app and portable FFmpeg build successfully for arm64 and x86_64, targeting macOS 14. All six presets and a VideoToolbox export passed on Apple Silicon using production argument generation, with Homebrew excluded from the encoder's environment. Intel execution remains unverified because this Mac has no Rosetta. Native click testing remains pending while the Mac is locked; no automation or security settings were changed.
+The universal Release app and portable FFmpeg build successfully for arm64 and x86_64, targeting macOS 14. All six presets and a VideoToolbox export passed with the signed app's bundled helper on Apple Silicon using production argument generation, with Homebrew excluded from the encoder's environment. Local Sparkle archive/feed generation and tamper rejection also passed. See [credential-free release preparation](verification/2026-11-18-release-prep/README.md). Intel execution remains unverified because this Mac has no Rosetta. Native click testing remains pending while the Mac is locked; no automation or security settings were changed.
 
 Developer ID signing is complete. The MacBook signed with team `YGSM2722TZ`, and the Studio independently verified Apple's trust chain, nested signatures, and unchanged original payload. Both software and VideoToolbox exports passed with the returned signed helper. The private signing key stays on the MacBook; the Studio has the build and Sparkle key. Apple notarization still requires credentials. See [the returned-build evidence](verification/2026-11-15-signed-build/README.md) and [earlier build evidence](verification/2026-11-13-release/README.md) for exact checks and gaps.
 
@@ -32,6 +32,8 @@ python3 Scripts/verify-release.py \
 ```
 
 `build` supports `--packages-dir` for an existing Swift package cache; point `SPARKLE_BIN` at that cache's Sparkle tools when using it. Build numbers must be positive and increase for every published release. Evidence defaults to `build/release/evidence`; `PASS_WITH_SKIPS` explicitly means an architecture could not execute on this host. These checks do not replace native UI, signed-app launch, or update installation testing.
+
+When `--app` is provided, the media checks execute that app's bundled FFmpeg, not the development helper. For a signed app, also supply `--unsigned-reference`; this verifies the Developer ID team, nested signatures, and original payload before running exports. The result records the exact encoder path and hash. Without an app, the command checks the development helper.
 
 ## Apple credentials and update keys
 
@@ -77,6 +79,29 @@ python3 Scripts/release.py package --signed \
 ```
 
 The returned app and every nested signing target must have a valid Developer ID signature from team `YGSM2722TZ`. The script also compares the app's code, resources, permissions and symlinks with the original build, excluding code signatures and their virtual allocation size. It normalizes temporary copies, leaving both originals untouched. The Studio can then notarize, staple and sign Sparkle updates without importing the MacBook's private key. A notarization Keychain profile is still required on the Studio.
+
+### Work before notarization credentials are available
+
+The signed app can complete media verification and a local update-packaging rehearsal using the Studio's existing Sparkle key. These commands never submit to Apple, launch Clipx, or publish a GitHub release. Use fresh output directories for each rehearsal.
+
+```sh
+export SPARKLE_BIN="$PWD/build/release/Packages/artifacts/sparkle/Sparkle/bin"
+
+python3 Scripts/verify-release.py \
+  --app "$PWD/build/release/macbook-return-0.1.0-1/extracted/Clipx.app" \
+  --unsigned-reference "$PWD/build/release/app/DerivedData/Build/Products/Release/Clipx.app" \
+  --directory "$PWD/build/release/signed-evidence"
+
+python3 Scripts/release.py rehearse \
+  --app "$PWD/build/release/macbook-return-0.1.0-1/extracted/Clipx.app" \
+  --unsigned-reference "$PWD/build/release/app/DerivedData/Build/Products/Release/Clipx.app" \
+  --notes docs/releases/0.1.0-1.md \
+  --directory "$PWD/build/release/rehearsal-0.1.0-1"
+```
+
+The rehearsal uses the same archive, release-notes, corresponding-sources, checksum and Sparkle feed generation as final packaging. It verifies the real feed/archive signatures, download metadata, and extracted app against the original build. Its `rehearsal.json` explicitly marks it unpublishable; `verify` and `publish` reject it before accessing keys or external tools. A passing rehearsal does not prove notarization, Gatekeeper acceptance, app launch, or update installation.
+
+Once the `Clipx` notarization profile is configured, run `package --signed` against the retained signed app with `--notary-profile Clipx`, the same original reference and release notes, and a new output directory. Packaging still requires Apple's acceptance, a stapled ticket, and Gatekeeper validation before creating `release.json`. The rehearsal ZIP cannot be promoted directly because stapling changes the final archive and its signatures.
 
 ### Signing and packaging on one machine
 

@@ -254,10 +254,83 @@ def build(args):
     print(json.dumps({"app": str(app), "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"], "signed": False}, indent=2))
 
 
+def matching_sources(manifest, sources):
+    path = (sources or ROOT / "build/ffmpeg" / manifest["source_archive"]).resolve()
+    if path.name != manifest["source_archive"]:
+        raise ValueError("FFmpeg source archive filename must match the bundled manifest")
+    if digest(path) != manifest["source_archive_sha256"]:
+        raise ValueError("FFmpeg corresponding sources do not match the bundled helper")
+    return path
+
+
+def prepare_update_feed(directory, info, tools):
+    updates = directory / "updates"
+    updates.mkdir(parents=True)
+    feed = updates / "appcast.xml"
+    fetch_feed(feed)
+    sparkle_run(tools, "sign_update", "--verify", feed)
+    for item in ET.parse(feed).findall("./channel/item"):
+        old = item.findtext(f"{{{SPARKLE}}}version")
+        if not old and item.find("enclosure") is not None:
+            old = item.find("enclosure").get(f"{{{SPARKLE}}}version")
+        if old and int(old) >= int(info["CFBundleVersion"]):
+            raise ValueError("CFBundleVersion must increase beyond every published build")
+    return digest(feed)
+
+
+def write_update_assets(directory, app, info, sources, notes, tools, base_feed_sha256):
+    """Shared archive/feed generation; this alone never makes a publishable release."""
+    updates = directory / "updates"
+    feed = updates / "appcast.xml"
+    version, build_number = info["CFBundleShortVersionString"], info["CFBundleVersion"]
+    tag = f"v{version}-{build_number}"
+    archive = updates / f"Clipx-{version}-{build_number}.zip"
+    run(["ditto", "-c", "-k", "--keepParent", app, archive])
+    archive.with_suffix(".html").write_text(f"<!doctype html><meta charset='utf-8'><h1>Clipx {html.escape(version)}</h1><pre>{html.escape(notes)}</pre>\n")
+    sparkle_run(tools, "generate_appcast", "--download-url-prefix",
+         f"https://github.com/{CONFIG['repository']}/releases/download/{tag}/", "--link", f"https://github.com/{CONFIG['repository']}",
+         "--maximum-deltas", "0", "--maximum-versions", "0", updates)
+    sparkle_run(tools, "sign_update", feed)
+    shutil.copy2(sources, updates / sources.name)
+    assets = sorted(path for path in updates.iterdir() if path.is_file())
+    (updates / "SHA256SUMS").write_text("".join(f"{digest(path)}  {path.name}\n" for path in assets))
+    (directory / "release-notes.md").write_text(notes)
+    return {"tag": tag, "version": version, "build": build_number, "archive": archive.name,
+            "sources": sources.name, "base_feed_sha256": base_feed_sha256,
+            "assets": {path.name: digest(path) for path in [*assets, updates / "SHA256SUMS"]}}
+
+
+def rehearse(args):
+    original, reference, directory = args.app.resolve(), args.unsigned_reference.resolve(), args.directory.resolve()
+    if directory.exists() and any(directory.iterdir()):
+        raise ValueError("Rehearsal output must be empty; use a fresh directory")
+    notes = args.notes.read_text()
+    info = app_preflight(original)
+    manifest = verify_signed_app(original, reference)
+    sources = matching_sources(manifest, args.sources)
+    tools = sparkle_tools(args.sparkle_bin)
+    base_feed_sha256 = prepare_update_feed(directory, info, tools)
+    # Write the marker before generating any archives so an interrupted rehearsal
+    # cannot be mistaken for a completed, notarized package.
+    report = {"purpose": "local-rehearsal", "publishable": False, "status": "IN_PROGRESS",
+              "notarization": "not attempted", "gatekeeper": "not assessed", "update_installation": "not attempted"}
+    marker = directory / "rehearsal.json"
+    marker.write_text(json.dumps(report, indent=2) + "\n")
+    report.update(write_update_assets(directory, original, info, sources, notes, tools, base_feed_sha256))
+    verify_update_assets(directory, tools, report)
+    with tempfile.TemporaryDirectory(prefix="clipx-rehearsal-check-") as temporary:
+        run(["ditto", "-x", "-k", directory / "updates" / report["archive"], temporary])
+        verify_signed_app(Path(temporary) / "Clipx.app", reference)
+    report["status"] = "PASS"
+    marker.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"Local archive/feed rehearsal passed: {marker}\nNot notarized or publishable; public hosting was not changed.")
+
+
 def package(args):
     original, destination = args.app.resolve(), args.directory.resolve()
     if destination.exists() and any(destination.iterdir()):
         raise ValueError("Package output must be empty; use a fresh directory for each attempt")
+    notes = args.notes.read_text()
     info = app_preflight(original)
     if args.signed:
         reference = args.unsigned_reference.resolve() if args.unsigned_reference else None
@@ -266,27 +339,13 @@ def package(args):
         if args.unsigned_reference:
             raise ValueError("--unsigned-reference is only used with --signed")
         manifest = check_helper(original / "Contents/Helpers/ffmpeg", original / "Contents/Resources/FFmpeg")
-    sources = (args.sources or ROOT / "build/ffmpeg" / manifest["source_archive"]).resolve()
-    if digest(sources) != manifest["source_archive_sha256"]:
-        raise ValueError("FFmpeg corresponding sources do not match the bundled helper")
+    sources = matching_sources(manifest, args.sources)
     tools = sparkle_tools(args.sparkle_bin)
     selected_identity = None if args.signed else identity(args.identity)
     if not args.notary_profile:
         raise ValueError("Set --notary-profile or NOTARY_PROFILE to a notarytool Keychain profile")
     run(["xcrun", "notarytool", "history", "--keychain-profile", args.notary_profile, "--output-format", "json"], stdout=subprocess.DEVNULL)
-    destination.mkdir(parents=True, exist_ok=True)
-    updates = destination / "updates"
-    updates.mkdir()
-    feed = updates / "appcast.xml"
-    fetch_feed(feed)
-    sparkle_run(tools, "sign_update", "--verify", feed)
-    base_feed_sha256 = digest(feed)
-    for item in ET.parse(feed).findall("./channel/item"):
-        old = item.findtext(f"{{{SPARKLE}}}version")
-        if not old and item.find("enclosure") is not None:
-            old = item.find("enclosure").get(f"{{{SPARKLE}}}version")
-        if old and int(old) >= int(info["CFBundleVersion"]):
-            raise ValueError("CFBundleVersion must increase beyond every published build")
+    base_feed_sha256 = prepare_update_feed(destination, info, tools)
     app = destination / "staging/Clipx.app"
     app.parent.mkdir()
     run(["ditto", original, app])
@@ -307,30 +366,15 @@ def package(args):
     run(["xcrun", "stapler", "staple", app])
     run(["xcrun", "stapler", "validate", app])
     run(["spctl", "--assess", "--type", "execute", "--verbose=2", app])
-    version, build_number = info["CFBundleShortVersionString"], info["CFBundleVersion"]
-    tag = f"v{version}-{build_number}"
-    archive = updates / f"Clipx-{version}-{build_number}.zip"
-    run(["ditto", "-c", "-k", "--keepParent", app, archive])
-    notes = args.notes.read_text()
-    archive.with_suffix(".html").write_text(f"<!doctype html><meta charset='utf-8'><h1>Clipx {html.escape(version)}</h1><pre>{html.escape(notes)}</pre>\n")
-    sparkle_run(tools, "generate_appcast", "--download-url-prefix",
-         f"https://github.com/{CONFIG['repository']}/releases/download/{tag}/", "--link", f"https://github.com/{CONFIG['repository']}",
-         "--maximum-deltas", "0", "--maximum-versions", "0", updates)
-    sparkle_run(tools, "sign_update", feed)
-    shutil.copy2(sources, updates / sources.name)
-    assets = sorted(path for path in updates.iterdir() if path.is_file())
-    (updates / "SHA256SUMS").write_text("".join(f"{digest(path)}  {path.name}\n" for path in assets))
-    (destination / "release-notes.md").write_text(notes)
-    (destination / "release.json").write_text(json.dumps({"tag": tag, "version": version, "build": build_number,
-         "archive": archive.name, "sources": sources.name, "notarization_id": receipt["id"], "base_feed_sha256": base_feed_sha256,
-         "assets": {path.name: digest(path) for path in [*assets, updates / "SHA256SUMS"]}}, indent=2) + "\n")
+    release = write_update_assets(destination, app, info, sources, notes, tools, base_feed_sha256)
+    release["notarization_id"] = receipt["id"]
+    (destination / "release.json").write_text(json.dumps(release, indent=2) + "\n")
     verify_package(destination, tools)
     submission.unlink()
     print(f"Signed, notarized, stapled and verified package: {destination}")
 
 
-def verify_package(directory, tools):
-    release = json.loads((directory / "release.json").read_text())
+def verify_update_assets(directory, tools, release):
     updates = directory / "updates"
     required = {release["archive"], release["sources"], "appcast.xml", "SHA256SUMS"}
     if not required.issubset(release["assets"]):
@@ -349,6 +393,16 @@ def verify_package(directory, tools):
     if enclosure is None or enclosure.get("url") != expected_url or int(enclosure.get("length", "0")) != archive.stat().st_size:
         raise ValueError("Appcast URL or length does not match release archive")
     sparkle_run(tools, "sign_update", "--verify", archive, enclosure.get(f"{{{SPARKLE}}}edSignature", ""))
+
+
+def verify_package(directory, tools=None, *, sparkle_bin=None):
+    if (directory / "rehearsal.json").exists():
+        raise ValueError("Local rehearsal is not a notarized release; use package before verify or publish")
+    release = json.loads((directory / "release.json").read_text())
+    tools = tools or sparkle_tools(sparkle_bin)
+    verify_update_assets(directory, tools, release)
+    updates = directory / "updates"
+    archive = updates / release["archive"]
     with tempfile.TemporaryDirectory(prefix="clipx-release-check-") as temporary:
         run(["ditto", "-x", "-k", archive, temporary])
         app = Path(temporary) / "Clipx.app"
@@ -369,7 +423,7 @@ def verify_package(directory, tools):
 
 def publish(args):
     directory = args.directory.resolve()
-    release = verify_package(directory, sparkle_tools(args.sparkle_bin))
+    release = verify_package(directory, sparkle_bin=args.sparkle_bin)
     repo = CONFIG["repository"]
     state = json.loads(output(["gh", "repo", "view", repo, "--json", "isPrivate"]))
     if state["isPrivate"]:
@@ -408,6 +462,11 @@ def main():
     signed_verifier = commands.add_parser("verify-signed", help="Check a remotely signed app against its original unsigned build")
     signed_verifier.add_argument("--app", type=Path, required=True)
     signed_verifier.add_argument("--unsigned-reference", type=Path, required=True)
+    rehearsal = commands.add_parser("rehearse", help="Exercise local signed archive/feed generation without notarization or publication")
+    rehearsal.add_argument("--app", type=Path, required=True)
+    rehearsal.add_argument("--unsigned-reference", type=Path, required=True)
+    rehearsal.add_argument("--sources", type=Path)
+    rehearsal.add_argument("--notes", type=Path, required=True)
     packager = commands.add_parser("package", help="Sign, notarize, staple, archive and sign the appcast; does not publish")
     for command in [signer, packager]:
         command.add_argument("--app", type=Path, required=True)
@@ -417,7 +476,7 @@ def main():
     packager.add_argument("--unsigned-reference", type=Path, help="Original build for payload comparison when --signed is used")
     packager.add_argument("--sources", type=Path)
     packager.add_argument("--notes", type=Path, required=True)
-    for command in [packager, commands.add_parser("verify"), commands.add_parser("publish")]:
+    for command in [packager, rehearsal, commands.add_parser("verify"), commands.add_parser("publish")]:
         command.add_argument("--directory", type=Path, required=True)
         command.add_argument("--sparkle-bin", default=os.environ.get("SPARKLE_BIN"))
     args = parser.parse_args()
@@ -435,8 +494,10 @@ def main():
             print("Developer ID team, nested signatures, and original build payload verified")
         elif args.command == "package":
             package(args)
+        elif args.command == "rehearse":
+            rehearse(args)
         elif args.command == "verify":
-            verify_package(args.directory.resolve(), sparkle_tools(args.sparkle_bin))
+            verify_package(args.directory.resolve(), sparkle_bin=args.sparkle_bin)
         elif args.command == "publish":
             publish(args)
     except (ValueError, OSError, subprocess.SubprocessError, KeyError) as error:

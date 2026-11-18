@@ -1,0 +1,21 @@
+{
+  "purpose": "local-rehearsal",
+  "publishable": false,
+  "status": "PASS",
+  "notarization": "not attempted",
+  "gatekeeper": "not assessed",
+  "update_installation": "not attempted",
+  "tag": "v0.1.0-1",
+  "version": "0.1.0",
+  "build": "1",
+  "archive": "Clipx-0.1.0-1.zip",
+  "sources": "FFmpeg-9.0.2-x264-b35605a-sources.tar.gz",
+  "base_feed_sha256": "1b6e32282ace95228fb286a2ca26d2df2f2e03598f7b0bb12582f810478a6d43",
+  "assets": {
+    "Clipx-0.1.0-1.html": "ddd4eda555d875d8cdca7c08467360d93ada7dba68743e9d5592cff9dedf310c",
+    "Clipx-0.1.0-1.zip": "fa27dfe3ed1102696a726fd90ab3efff6642ab8c512f0b44f039ad6c5fdfeaa9",
+    "FFmpeg-9.0.2-x264-b35605a-sources.tar.gz": "ebe2f1b69ddc14ef9c4741f6310d973159bdc93cfcad479f8d5b96951026fc69",
+    "appcast.xml": "8aab423b4120c83d63a887ec32a985cb9766df5dddd53160cd466a661b89a5f3",
+    "SHA256SUMS": "7661537fbc398a81b7cb4cada821df563a4572b4c086829793c106e0a8dab6fb"
+  }
+}

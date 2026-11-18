@@ -1,0 +1,9 @@
+PASS arm64-libx264-reels
+PASS arm64-libx264-tiktok
+PASS arm64-libx264-youtube-shorts
+PASS arm64-libx264-instagram-feed
+PASS arm64-libx264-youtube-1080p
+PASS arm64-libx264-youtube-4k
+PASS arm64-h264_videotoolbox-youtube-1080p
+Error: failed to pass signing verification.
+Evidence: /Users/henry/Desktop/clipx/build/release/evidence-2026-11-18-signed/results.json

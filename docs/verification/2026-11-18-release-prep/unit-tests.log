@@ -1,0 +1,24 @@
+test_ad_hoc_signature_cannot_pass_developer_id_gate (test_signing_payload.SigningPayloadTests.test_ad_hoc_signature_cannot_pass_developer_id_gate) ... test-requirement: code failed to satisfy specified code requirement(s)
+ok
+test_changed_executable_is_detected (test_signing_payload.SigningPayloadTests.test_changed_executable_is_detected) ... ok
+test_changed_resource_is_detected (test_signing_payload.SigningPayloadTests.test_changed_resource_is_detected) ... ok
+test_changed_symlink_is_detected (test_signing_payload.SigningPayloadTests.test_changed_symlink_is_detected) ... ok
+test_real_code_signature_changes_preserve_payload (test_signing_payload.SigningPayloadTests.test_real_code_signature_changes_preserve_payload) ... ok
+test_signed_mode_requires_original_build (test_signing_payload.SigningPayloadTests.test_signed_mode_requires_original_build) ... ok
+test_asset_outside_updates_is_rejected (test_update_assets.UpdateAssetTests.test_asset_outside_updates_is_rejected) ... ok
+test_changed_archive_is_rejected (test_update_assets.UpdateAssetTests.test_changed_archive_is_rejected) ... ok
+test_consistent_metadata_passes (test_update_assets.UpdateAssetTests.test_consistent_metadata_passes) ... ok
+test_duplicate_build_is_rejected (test_update_assets.UpdateAssetTests.test_duplicate_build_is_rejected) ... ok
+test_missing_sources_are_rejected (test_update_assets.UpdateAssetTests.test_missing_sources_are_rejected) ... ok
+test_newer_build_retains_the_base_feed_checksum (test_update_assets.UpdateAssetTests.test_newer_build_retains_the_base_feed_checksum) ... ok
+test_rehearsal_is_rejected_before_keys_or_publication_even_with_release_manifest (test_update_assets.UpdateAssetTests.test_rehearsal_is_rejected_before_keys_or_publication_even_with_release_manifest) ... ok
+test_renamed_source_archive_is_rejected_before_packaging (test_update_assets.UpdateAssetTests.test_renamed_source_archive_is_rejected_before_packaging) ... ok
+test_reused_build_number_is_rejected_before_archive_generation (test_update_assets.UpdateAssetTests.test_reused_build_number_is_rejected_before_archive_generation) ... ok
+test_wrong_build_is_rejected (test_update_assets.UpdateAssetTests.test_wrong_build_is_rejected) ... ok
+test_wrong_download_size_is_rejected (test_update_assets.UpdateAssetTests.test_wrong_download_size_is_rejected) ... ok
+test_wrong_download_url_is_rejected_even_with_current_manifest_hash (test_update_assets.UpdateAssetTests.test_wrong_download_url_is_rejected_even_with_current_manifest_hash) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 0.323s
+
+OK

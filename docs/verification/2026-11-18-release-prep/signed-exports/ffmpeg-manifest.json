@@ -1,0 +1,107 @@
+{
+  "ffmpeg_version": "9.0.2",
+  "x264_revision": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55",
+  "architectures": [
+    "arm64",
+    "x86_64"
+  ],
+  "minimum_macos": "14.0",
+  "sha256": "938aadbfdf43ec37ae3a0dda44703fe7e96cd0f304bfbb025ff22fd7cd74aada",
+  "sources": {
+    "ffmpeg.tar.xz": {
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+    },
+    "x264.tar.bz2": {
+      "url": "https://code.videolan.org/videolan/x264/-/archive/b35605ace3ddf7c1a5d67a2eb553f034aef41d55/x264-b35605ace3ddf7c1a5d67a2eb553f034aef41d55.tar.bz2",
+      "sha256": "6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224"
+    }
+  },
+  "builds": [
+    {
+      "architecture": "arm64",
+      "x264_configure": [
+        "./configure",
+        "--prefix=/Users/henry/Desktop/clipx/build/ffmpeg/arm64/prefix",
+        "--enable-static",
+        "--enable-pic",
+        "--disable-cli",
+        "--host=aarch64-apple-darwin",
+        "--extra-cflags=-arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0",
+        "--extra-ldflags=-arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0"
+      ],
+      "ffmpeg_configure": [
+        "./configure",
+        "--prefix=/Users/henry/Desktop/clipx/build/ffmpeg/arm64/prefix",
+        "--target-os=darwin",
+        "--arch=arm64",
+        "--enable-cross-compile",
+        "--cc=clang",
+        "--sysroot=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "--disable-autodetect",
+        "--disable-shared",
+        "--enable-static",
+        "--disable-debug",
+        "--disable-doc",
+        "--disable-ffplay",
+        "--disable-ffprobe",
+        "--enable-gpl",
+        "--enable-libx264",
+        "--enable-videotoolbox",
+        "--enable-audiotoolbox",
+        "--enable-zlib",
+        "--enable-bzlib",
+        "--enable-iconv",
+        "--extra-cflags=-arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0 -I/Users/henry/Desktop/clipx/build/ffmpeg/arm64/prefix/include",
+        "--extra-objcflags=-arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0",
+        "--extra-ldflags=-arch arm64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0 -L/Users/henry/Desktop/clipx/build/ffmpeg/arm64/prefix/lib",
+        "--extra-libs=-liconv",
+        "--pkg-config-flags=--static"
+      ]
+    },
+    {
+      "architecture": "x86_64",
+      "x264_configure": [
+        "./configure",
+        "--prefix=/Users/henry/Desktop/clipx/build/ffmpeg/x86_64/prefix",
+        "--enable-static",
+        "--enable-pic",
+        "--disable-cli",
+        "--host=x86_64-apple-darwin",
+        "--extra-cflags=-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0",
+        "--extra-ldflags=-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0"
+      ],
+      "ffmpeg_configure": [
+        "./configure",
+        "--prefix=/Users/henry/Desktop/clipx/build/ffmpeg/x86_64/prefix",
+        "--target-os=darwin",
+        "--arch=x86_64",
+        "--enable-cross-compile",
+        "--cc=clang",
+        "--sysroot=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk",
+        "--disable-autodetect",
+        "--disable-shared",
+        "--enable-static",
+        "--disable-debug",
+        "--disable-doc",
+        "--disable-ffplay",
+        "--disable-ffprobe",
+        "--enable-gpl",
+        "--enable-libx264",
+        "--enable-videotoolbox",
+        "--enable-audiotoolbox",
+        "--enable-zlib",
+        "--enable-bzlib",
+        "--enable-iconv",
+        "--extra-cflags=-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0 -I/Users/henry/Desktop/clipx/build/ffmpeg/x86_64/prefix/include",
+        "--extra-objcflags=-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0",
+        "--extra-ldflags=-arch x86_64 -isysroot /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.2.sdk -mmacosx-version-min=14.0 -L/Users/henry/Desktop/clipx/build/ffmpeg/x86_64/prefix/lib",
+        "--extra-libs=-liconv",
+        "--pkg-config-flags=--static"
+      ]
+    }
+  ],
+  "source_archive": "FFmpeg-9.0.2-x264-b35605a-sources.tar.gz",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.4.1.1)",
+  "source_archive_sha256": "ebe2f1b69ddc14ef9c4741f6310d973159bdc93cfcad479f8d5b96951026fc69"
+}

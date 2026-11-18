@@ -4,6 +4,8 @@ For fresh checks, see the [integration follow-up](docs/verification/2026-11-13/R
 
 The reviewed baseline is preserved in `c700be3` (`Snapshot before reliability and UI improvements`). The repairs address all 35 primary findings in [CODE_REVIEW.md](CODE_REVIEW.md), plus the smaller behavior defects listed there. The existing SwiftUI/GRDB architecture and dark visual identity remain the basis of the app. The future features in `plans/ai-features.md` are still planned work.
 
+The [November 18 preparation](docs/verification/2026-11-18-release-prep/README.md) adds passing coverage of all export presets with the signed helper, a real local Sparkle packaging rehearsal, tamper rejection, and publication guards. Apple credentials remain deferred; the rehearsal is not a notarized application release.
+
 ## Storage, indexing, and builds
 
 | Finding | Resulting behavior | Main regression evidence |

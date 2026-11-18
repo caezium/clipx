@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Clipx Updates</title>
+        <link>https://github.com/caezium/clipx-releases</link>
+        <description>Signed updates for Clipx for macOS.</description>
+        <language>en</language>
+        <item>
+            <title>0.1.0</title>
+            <pubDate>Wed, 18 Nov 2026 16:23:19 +0800</pubDate>
+            <link>https://github.com/caezium/clipx-releases</link>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink sparkle:edSignature="Mx3Vm90crVetYlFqo1WG53eVrJyxJiSIsk64BCMhJE9FAGHqn2mImREFwdVw6P3Ate7io+hFJSifsuhuOVnvAg==" sparkle:length="1857">https://raw.githubusercontent.com/caezium/clipx-releases/main/Clipx-0.1.0-1.html</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/caezium/clipx-releases/releases/download/v0.1.0-1/Clipx-0.1.0-1.zip" length="31981693" type="application/octet-stream" sparkle:edSignature="1x8FFlsxW+EkZjli+uxla15F8HYlHNSrjzSYbM61pLTBJjsuRcGOyEOVjNqVJVuHnGV6BcSIW+B+j+bgmZ9BDw=="/>
+        </item>
+    </channel>
+</rss>
+<!-- sparkle-signatures:
+edSignature: /6bUaEcTO6V0H8lH4ytR0ivplATX23oHzH6ML5QU8szmdwixtWNuR5cE/FVw6CMXerpX/c6dkhozNfFjPTIOAw==
+length: 1574
+-->

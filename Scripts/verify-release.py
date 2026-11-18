@@ -18,7 +18,11 @@ def main():
     parser.add_argument("--directory", type=Path, default=ROOT / "build/release/evidence")
     parser.add_argument("--sparkle-bin", default=os.environ.get("SPARKLE_BIN"))
     parser.add_argument("--app", type=Path)
+    parser.add_argument("--unsigned-reference", type=Path,
+                        help="Verify a signed app against its original build before testing its bundled encoder")
     args = parser.parse_args()
+    if args.unsigned_reference and not args.app:
+        parser.error("--unsigned-reference requires --app")
     evidence = args.directory.resolve()
     evidence.mkdir(parents=True, exist_ok=True)
     checks = []
@@ -36,7 +40,21 @@ def main():
                            env=env, timeout=timeout, check=True)
 
     try:
-        manifest = release.check_helper()
+        if args.app:
+            app = args.app.resolve()
+            info = release.app_preflight(app)
+            helper = app / "Contents/Helpers/ffmpeg"
+            if args.unsigned_reference:
+                manifest = release.verify_signed_app(app, args.unsigned_reference.resolve())
+                checks.append({"name": "Developer ID team, nested signatures and original payload", "status": "PASS"})
+            else:
+                manifest = release.check_helper(helper, app / "Contents/Resources/FFmpeg")
+            report["app"] = {"path": str(app), "version": info["CFBundleShortVersionString"],
+                             "build": info["CFBundleVersion"], "developer_id_verified": bool(args.unsigned_reference)}
+        else:
+            manifest = release.check_helper()
+        report["encoder"] = {"path": str(helper), "sha256": release.digest(helper),
+                             "unsigned_manifest_sha256": manifest["sha256"]}
         sources = ROOT / "build/ffmpeg" / manifest["source_archive"]
         assert release.digest(sources) == manifest["source_archive_sha256"], "Corresponding sources hash mismatch"
         checks.append({"name": "universal helper, system libraries, matching sources and licenses", "status": "PASS"})
@@ -96,23 +114,13 @@ def main():
         # A signature check must fail when the signed data is modified.
         tampered = evidence / "tampered-appcast.xml"
         assert b"Clipx Updates" in feed.read_bytes(), "Tamper fixture must modify the signed contents"
-        tampered.write_bytes(feed.read_bytes().replace(b"Clipx Updates", b"Altered Updates"))
+        tampered.write_bytes(feed.read_bytes().replace(b"Clipx Updates", b"Other Updates"))
         try:
             release.sparkle_run(tools, "sign_update", "--verify", tampered)
         except subprocess.CalledProcessError:
             checks.append({"name": "tampered appcast rejected", "status": "PASS"})
         else:
             raise AssertionError("Modified feed unexpectedly verified")
-        if args.app:
-            info = release.app_preflight(args.app)
-            release.check_helper(args.app / "Contents/Helpers/ffmpeg", args.app / "Contents/Resources/FFmpeg")
-            try:
-                release.assert_developer_id(args.app)
-            except subprocess.CalledProcessError:
-                checks.append({"name": "unsigned build rejected by release signing gate", "status": "PASS"})
-            else:
-                checks.append({"name": "Developer ID signature", "status": "PASS"})
-            report["app"] = {"path": str(args.app), "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"]}
         report["status"] = "PASS_WITH_SKIPS" if any(check["status"] == "SKIP" for check in checks) else "PASS"
     except Exception as error:
         report["status"] = "FAIL"

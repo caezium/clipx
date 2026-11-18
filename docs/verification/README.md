@@ -4,6 +4,8 @@ The [November 12–13 follow-up](2026-11-13/README.md) adds passing full-DTD and
 
 The [November 15 signed-build follow-up](2026-11-15-signed-build/README.md) verifies the MacBook's Developer ID signatures and unchanged payload independently on the Studio, then exercises software and hardware exports with the signed helper. Notarization remains pending; these results do not establish native app launch or update installation.
 
+The [November 18 release preparation](2026-11-18-release-prep/README.md) extends signed-helper coverage to all six presets and a hardware export, adds a real local archive/feed rehearsal with tamper rejection, and records 18 passing signing/metadata tests. Apple credentials were deferred, and nothing was published.
+
 These artifacts use synthetic footage and disposable libraries. The original snapshot is `c700be3`; [REPAIR_NOTES.md](../../REPAIR_NOTES.md) describes the changes and remaining limits. [results.json](results.json) records the passing suite counts, exact commands, and original log hashes. Build products and full `.xcresult` bundles remain in `/tmp/clipx-repair-build`.
 
 ## Native screens

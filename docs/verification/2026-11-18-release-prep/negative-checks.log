@@ -1,0 +1,39 @@
+Clipx-0.1.0-1.html: OK
+Clipx-0.1.0-1.zip: OK
+FFmpeg-9.0.2-x264-b35605a-sources.tar.gz: OK
+appcast.xml: OK
+Error: failed to pass signing verification.
+Error: failed to pass signing verification.
+{
+  "checks": [
+    {
+      "name": "every checksum in SHA256SUMS",
+      "status": "PASS"
+    },
+    {
+      "name": "same-size modified feed rejected",
+      "status": "PASS",
+      "verifier_exit_code": 1
+    },
+    {
+      "name": "same-size modified archive rejected",
+      "status": "PASS",
+      "verifier_exit_code": 1
+    },
+    {
+      "name": "public appcast unchanged and still empty",
+      "status": "PASS"
+    },
+    {
+      "name": "verify refuses rehearsal output",
+      "status": "PASS"
+    },
+    {
+      "name": "publish refuses rehearsal output",
+      "status": "PASS"
+    }
+  ],
+  "status": "PASS",
+  "apple_credentials_used": false,
+  "application_published": false
+}
