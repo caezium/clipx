@@ -117,7 +117,7 @@ struct LightTableView: View {
             } label: {
                 Label(compact ? "Export \(clips.count)" : "Export \(clips.count) · \(preset.displayName)", systemImage: "square.and.arrow.up")
             }
-            .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
+            .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
             .help("Export \(clips.count) clips as \(preset.displayName)")
         }
         .fixedSize()

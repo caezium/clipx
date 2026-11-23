@@ -1,0 +1,131 @@
+01-calendar.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+02-grid.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+03-list.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+04-light-table-inspector-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+05-filtered-clip-inspector.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+06-no-results.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+07-project-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+08-multiple-selection.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+09-player.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+10-player-inspector-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+11-capture-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+12-onboarding-welcome.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+13-onboarding-ready.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+14-settings.txt
+Requested 680.0 × 600.0; hosted 680.0 × 600.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+15-remote-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+16-export-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+17-sidebar.txt
+Requested 240.0 × 700.0; hosted 240.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+18-session-rail.txt
+Requested 240.0 × 700.0; hosted 240.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+19-onboarding-folder.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+20-onboarding-vault.txt
+Requested 624.0 × 544.0; hosted 624.0 × 544.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+21-label-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+22-library-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+23-bridge-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+24-hotkey-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+25-update-settings.txt
+Requested 680.0 × 540.0; hosted 680.0 × 540.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+26-command-palette.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+27-shortcuts.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+28-missing-source.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+29-export-queue.txt
+Requested 480.0 × 320.0; hosted 480.0 × 320.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+30-player-notes.txt
+Requested 1320.0 × 820.0; hosted 1320.0 × 820.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+31-player-notes-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+32-player-export-narrow.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.
+
+33-batch-export-stacked.txt
+Requested 900.0 × 700.0; hosted 900.0 × 700.0.
+Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent.

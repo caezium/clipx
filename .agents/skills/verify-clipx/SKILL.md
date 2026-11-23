@@ -18,6 +18,15 @@ Run from the repository root on macOS 14+ with Xcode, XcodeGen, and FFmpeg insta
 ./Scripts/verify.sh native
 ```
 
+When the screen must stay locked, use `./Scripts/verify.sh offscreen` (Direct) or
+`./Scripts/verify.sh offscreen-mas`. These build the isolated Debug app and tests,
+then `verify-offscreen.py` relinks their compiled objects with a CLI entry point.
+The 20 focused mutation, search, playback, and native-render tests run without
+showing windows, screen capture, Launch Services app activation, or automation
+authorization. The native case renders 33 states and exercises the real notes
+editor across tabs and layout changes. This is in-process verification, not a
+normal app launch, a sandbox entitlement check, or a native click test.
+
 These commands use `com.clipx.Clipx.Verification`, never the user's `com.clipx.Clipx` instance. Test schemes set `CLIPX_ISOLATED_TESTS=1`; AppPreferences chooses a unique temporary data directory, separate preference suite, and cache root. AppDelegate skips ordinary test-host startup; the native renderer explicitly bootstraps the isolated library. Global hotkeys and Sparkle are disabled in isolated sessions. No live Stint uploads occur.
 
 For opt-in FCPXML schema validation and a real round trip against a disposable local Stint server, use `Scripts/verify-integrations.py` as described in [Exports and bridges](features/exports.md). Its Stint uploads contain generated footage and use a fresh temporary store on loopback.
@@ -32,7 +41,7 @@ For signing/handoff script changes, run `python3 -m unittest discover -s Tests/R
 
 ## Drive and evidence
 
-Read [features/README.md](features/README.md), then the matching feature. Tests must complete with `TEST SUCCEEDED`; compile success alone is insufficient. Logs are under `$CLIPX_BUILD_ROOT/evidence` and `.xcresult` bundles under each variant's `Logs/Test`. Native screenshots and geometry notes live under `/tmp/clipx-native-ui-evidence`.
+Read [features/README.md](features/README.md), then the matching feature. Hosted tests must complete with `TEST SUCCEEDED`; offscreen runs must exit zero and report `CLIPX_OFFSCREEN_RESULT tests=20 failures=0 skips=0` plus `CLIPX_WORKSPACE_INTERACTION=PASS`. `TEST BUILD SUCCEEDED` alone is insufficient. Logs are under `$CLIPX_BUILD_ROOT/evidence`; hosted `.xcresult` bundles are under each variant's `Logs/Test`. Offscreen runs have text logs rather than `.xcresult` bundles. Native screenshots and geometry notes live under `/tmp/clipx-native-ui-evidence`; preserve these before running another variant.
 
 `native` renders real SwiftUI/AppKit windows and actual AVFoundation fixture media. It attempts to capture only its owned NSWindow; bitmap fallback is explicitly labeled because system materials and AVPlayerLayer may not composite. Inspect the resulting images and the narrow-window dimensions. This is not a substitute claim for the separate native click workflow.
 
@@ -42,7 +51,7 @@ Read [features/README.md](features/README.md), then the matching feature. Tests 
 
 The optional `ui` mode drives import → mark → capture → inspector edit and reads the saved SQLite row. It signs the disposable Debug build ad-hoc with hardened runtime disabled so the XCTest runner can load its unsigned-team test bundle. It requires working macOS UI automation: inspect `automationmodetool` without arguments for its status. On Xcode 27.2, the runner loaded but timed out enabling Automation Mode; the machine required user authentication. Do not change machine security settings implicitly, and do not report that click workflow as passed. Its artifacts, when available, live under `/tmp/clipx-ui-evidence` with the latest run path in `/tmp/clipx-ui-evidence-latest`.
 
-The November 13 single-test probe also stalled while `CGSSessionScreenIsLocked` was `Yes`. Unlocking has not been tested as a fix because the user chose to keep the Mac locked. Do not retry GUI-hosted tests repeatedly in that state or change automation/authentication settings. Continue headless checks and retain the native limitation.
+The November 13 hosted single-test probe also stalled while `CGSSessionScreenIsLocked` was `Yes`. Unlocking has not been tested as a fix because the user chose to keep the Mac locked. Do not retry GUI-hosted tests repeatedly in that state or change automation/authentication settings. Use the offscreen route for the focused in-process checks and retain the system-click and normal-launch limitations.
 
 ## Remote browser setup
 

@@ -29,6 +29,13 @@ final class AppState: ObservableObject {
     @Published var viewMode: LibraryViewMode = .calendar
     @Published var sortOption: ClipSortOption = .sourceDateDesc
     @Published var inspectorVisible: Bool = false
+    @Published var inspectorTab: InspectorTab = .details
+    @Published var inspectorExportPreset: ExportPreset = .reels
+
+    func showInspector(_ tab: InspectorTab) {
+        inspectorTab = tab
+        inspectorVisible = true
+    }
 
     // MARK: Player
     @Published var playerSourceID: Int64?
@@ -145,6 +152,19 @@ final class AppState: ObservableObject {
         toasts.removeAll { $0.id == id }
         dismissTasks.removeValue(forKey: id)?.cancel()
         toastActions.removeValue(forKey: id)
+    }
+}
+
+/// Shared by the library and player; changing clips keeps the current task open.
+enum InspectorTab: String, CaseIterable {
+    case details, notes, export
+
+    var title: String {
+        switch self {
+        case .details: return "Details"
+        case .notes: return "Notes"
+        case .export: return "Export"
+        }
     }
 }
 

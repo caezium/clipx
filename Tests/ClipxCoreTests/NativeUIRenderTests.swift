@@ -71,12 +71,15 @@ final class NativeUIRenderTests: XCTestCase {
             state.playerSourceID = nil
             state.selectedClipIDs = []
             state.inspectorVisible = false
+            state.inspectorTab = .details
+            state.inspectorExportPreset = .reels
             state.searchQuery = ""
             state.clearFilters()
         }
         state.playerSourceID = nil
         state.selectedClipIDs = []
         state.inspectorVisible = false
+        state.inspectorTab = .details
         state.searchQuery = ""
         state.clearFilters()
         state.libraryRevision &+= 1
@@ -110,6 +113,17 @@ final class NativeUIRenderTests: XCTestCase {
         try await capture(RootView(), state: state, size: NSSize(width: 900, height: 700), name: "10-player-inspector-narrow", in: evidence)
         try await capture(RootView(), state: state, size: NSSize(width: 900, height: 700), name: "11-capture-narrow", in: evidence,
                           beforeCapture: { NotificationCenter.default.post(name: .saveRange, object: nil) })
+        state.inspectorTab = .notes
+        try await capture(RootView(), state: state, size: NSSize(width: 1320, height: 820), name: "30-player-notes", in: evidence)
+        try await capture(RootView(), state: state, size: NSSize(width: 900, height: 700), name: "31-player-notes-narrow", in: evidence)
+        state.inspectorTab = .export
+        state.inspectorExportPreset = .youtube1080p
+        try await capture(RootView(), state: state, size: NSSize(width: 900, height: 700), name: "32-player-export-narrow", in: evidence)
+        state.playerSourceID = nil
+        state.selectedClipIDs = [hero.id!, second.id!]
+        try await capture(RootView(), state: state, size: NSSize(width: 900, height: 700), name: "33-batch-export-stacked", in: evidence)
+        state.inspectorTab = .details
+        state.inspectorExportPreset = .reels
         state.playerSourceID = nil
         state.inspectorVisible = false
         try await capture(OnboardingView(onComplete: {}), state: state, size: NSSize(width: 624, height: 544), name: "12-onboarding-welcome", in: evidence)
@@ -135,7 +149,60 @@ final class NativeUIRenderTests: XCTestCase {
         state.shortcutOverlayOpen = false
         try await capture(PlayerView(sourceID: .max), state: state, size: NSSize(width: 900, height: 700), name: "28-missing-source", in: evidence)
         try await capture(ExportProgressView(), state: state, size: NSSize(width: 480, height: 320), name: "29-export-queue", in: evidence)
+        try await verifyWorkspaceEditsAndResize(state: state, clip: hero, store: store)
         print("CLIPX_NATIVE_UI_EVIDENCE=\(evidence.path)")
+    }
+
+    /// Drive the actual NSTextView binding in-process. This exercises draft
+    /// persistence and SwiftUI identity without claiming system click coverage.
+    @MainActor
+    private func verifyWorkspaceEditsAndResize(state: AppState, clip: Clip, store: MarkerStore) async throws {
+        state.openClip(clip)
+        state.showInspector(.notes)
+        let host = NSHostingView(rootView: RootView().environmentObject(state))
+        host.sizingOptions = []
+        host.autoresizingMask = [.width, .height]
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 820),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.setContentSize(NSSize(width: 1320, height: 820))
+        defer { window.contentView = nil; window.close() }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        host.layoutSubtreeIfNeeded()
+        let originalPlayer = try XCTUnwrap(descendant(PlayerSurfaceView.self, in: host)?.playerLayer?.player)
+        let editor = try XCTUnwrap(descendant(NSTextView.self, in: host))
+        let note = "Keep this note while changing tasks and resizing the workspace."
+        editor.insertText(note, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+        try await Task.sleep(nanoseconds: 50_000_000)
+        state.inspectorTab = .export
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(try store.fetchClip(clip.id!)?.notes, note, "Changing tabs must flush the editor before the idle debounce")
+        state.inspectorTab = .notes
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(descendant(NSTextView.self, in: host)?.string, note)
+
+        // 760 simulates the detail space left when the source sidebar is open
+        // in a small window. Cross the horizontal/vertical layout breakpoint.
+        for width in [900.0, 760.0, 1320.0] {
+            window.setContentSize(NSSize(width: width, height: 700))
+            try await Task.sleep(nanoseconds: 100_000_000)
+            host.layoutSubtreeIfNeeded()
+            XCTAssertTrue(descendant(PlayerSurfaceView.self, in: host)?.playerLayer?.player === originalPlayer,
+                          "Resizing must keep the existing player")
+            XCTAssertEqual(descendant(NSTextView.self, in: host)?.string, note)
+            XCTAssertLessThanOrEqual(host.bounds.width, width + 1)
+        }
+        print("CLIPX_WORKSPACE_INTERACTION=PASS: editor tab flush, notes round trip, player identity across resize")
+    }
+
+    @MainActor
+    private func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+        if let match = view as? T { return match }
+        for child in view.subviews {
+            if let match = descendant(type, in: child) { return match }
+        }
+        return nil
     }
 
     @MainActor
@@ -150,10 +217,11 @@ final class NativeUIRenderTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.title = "Clipx — Native UI Verification"
         window.appearance = NSAppearance(named: .darkAqua)
-        window.backgroundColor = NSColor(calibratedRed: 0.043, green: 0.044, blue: 0.055, alpha: 1)
+        window.backgroundColor = NSColor(Theme.bg)
         window.contentView = host
         window.setContentSize(size)
-        window.makeKeyAndOrderFront(nil)
+        let offscreen = ProcessInfo.processInfo.environment["CLIPX_OFFSCREEN_RENDER"] == "1"
+        if !offscreen { window.makeKeyAndOrderFront(nil) }
         defer { window.orderOut(nil); window.contentView = nil; window.close() }
         try await Task.sleep(nanoseconds: 900_000_000)
         beforeCapture?()
@@ -176,26 +244,33 @@ final class NativeUIRenderTests: XCTestCase {
         process.standardError = output
         process.standardOutput = output
         var captureDescription = "AppKit bitmap fallback; system materials, window chrome, and AVPlayerLayer may be absent."
-        do {
-            try process.run()
-            let result = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            if process.terminationStatus == 0, FileManager.default.fileExists(atPath: imageURL.path) {
-                captureDescription = "Composited capture of this test-owned NSWindow only."
-            } else {
-                try data.write(to: imageURL)
-                captureDescription += " Window capture failed: " + String(decoding: result, as: UTF8.self)
-            }
-        } catch {
+        if offscreen {
             try data.write(to: imageURL)
-            captureDescription += " Window capture unavailable: " + error.localizedDescription
+            captureDescription = "Offscreen AppKit bitmap; no window was shown and no screen capture was attempted. System materials, window chrome, and AVPlayerLayer may be absent."
+        } else {
+            do {
+                try process.run()
+                let result = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                if process.terminationStatus == 0, FileManager.default.fileExists(atPath: imageURL.path) {
+                    captureDescription = "Composited capture of this test-owned NSWindow only."
+                } else {
+                    try data.write(to: imageURL)
+                    captureDescription += " Window capture failed: " + String(decoding: result, as: UTF8.self)
+                }
+            } catch {
+                try data.write(to: imageURL)
+                captureDescription += " Window capture unavailable: " + error.localizedDescription
+            }
         }
         let geometry = "Requested \(size.width) × \(size.height); hosted \(host.bounds.width) × \(host.bounds.height).\n" + captureDescription
         try geometry.write(to: directory.appendingPathComponent(name + ".txt"), atomically: true, encoding: .utf8)
-        let attachment = XCTAttachment(data: try Data(contentsOf: imageURL), uniformTypeIdentifier: "public.png")
-        attachment.name = name
-        attachment.lifetime = .keepAlways
-        add(attachment)
+        if !offscreen {
+            let attachment = XCTAttachment(data: try Data(contentsOf: imageURL), uniformTypeIdentifier: "public.png")
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
     }
 
     private func makeMovie(at url: URL) async throws {

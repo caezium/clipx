@@ -1,33 +1,30 @@
 import SwiftUI
 
-/// Clipx design system — a dark, minimal, low-chrome aesthetic in the spirit of
-/// Raycast's command-palette UI: a near-black canvas with a faint surface
-/// *ladder* (bg → bgRaised → surface → surfaceActive) instead of drop shadows,
-/// hairline 1px borders on every edge, tight 6–14px radii, monospaced keycaps
-/// for shortcuts, and a single accent (+ success green for in/out marks).
-/// Depth comes from the surface ladder and hairlines, never shadows.
-/// Everything the UI uses lives here so the look stays consistent everywhere.
+/// A quiet canvas for footage, with Stint-inspired elevated task panels and
+/// light primary actions. Blue marks selection; color is otherwise semantic.
 enum Theme {
 
     // MARK: Surfaces (designed for a dark color scheme)
 
     /// App background — near-black with a faint cool tint.
-    static let bg = Color(red: 0.043, green: 0.044, blue: 0.055)
+    static let bg = Color(red: 0.035, green: 0.035, blue: 0.043)
     /// Slightly raised background for the sidebar / bars.
     static let bgRaised = Color(red: 0.072, green: 0.074, blue: 0.088)
+    /// Opaque so text and controls remain legible over any video frame.
+    static let panel = Color(red: 0.12, green: 0.12, blue: 0.135)
     /// Translucent card fill — reads as frosted over `bg`.
     static let surface = Color.white.opacity(0.045)
     static let surfaceHover = Color.white.opacity(0.075)
     static let surfaceActive = Color.white.opacity(0.10)
 
     // MARK: Lines
-    static let border = Color.white.opacity(0.085)
+    static let border = Color.white.opacity(0.065)
     static let borderStrong = Color.white.opacity(0.16)
 
     // MARK: Text
     static let textPrimary = Color(white: 0.96)
-    static let textSecondary = Color(white: 0.62)
-    static let textTertiary = Color(white: 0.42)
+    static let textSecondary = Color(white: 0.67)
+    static let textTertiary = Color(white: 0.56)
 
     // MARK: Accent + semantics
     /// Single accent — a clean electric blue. Used for selection + the scrubber.
@@ -42,7 +39,7 @@ enum Theme {
     static let r1: CGFloat = 6
     static let r2: CGFloat = 10
     static let r3: CGFloat = 14
-    static let r4: CGFloat = 20
+    static let r4: CGFloat = 24
 
     /// Blue→white scrubber gradient — the visual signature borrowed from stint.
     static let scrubber = LinearGradient(
@@ -61,14 +58,14 @@ enum Theme {
 // MARK: - Pill buttons
 
 /// Rounded pill button. `.primary` is a light fill on dark (high-contrast CTA);
-/// `.ghost` is transparent with a hairline that fills subtly on hover;
-/// `.accent` is the blue fill for the main action.
+/// `.ghost` only gains a surface on hover, keeping secondary actions quiet.
 struct PillButtonStyle: ButtonStyle {
     enum Kind { case primary, ghost, accent, danger }
     var kind: Kind = .ghost
     var compact: Bool = false
     @State private var hovering = false
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -83,14 +80,14 @@ struct PillButtonStyle: ButtonStyle {
             .animation(.easeOut(duration: 0.12), value: hovering)
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
             // Subtle press-in so every button feels physical (feel-better).
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: configuration.isPressed)
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 
     private var fg: Color {
         switch kind {
         case .primary: return Theme.bg
-        case .ghost:   return Theme.textPrimary
+        case .ghost:   return hovering ? Theme.textPrimary : Theme.textSecondary
         case .accent:  return .white
         case .danger:  return Theme.danger
         }
@@ -98,7 +95,7 @@ struct PillButtonStyle: ButtonStyle {
     private func bg(pressed: Bool) -> Color {
         switch kind {
         case .primary: return Color(white: hovering ? 0.88 : 0.97)
-        case .ghost:   return hovering ? Theme.surfaceHover : Theme.surface
+        case .ghost:   return hovering ? Theme.surfaceHover : .clear
         case .accent:  return Theme.accent.opacity(hovering ? 0.95 : 0.85)
         case .danger:  return hovering ? Theme.danger.opacity(0.18) : .clear
         }
@@ -106,7 +103,7 @@ struct PillButtonStyle: ButtonStyle {
     private var stroke: Color {
         switch kind {
         case .primary, .accent: return .clear
-        case .ghost:  return Theme.border
+        case .ghost:  return .clear
         case .danger: return Theme.danger.opacity(0.4)
         }
     }
@@ -135,6 +132,14 @@ struct IconButtonChrome: ViewModifier {
 }
 
 extension View {
+    /// A single elevated workspace surface, rather than a border around every row.
+    func clipxPanel() -> some View {
+        self
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: Theme.r4))
+            .clipShape(RoundedRectangle(cornerRadius: Theme.r4))
+            .overlay(RoundedRectangle(cornerRadius: Theme.r4).strokeBorder(Theme.border, lineWidth: 1))
+    }
+
     func clipxIconButton(size: CGFloat = 30, active: Bool = false) -> some View {
         modifier(IconButtonChrome(size: size, active: active))
     }
@@ -174,7 +179,7 @@ extension View {
 
     /// A thin inset hairline + rounded clip for media tiles (thumbnails,
     /// filmstrips) so they separate from the near-black canvas instead of
-    /// floating (Raycast puts a hairline on every edge).
+    /// floating into the surrounding canvas.
     func clipxMediaEdge(radius: CGFloat = Theme.r1) -> some View {
         self
             .clipShape(RoundedRectangle(cornerRadius: radius))

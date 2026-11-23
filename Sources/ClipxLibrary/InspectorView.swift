@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Right-pane inspector showing all metadata for the selected clip with
-/// inline editing. Backed directly by MarkerStore / TagStore writes.
+/// Clip editing inside the workspace's Details / Notes / Export panel.
+/// Draft ownership stays here when tabs change.
 ///
 /// Text fields debounce — name and notes both used to hammer the DB on every
 /// keystroke. Now `draftName` / `draftNotes` are local @State that commit on
@@ -34,51 +34,58 @@ struct InspectorView: View {
     private let settingOptions = ["indoor", "outdoor", "urban", "nature", "studio"]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let clip, let source {
-                    header(clip: clip, source: source)
-                    Divider()
-                    nameAndRating(clip: clip)
-                    Divider()
-                    purposeSection(clip: clip)
-                    Divider()
-                    tagsSection
-                    Divider()
-                    notesSection
-                    Divider()
-                    exportSection(clipID: clip.id ?? -1)
-                    Divider()
-                    DisclosureGroup("Attributes") {
-                        structured(clip: clip).padding(.top, 10)
+        VStack(alignment: .leading, spacing: 0) {
+            if let clip, let source {
+                header(clip: clip, source: source)
+                    .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 16)
+                Rectangle().fill(Theme.border).frame(height: 1).padding(.horizontal, 20)
+
+                Group {
+                    switch appState.inspectorTab {
+                    case .details:
+                        ScrollView {
+                            details(clip: clip, source: source).padding(20)
+                        }
+                    case .notes:
+                        notesSection.padding(20)
+                    case .export:
+                        ScrollView {
+                            ClipExportView(clipIDs: [clipID]).padding(20)
+                        }
                     }
-                    .font(.system(size: 13, weight: .medium))
-                    Divider()
-                    DisclosureGroup("Projects & collections") {
-                        VStack(alignment: .leading, spacing: 12) {
-                            projectsSection
-                            collectionsSection
-                        }.padding(.top, 10)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+                if let saveError {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Edits are waiting to be saved: \(saveError)")
+                            .font(.caption).foregroundStyle(.orange)
+                            .lineLimit(3).help(saveError)
+                        Button("Retry saving", action: commitDraft)
+                            .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                     }
-                    .font(.system(size: 13, weight: .medium))
-                    Divider()
-                    DisclosureGroup("Source details") { technical(source: source).padding(.top, 10) }
-                        .font(.system(size: 13, weight: .medium))
-                } else if let loadError {
+                    .padding(16)
+                }
+            } else if let loadError {
+                VStack(alignment: .leading, spacing: 12) {
                     Text(loadError).font(.callout).foregroundStyle(Theme.textSecondary)
                     Button("Try again", action: load)
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 200)
                 }
+                .padding(20)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.automatic)
-        .background(Theme.bgRaised)
         .onAppear(perform: load)
         .onChange(of: clipID) { _, _ in load() }
         .onChange(of: appState.libraryRevision) { _, _ in load() }
+        .onChange(of: draftName) { _, _ in scheduleNotesCommit() }
+        .onChange(of: draftNotes) { _, _ in scheduleNotesCommit() }
+        .onChange(of: appState.inspectorTab) { _, _ in
+            notesCommitTask?.cancel()
+            commitDraft()
+        }
         .onDisappear {
             notesCommitTask?.cancel()
             loadTask?.cancel()
@@ -87,25 +94,46 @@ struct InspectorView: View {
         }
     }
 
+    private func details(clip: Clip, source: Source) -> some View {
+        VStack(alignment: .leading, spacing: 24) {
+            nameAndRating(clip: clip)
+            purposeSection(clip: clip)
+            tagsSection
+            DisclosureGroup("Attributes") {
+                structured(clip: clip).padding(.top, 12)
+            }
+            DisclosureGroup("Projects & collections") {
+                VStack(alignment: .leading, spacing: 16) {
+                    projectsSection
+                    collectionsSection
+                }.padding(.top, 12)
+            }
+            DisclosureGroup("Source details") {
+                technical(source: source).padding(.top, 12)
+            }
+        }
+        .font(.system(size: 12, weight: .medium))
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func header(clip: Clip, source: Source) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(clip.name ?? source.displayName)
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 7) {
+            Text(clip.name ?? "Untitled clip")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Clip #\(clip.id ?? 0) from \(source.displayName)")
-                .font(.caption).foregroundStyle(.secondary)
+            Text(source.displayName)
+                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             HStack(spacing: 8) {
-                Label(formatDuration(clip.durationMs), systemImage: "clock")
-                Label("\(source.resolutionLabel)", systemImage: "viewfinder")
-                if let fps = source.fps, fps.isFinite, fps > 0 {
-                    Label("\(fps.formatted(.number.precision(.fractionLength(0...2)))) fps", systemImage: "speedometer")
-                }
+                Text(PlayerController.formatMs(clip.durationMs)).monospacedDigit()
+                Text("·")
+                Text(source.resolutionLabel)
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
             .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,13 +141,16 @@ struct InspectorView: View {
 
     private func nameAndRating(clip: Clip) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            Text("Name").clipxSectionLabel()
             // Local draft committed on Enter/blur, not per keystroke.
             TextField("Name", text: $draftName)
                 .accessibilityLabel("Clip name")
                 .accessibilityIdentifier("inspector.name")
-                .textFieldStyle(.roundedBorder)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .padding(10)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r2))
                 .onSubmit { commitDraft() }
-                .onChange(of: draftName) { _, _ in scheduleNotesCommit() }
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 4) {
@@ -131,7 +162,7 @@ struct InspectorView: View {
                             applyRating(newRating)
                         } label: {
                             Image(systemName: i < clip.rating ? "star.fill" : "star")
-                                .foregroundStyle(i < clip.rating ? .yellow : .secondary)
+                                .foregroundStyle(i < clip.rating ? Theme.star : Theme.textTertiary)
                                 .font(.callout)
                         }
                         .buttonStyle(.plain)
@@ -293,12 +324,13 @@ struct InspectorView: View {
 
     private var tagsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Tags").font(.headline)
+            Text("Tags").clipxSectionLabel()
             HStack {
                 TextField("Add tag…", text: $newTag)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(addTag)
                 Button("Add", action: addTag)
+                    .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                     .disabled(newTag.trimmingCharacters(in: .whitespaces).isEmpty)
             }
             FlowLayout(spacing: 5) {
@@ -318,23 +350,27 @@ struct InspectorView: View {
     }
 
     private var notesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Notes").font(.headline)
-            if let saveError {
-                Text("Edits are waiting to be saved: \(saveError)")
-                    .font(.caption).foregroundStyle(.orange)
-                Button("Retry saving", action: commitDraft)
-            }
+        VStack(alignment: .leading, spacing: 10) {
             TextEditor(text: $draftNotes)
                 .accessibilityLabel("Clip notes")
                 .accessibilityIdentifier("inspector.notes")
-                .font(.system(size: 12))
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textPrimary)
                 .scrollContentBackground(.hidden)
-                .padding(7)
-                .frame(minHeight: 104)
-                .background(Theme.bg, in: RoundedRectangle(cornerRadius: Theme.r1))
-                .overlay(RoundedRectangle(cornerRadius: Theme.r1).stroke(Theme.border))
-                .onChange(of: draftNotes) { _, _ in scheduleNotesCommit() }
+                .padding(10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r2))
+                .overlay(alignment: .topLeading) {
+                    if draftNotes.isEmpty {
+                        Text("What makes this moment worth keeping?")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.horizontal, 15).padding(.vertical, 11)
+                            .allowsHitTesting(false)
+                    }
+                }
+            Text(saveError == nil ? "Notes save automatically" : "Unsaved edits are kept in this session")
+                .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
         }
     }
 
@@ -354,6 +390,9 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 4) {
             row("Path", value: source.path)
             row("Codec", value: source.codec ?? "—")
+            if let fps = source.fps, fps.isFinite, fps > 0 {
+                row("Frame rate", value: "\(fps.formatted(.number.precision(.fractionLength(0...2)))) fps")
+            }
             row("Color space", value: source.colorSpace ?? "—")
             row("Online", value: source.online ? "yes" : "no — drive unplugged")
             HStack {
@@ -418,52 +457,6 @@ struct InspectorView: View {
                 AppState.shared.showToast("Couldn't load clip: \(error.localizedDescription)", level: .error)
             }
         }
-    }
-
-    private func exportSection(clipID: Int64) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Export").font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                Menu {
-                    Section("Social") {
-                        Button("Reels (9:16 1080p)") { quickExport(clipID: clipID, preset: .reels) }
-                        Button("TikTok") { quickExport(clipID: clipID, preset: .tiktok) }
-                        Button("YouTube Shorts") { quickExport(clipID: clipID, preset: .youtubeShorts) }
-                        Button("Instagram Feed (4:5)") { quickExport(clipID: clipID, preset: .instagramFeed) }
-                    }
-                    Section("YouTube") {
-                        Button("YouTube 1080p") { quickExport(clipID: clipID, preset: .youtube1080p) }
-                        Button("YouTube 4K") { quickExport(clipID: clipID, preset: .youtube4k) }
-                    }
-                    Section("Bridges") {
-                        Button("FCPXML (Final Cut Pro)…") {
-                            ExportActions.exportFCPXML(clipIDs: [clipID])
-                        }
-                        Button("Obsidian Sidecar…") {
-                            ExportActions.exportObsidian(clipIDs: [clipID])
-                        }
-                    }
-                } label: {
-                    Label("Export…", systemImage: "square.and.arrow.up")
-                        .frame(maxWidth: .infinity)
-                }
-                .menuStyle(.borderlessButton)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-
-                Button {
-                    quickExport(clipID: clipID, preset: .reels)
-                } label: {
-                    Image(systemName: "bolt.fill")
-                }
-                .buttonStyle(.bordered)
-                .help("Quick export as Reels (⌘⇧R)")
-            }
-        }
-    }
-
-    private func quickExport(clipID: Int64, preset: ExportPreset) {
-        ExportActions.export(clipIDs: [clipID], preset: preset)
     }
 
     private var projectsSection: some View {
@@ -586,12 +579,6 @@ struct InspectorView: View {
             try store.removeTag(tag, fromClip: clipID)
             tags = try store.tags(forClip: clipID).map(\.name)
         } catch { AppState.shared.showToast("Couldn't remove tag: \(error.localizedDescription)", level: .error) }
-    }
-
-    private func formatDuration(_ ms: Int64) -> String {
-        let totalSec = Int(ms / 1000)
-        let m = totalSec / 60, s = totalSec % 60
-        return String(format: "%d:%02d", m, s)
     }
 
     private func swiftColor(for label: ColorLabel) -> Color {

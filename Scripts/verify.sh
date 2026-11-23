@@ -19,11 +19,13 @@ case "$mode" in
     core) scheme=Clipx-Direct; variant=Direct; only=(test) ;;
     mas) scheme=Clipx-MAS; variant=MAS; only=(test) ;;
     native) scheme=Clipx-Direct; variant=Direct; only=(-only-testing:ClipxCoreTests/NativeUIRenderTests test) ;;
+    offscreen) scheme=Clipx-Direct; variant=Direct; only=(build-for-testing) ;;
+    offscreen-mas) scheme=Clipx-MAS; variant=MAS; only=(build-for-testing) ;;
     ui) scheme=Clipx-UI; variant=Direct; only=(test) ;;
     browser)
         node Tests/ClipxCoreTests/ServerBrowserRegression.mjs
         exit 0 ;;
-    *) echo 'Usage: Scripts/verify.sh doctor|core|mas|native|ui|browser' >&2; exit 2 ;;
+    *) echo 'Usage: Scripts/verify.sh doctor|core|mas|native|offscreen|offscreen-mas|ui|browser' >&2; exit 2 ;;
 esac
 xcodegen generate
 signing=(CODE_SIGNING_ALLOWED=NO)
@@ -38,6 +40,13 @@ if xcodebuild -project Clipx.xcodeproj -scheme "$scheme" -configuration Debug \
     -destination "platform=macOS,arch=$(uname -m)" \
     CLIPX_BUNDLE_IDENTIFIER=com.clipx.Clipx.Verification "${signing[@]}" \
     "${only[@]}" > "$log" 2>&1; then
+    if [[ "$mode" == offscreen* ]]; then
+        if ! python3 Scripts/verify-offscreen.py --derived-data "$build_root/$variant" --variant "$variant" >> "$log" 2>&1; then
+            tail -60 "$log" >&2
+            printf 'Failed %s verification. Full log: %s\n' "$mode" "$log" >&2
+            exit 1
+        fi
+    fi
     printf 'Passed %s verification. Log: %s\n' "$mode" "$log"
 else
     tail -60 "$log" >&2

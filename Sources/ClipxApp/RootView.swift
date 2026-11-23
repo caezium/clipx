@@ -1,9 +1,12 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// The top-level layout: sidebar | library | inspector.
+/// Library navigation and a footage-first workspace with one task panel.
 struct RootView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var libraryColumnVisibility: NavigationSplitViewVisibility = .all
     @State private var showOnboarding = !AppPreferences.defaults.bool(forKey: "didCompleteOnboarding")
     @State private var dropTargeted = false
     /// Drives the native search field's active state so ⌘F can focus it
@@ -15,28 +18,52 @@ struct RootView: View {
     /// True while a source is open in the player (the Cut Room).
     private var inPlayer: Bool { appState.playerSourceID != nil }
 
-    /// The trailing inspector column. Always shows when toggled on (with a
-    /// placeholder when nothing is selected) so the toggle never lights with no
-    /// visible change. `.id` rebuilds it per clip so it reloads on selection.
+    /// Keep InspectorView mounted while its tab changes so drafts and pending
+    /// saves belong to the clip, not to an individual tab.
     private var inspectorPanel: some View {
-        Group {
+        VStack(spacing: 0) {
+            HStack(spacing: 2) {
+                ForEach(InspectorTab.allCases, id: \.self) { tab in
+                    Button { appState.inspectorTab = tab } label: {
+                        Text(tab.title)
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .foregroundStyle(appState.inspectorTab == tab ? Theme.textPrimary : Theme.textSecondary)
+                            .background(appState.inspectorTab == tab ? Theme.surfaceActive : .clear, in: Capsule())
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
+                    .accessibilityAddTraits(appState.inspectorTab == tab ? .isSelected : [])
+                }
+                Button { appState.inspectorVisible = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 11, weight: .medium))
+                }
+                .buttonStyle(.plain).clipxIconButton(size: 28)
+                .help("Close panel (⌥⌘I)")
+                .accessibilityLabel("Close clip panel")
+            }
+            .padding(10)
+
             if appState.selectedClipIDs.count == 1, let clipID = appState.selectedClipIDs.first {
                 InspectorView(clipID: clipID).id(clipID)
+            } else if appState.inspectorTab == .export, !appState.selectedClipIDs.isEmpty {
+                ScrollView {
+                    ClipExportView(clipIDs: appState.selectedClipIDs.sorted())
+                        .padding(20)
+                }
             } else {
                 InspectorEmptyState(clipIDs: appState.selectedClipIDs)
             }
         }
-        .frame(maxHeight: .infinity)
-        .background(Theme.bgRaised)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipxPanel()
     }
 
     var body: some View {
-        NavigationSplitView {
-            // ONE left column. It shows the library sidebar normally and the Cut
-            // Room session rail while a source is open — a content swap *inside the
-            // same column*, so we never stack two left columns (the recurring
-            // sidebar-clip bug) and never have to force-collapse anything. The
-            // framework sidebar toggle works in both modes to hide/show it.
+        NavigationSplitView(columnVisibility: $columnVisibility) {
+            // The native sidebar toggle exposes the source list in the player.
             Group {
                 if let sourceID = appState.playerSourceID {
                     SessionRailView(currentSourceID: sourceID) { id in
@@ -49,41 +76,42 @@ struct RootView: View {
                     SidebarView()
                 }
             }
-            .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+            .navigationSplitViewColumnWidth(min: 200, ideal: 224, max: 280)
         } detail: {
-            // Detail = content + a hand-built trailing inspector column. The
-            // framework `.inspector` overlapped/clipped/janked when opened with
-            // the sidebar already out; this HStack makes the inspector a real
-            // sibling — content flexes, inspector is a fixed column, so they can
-            // never overlap and nothing draws on top of anything.
-            HStack(spacing: 0) {
-                Group {
-                    if let sourceID = appState.playerSourceID {
-                        PlayerView(sourceID: sourceID)
-                    } else {
-                        LibraryView()
-                            // Native toolbar search — one clean system field, no
-                            // custom pill (which doubled inside the toolbar item).
-                            // Only present in the library, not the Cut Room.
-                            .searchable(
-                                text: $appState.searchQuery,
-                                isPresented: $searchPresented,
-                                placement: .toolbar,
-                                prompt: "Search clips, tags, notes…"
-                            )
+            GeometryReader { geometry in
+                let stacked = geometry.size.width < 780
+                // AnyLayout preserves the player and inspector identity during
+                // resizing. Two conditional copies would restart playback and
+                // discard the focused editor when crossing the breakpoint.
+                let layout = stacked
+                    ? AnyLayout(VStackLayout(spacing: 12))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+                layout {
+                    Group {
+                        if let sourceID = appState.playerSourceID {
+                            PlayerView(sourceID: sourceID)
+                        } else {
+                            LibraryView()
+                                .searchable(
+                                    text: $appState.searchQuery,
+                                    isPresented: $searchPresented,
+                                    placement: .toolbar,
+                                    prompt: "Search clips, tags, notes…"
+                                )
+                        }
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+
+                    if appState.inspectorVisible {
+                        inspectorPanel
+                            .frame(width: stacked ? nil : min(340, geometry.size.width * 0.36),
+                                   height: stacked ? min(280, geometry.size.height * 0.4) : nil)
+                            .transition(.opacity)
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                if appState.inspectorVisible {
-                    Divider().overlay(Theme.border)
-                    inspectorPanel
-                        .frame(width: 300)
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                }
+                .padding(14)
             }
-            .animation(.easeInOut(duration: 0.18), value: appState.inspectorVisible)
-            .animation(.easeInOut(duration: 0.18), value: appState.selectedClipIDs.first)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: appState.inspectorVisible)
         }
         .navigationSplitViewStyle(.balanced)
         // ONE window toolbar for the whole app, whose content switches between
@@ -98,11 +126,22 @@ struct RootView: View {
         }
         // Keep the toolbar's source-name label in sync with the open source, and
         // dismiss any active search when entering the Cut Room.
-        .onChange(of: appState.playerSourceID) { _, sourceID in
-            if sourceID != nil { searchPresented = false }
+        .onChange(of: appState.playerSourceID) { previous, sourceID in
+            if sourceID != nil {
+                searchPresented = false
+                if previous == nil {
+                    libraryColumnVisibility = columnVisibility
+                    columnVisibility = .detailOnly
+                }
+            } else if previous != nil {
+                columnVisibility = libraryColumnVisibility
+            }
             loadPlayerSourceName()
         }
-        .onAppear { loadPlayerSourceName() }
+        .onAppear {
+            if inPlayer { columnVisibility = .detailOnly }
+            loadPlayerSourceName()
+        }
         .background(Theme.bg)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
@@ -187,14 +226,6 @@ struct RootView: View {
                 Text("\(appState.selectedClipIDs.count) selected")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
-                Menu {
-                    Button("Export as Reels") { ExportActions.exportSelected(.reels) }
-                    Button("Export YouTube 1080p") { ExportActions.exportSelected(.youtube1080p) }
-                    Button("Export YouTube 4K") { ExportActions.exportSelected(.youtube4k) }
-                } label: {
-                    Label("Export \(appState.selectedClipIDs.count)", systemImage: "square.and.arrow.up")
-                }
-                .fixedSize()
                 Button { appState.selectedClipIDs = [] } label: {
                     Text("Clear").font(.system(size: 12))
                 }
@@ -204,6 +235,7 @@ struct RootView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            if !appState.selectedClipIDs.isEmpty { exportPanelButton }
             Picker("Sort library", selection: $appState.sortOption) {
                 ForEach(ClipSortOption.pickerCases, id: \.self) { opt in
                     Text(opt.label).tag(opt)
@@ -246,15 +278,28 @@ struct RootView: View {
             .help("Back to library (Esc)")
         }
         ToolbarItem(placement: .principal) {
-            Text(playerSourceName)
-                .font(.system(size: 13, weight: .semibold))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 10) {
+                Text("Cut Room").foregroundStyle(Theme.textTertiary)
+                Image(systemName: "chevron.right").font(.system(size: 9))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(playerSourceName)
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
+            .font(.system(size: 12, weight: .medium))
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            if !appState.selectedClipIDs.isEmpty { exportPanelButton }
             inspectorToggle
         }
+    }
+
+    private var exportPanelButton: some View {
+        Button { appState.showInspector(.export) } label: {
+            Label("Export", systemImage: "square.and.arrow.up")
+        }
+        .help("Export selected clips")
+        .accessibilityIdentifier("workspace.export")
     }
 
     /// Shared inspector toggle — tinted when active so its on/off state reads at
@@ -312,6 +357,7 @@ extension RootView {
 /// selected — so toggling the inspector always reveals a panel (instead of
 /// lighting the button with no visible change).
 private struct InspectorEmptyState: View {
+    @EnvironmentObject private var appState: AppState
     var clipIDs: Set<Int64> = []
     var body: some View {
         VStack(spacing: 10) {
@@ -322,7 +368,7 @@ private struct InspectorEmptyState: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textSecondary)
             Text(clipIDs.isEmpty
-                 ? "Select a saved clip to edit its name, purpose, tags, and notes."
+                 ? "Select a saved clip to see its details, write notes, or export."
                  : "Select one clip to edit its details, or export the selected clips together.")
                 .font(.system(size: 12))
                 .multilineTextAlignment(.center)
@@ -330,16 +376,14 @@ private struct InspectorEmptyState: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, 20)
             if !clipIDs.isEmpty {
-                Menu {
-                    Button("Reels") { ExportActions.export(clipIDs: Array(clipIDs), preset: .reels) }
-                    Button("YouTube 1080p") { ExportActions.export(clipIDs: Array(clipIDs), preset: .youtube1080p) }
-                    Button("YouTube 4K") { ExportActions.export(clipIDs: Array(clipIDs), preset: .youtube4k) }
-                } label: { Label("Export \(clipIDs.count) clips", systemImage: "square.and.arrow.up") }
-                .menuStyle(.borderlessButton).fixedSize()
+                Button { appState.showInspector(.export) } label: {
+                    Label("Export \(clipIDs.count) clips", systemImage: "square.and.arrow.up")
+                }
+                .buttonStyle(PillButtonStyle(kind: .primary))
                 .padding(.top, 6)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bgRaised)
+        .padding(.vertical, 20)
     }
 }

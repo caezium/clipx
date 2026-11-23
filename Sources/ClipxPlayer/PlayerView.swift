@@ -24,6 +24,7 @@ struct PlayerView: View {
     // Custom playback-speed entry (the speed menu's "Custom…" item).
     @State private var showCustomSpeed = false
     @State private var customSpeedText = ""
+    @State private var showPlaybackOptions = false
     /// Skip step for the double-tap-a-side gesture.
     private let doubleTapSkipSeconds: Double = 10
 
@@ -57,6 +58,7 @@ struct PlayerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .layoutPriority(-1)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.r3))
             // Tap to focus, double-tap a side to skip ±, press-and-hold for 2×.
             // Hidden while the capture card is up so it gets the events.
             .overlay { if !capturing && playbackReady { videoGestureZones } }
@@ -64,7 +66,16 @@ struct PlayerView: View {
             // → naming → tagging never leaves the player.
             .overlay(alignment: .bottom) {
                 if capturing {
-                    captureCard
+                    GeometryReader { geometry in
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                Spacer(minLength: 0)
+                                captureCard
+                            }
+                            .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                    }
                         .padding(.horizontal, 12)
                         .padding(.bottom, 18)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -81,12 +92,13 @@ struct PlayerView: View {
                 sourceURL: source?.url,
                 savedClips: savedClips,
                 onSelectClip: { clip in
+                    if let id = clip.id { appState.selectedClipIDs = [id] }
                     appState.playerInMs = clip.inMs
                     appState.playerOutMs = clip.outMs
                     controller.seek(toMs: clip.inMs)
                 }
             )
-            .frame(height: 76)
+            .frame(height: 68)
             controlBar
             if !savedClips.isEmpty {
                 savedClipsStrip
@@ -189,16 +201,14 @@ struct PlayerView: View {
     }
 
     private var controlBar: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) {
-                transportControls
-                playbackTime
-                rangeSummary
-                Spacer(minLength: 8)
-                playbackOptions
-                markControls
-            }
-            VStack(spacing: 8) {
+        VStack(spacing: 10) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    transportControls
+                    playbackTime
+                    Spacer(minLength: 0)
+                    playbackOptions
+                }
                 HStack(spacing: 8) {
                     transportControls
                     Spacer(minLength: 0)
@@ -206,30 +216,43 @@ struct PlayerView: View {
                         playbackTime
                         PlaybackTimeLabel(clock: controller.clock)
                     }
+                    compactPlaybackOptions
                 }
-                HStack(spacing: 8) {
-                    markControls
-                    Spacer(minLength: 0)
+            }
+            HStack(spacing: 8) {
+                ViewThatFits(in: .horizontal) {
+                    if appState.playerInMs != nil { rangeSummary }
+                    Text(markingPrompt)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize()
+                    // Keep every marking button reachable at the minimum width.
+                    Color.clear.frame(width: 0, height: 0)
                 }
-                HStack(spacing: 8) {
-                    playbackOptions
-                    Spacer(minLength: 0)
-                    if let start = appState.playerInMs, let end = appState.playerOutMs {
-                        Text("Range " + PlayerController.formatMs(FrameMath.rangeDuration(inMs: start, outMs: end)))
-                            .font(.system(size: 10).monospacedDigit())
-                            .foregroundStyle(hasValidRange ? Theme.success : Theme.textSecondary)
-                            .lineLimit(1)
-                            .help("In \(PlayerController.formatMs(start)) → Out \(PlayerController.formatMs(end))")
-                    } else if appState.playerInMs != nil {
-                        Text("Set Out next").font(.caption).foregroundStyle(Theme.textSecondary)
-                    }
-                }
+                Spacer(minLength: 0)
+                markControls
             }
         }
         .disabled(!playbackReady || capturing)
-        .padding(.horizontal, 12).padding(.vertical, 9)
-        .background(Theme.bgRaised)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.border).frame(height: 1) }
+        .padding(.horizontal, 4).padding(.vertical, 12)
+    }
+
+    private var markingPrompt: String {
+        if hasValidRange { return "Ready to save" }
+        if appState.playerInMs == nil { return "Mark In to start a clip" }
+        return "Mark Out after In"
+    }
+
+    private var compactPlaybackOptions: some View {
+        Button { showPlaybackOptions.toggle() } label: {
+            Image(systemName: "slider.horizontal.3").font(.system(size: 14))
+        }
+        .buttonStyle(.plain).clipxIconButton(active: showPlaybackOptions)
+        .accessibilityLabel("Playback options")
+        .help("Volume, speed, and rotation")
+        .popover(isPresented: $showPlaybackOptions) {
+            playbackOptions.padding(16)
+        }
     }
 
     private var transportControls: some View {
@@ -274,8 +297,7 @@ struct PlayerView: View {
                 .font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
         }
         .fixedSize()
-        .padding(.horizontal, 9).padding(.vertical, 5)
-        .background(Theme.surface, in: Capsule())
+        .padding(.horizontal, 4).padding(.vertical, 5)
         .accessibilityElement(children: .combine)
     }
 
@@ -294,7 +316,6 @@ struct PlayerView: View {
             .font(.caption.monospacedDigit())
             .padding(.horizontal, 9).padding(.vertical, 5)
             .background(Theme.success.opacity(0.14), in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.success.opacity(0.35), lineWidth: 1))
             .foregroundStyle(Theme.success).fixedSize()
             .accessibilityElement(children: .combine)
         }
@@ -325,7 +346,7 @@ struct PlayerView: View {
                 .help("Mark Out (O)")
                 .accessibilityIdentifier("player.markOut").accessibilityLabel("Mark Out")
             Button(action: saveRange) { Label("Save Clip", systemImage: "checkmark") }
-                .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
+                .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
                 .disabled(!hasValidRange)
                 .help(hasValidRange ? "Save range as clip (S)" : "Mark In and Out to save a clip")
                 .accessibilityIdentifier("player.saveRange").accessibilityLabel("Save Clip")
@@ -691,7 +712,8 @@ struct PlayerView: View {
                 .padding(.horizontal, 14).padding(.bottom, 8)
             }
         }
-        .background(Theme.bgRaised)
+        .padding(.top, 4)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r3))
     }
 
     private func savedClipChip(_ clip: Clip) -> some View {
@@ -734,7 +756,7 @@ struct PlayerView: View {
             Button("Open in Inspector") {
                 if let id = clip.id {
                     appState.selectedClipIDs = [id]
-                    appState.inspectorVisible = true
+                    appState.showInspector(.details)
                 }
             }
             Divider()
@@ -912,15 +934,14 @@ struct ClipCaptureCard: View {
                 Button("Cancel", action: onCancel)
                     .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
                     .keyboardShortcut(.cancelAction)
-                Button("Save", action: commit)
+                Button("Save clip", action: commit)
                     .accessibilityIdentifier("capture.save")
-                    .buttonStyle(PillButtonStyle(kind: .accent, compact: true))
+                    .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
             }
         }
-        .padding(14)
+        .padding(18)
         .frame(maxWidth: 390)
-        .background(Theme.bgRaised, in: RoundedRectangle(cornerRadius: Theme.r3))
-        .overlay(RoundedRectangle(cornerRadius: Theme.r3).strokeBorder(Theme.borderStrong, lineWidth: 1))
+        .clipxPanel()
         .shadow(color: .black.opacity(0.4), radius: 20, y: 8)
         .onAppear { nameFocused = true }
     }

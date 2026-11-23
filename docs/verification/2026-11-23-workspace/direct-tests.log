@@ -1,0 +1,58 @@
+Test Suite 'Clipx offscreen verification' started at 2026-11-23 09:35:07.031.
+Test Suite 'NativeMutationRegressionTests' started at 2026-11-23 09:35:07.031.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_captureIsAtomicAndPublishesOnlyAfterEveryRelationshipCommits]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_captureIsAtomicAndPublishesOnlyAfterEveryRelationshipCommits]' passed (0.009 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_deleteUndoPreservesIdentityEveryFieldRelationshipsAndExportLink]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_deleteUndoPreservesIdentityEveryFieldRelationshipsAndExportLink]' passed (0.007 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_dirtyInspectorPreservesConcurrentReviewReplacementAndRemoval]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_dirtyInspectorPreservesConcurrentReviewReplacementAndRemoval]' passed (0.007 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_inspectorDraftFlushesOnNavigationAndRetainsFailedWritesForRetry]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_inspectorDraftFlushesOnNavigationAndRetainsFailedWritesForRetry]' passed (0.006 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_rangeValidationRejectsNegativeOverflowAndBeyondEOFWithoutWrites]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_rangeValidationRejectsNegativeOverflowAndBeyondEOFWithoutWrites]' passed (0.005 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_structuredClearIsDistinctFromNoChange]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_structuredClearIsDistinctFromNoChange]' passed (0.005 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_tagAndTextWritesInvalidateOnlyCommittedSearchChanges]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_tagAndTextWritesInvalidateOnlyCommittedSearchChanges]' passed (0.006 seconds).
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_totalSourceDurationIgnoresInvalidNegativesAndSaturatesOverflow]' started.
+Test Case '-[ClipxCoreTests.NativeMutationRegressionTests test_totalSourceDurationIgnoresInvalidNegativesAndSaturatesOverflow]' passed (0.000 seconds).
+Test Suite 'NativeMutationRegressionTests' passed at 2026-11-23 09:35:07.077.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.045 (0.046) seconds
+Test Suite 'NativePlayerLifecycleTests' started at 2026-11-23 09:35:07.077.
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_missingVideoReportsFailureAndTeardownClearsIt]' started.
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_missingVideoReportsFailureAndTeardownClearsIt]' passed (0.077 seconds).
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_rapidLoadsPublishOnlyCurrentAssetAndObserverTeardownIsSafe]' started.
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_rapidLoadsPublishOnlyCurrentAssetAndObserverTeardownIsSafe]' passed (0.470 seconds).
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_realPlaybackReachesEOFAndPlayRestarts]' started.
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_realPlaybackReachesEOFAndPlayRestarts]' passed (0.607 seconds).
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_seeksClampAndInvalidTransformInputsDoNotPoisonPlayback]' started.
+Test Case '-[ClipxCoreTests.NativePlayerLifecycleTests test_seeksClampAndInvalidTransformInputsDoNotPoisonPlayback]' passed (0.057 seconds).
+Test Suite 'NativePlayerLifecycleTests' passed at 2026-11-23 09:35:08.289.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 1.211 (1.212) seconds
+Test Suite 'NativeSearchRegressionTests' started at 2026-11-23 09:35:08.289.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_expiredUndoReleasesCapturedSnapshotAndCannotRun]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_expiredUndoReleasesCapturedSnapshotAndCannotRun]' passed (6.391 seconds).
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_externalContentIntegrityDetectsAndRepairsMissingIndex]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_externalContentIntegrityDetectsAndRepairsMissingIndex]' passed (0.011 seconds).
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_paginationReachesEveryClipAndDefaultSearchDoesNotSilentlyCap]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_paginationReachesEveryClipAndDefaultSearchDoesNotSilentlyCap]' passed (0.111 seconds).
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_queryTokensCanCombineClipTextAndTagsWithoutDuplicateResults]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_queryTokensCanCombineClipTextAndTagsWithoutDuplicateResults]' passed (0.006 seconds).
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_remotePortInputRejectsMalformedReservedAndOverflowValues]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_remotePortInputRejectsMalformedReservedAndOverflowValues]' passed (0.000 seconds).
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_scopeNavigationAndClearKeepQueryAndHeaderTogether]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_scopeNavigationAndClearKeepQueryAndHeaderTogether]' passed (0.000 seconds).
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_sourceAndClipQueriesShareRecordedImportedAndAvailabilityFilters]' started.
+Test Case '-[ClipxCoreTests.NativeSearchRegressionTests test_sourceAndClipQueriesShareRecordedImportedAndAvailabilityFilters]' passed (0.005 seconds).
+Test Suite 'NativeSearchRegressionTests' passed at 2026-11-23 09:35:14.814.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 6.525 (6.526) seconds
+Test Suite 'NativeUIRenderTests' started at 2026-11-23 09:35:14.814.
+Test Case '-[ClipxCoreTests.NativeUIRenderTests test_isolatedNativeWindowsRenderLibraryPlayerAndOnboarding]' started.
+Test Case '-[ClipxCoreTests.NativeUIRenderTests test_isolatedNativeWindowsRenderLibraryPlayerAndOnboarding]' passed (36.161 seconds).
+Test Suite 'NativeUIRenderTests' passed at 2026-11-23 09:35:50.976.
+	 Executed 1 test, with 0 failures (0 unexpected) in 36.161 (36.161) seconds
+Test Suite 'Clipx offscreen verification' passed at 2026-11-23 09:35:50.976.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 43.942 (43.945) seconds
+CLIPX_WORKSPACE_INTERACTION=PASS: editor tab flush, notes round trip, player identity across resize
+CLIPX_NATIVE_UI_EVIDENCE=/tmp/clipx-native-ui-evidence
+CLIPX_OFFSCREEN_RESULT tests=20 failures=0 skips=0

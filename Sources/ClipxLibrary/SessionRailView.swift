@@ -43,12 +43,10 @@ struct SessionRailView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
-            .padding(.horizontal, 11).padding(.top, 11).padding(.bottom, 9)
-
-            Divider().overlay(Theme.border)
+            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 12)
 
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: 6) {
                     ForEach(sources) { src in row(src) }
                 }
                 .padding(8)
@@ -90,7 +88,7 @@ struct SessionRailView: View {
                     .overlay(alignment: .bottomTrailing) {
                         if src.isReviewed {
                             Image(systemName: "checkmark.circle.fill")
-                                .font(.system(size: 11))
+                                .font(.system(size: 12))
                                 .foregroundStyle(Theme.success)
                                 .background(Circle().fill(.black.opacity(0.5)))
                                 .padding(1)
@@ -107,18 +105,15 @@ struct SessionRailView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 6).padding(.vertical, 5)
+            .padding(.horizontal, 8).padding(.vertical, 8)
             .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(isCurrent ? Theme.accentSoft : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .strokeBorder(isCurrent ? Theme.accent.opacity(0.5) : .clear, lineWidth: 1)
+                RoundedRectangle(cornerRadius: Theme.r2)
+                    .fill(isCurrent ? Theme.surfaceActive : Color.clear)
             )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
     }
 
     private func statusLine(count: Int, reviewed: Bool, current: Bool) -> String {

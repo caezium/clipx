@@ -63,7 +63,7 @@ final class ClipxWorkflowTests: XCTestCase {
         name.click()
         name.typeText("Coast detail")
         try capture("04-capture")
-        app.buttons["Save"].click()
+        app.buttons["capture.save"].click()
         XCTAssertTrue(app.staticTexts["Coast detail"].firstMatch.waitForExistence(timeout: 10))
         app.buttons["library.inspector"].click()
         let inspectorName = app.textFields["inspector.name"]
@@ -71,12 +71,25 @@ final class ClipxWorkflowTests: XCTestCase {
         inspectorName.click()
         inspectorName.typeKey("a", modifierFlags: .command)
         inspectorName.typeText("Coast detail edited")
-        // Changing focus/selection must commit without Return.
+        // Switching tasks must flush a pending name and retain the notes draft.
+        app.buttons["inspector.tab.notes"].click()
+        let notes = app.textViews["inspector.notes"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        notes.click()
+        notes.typeText("Hold this moment before the cut.")
+        app.buttons["inspector.tab.export"].click()
+        XCTAssertTrue(app.buttons["inspector.exportVideo"].waitForExistence(timeout: 5))
+        try capture("05-export-panel")
+        app.buttons["inspector.tab.notes"].click()
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        XCTAssertEqual(notes.value as? String, "Hold this moment before the cut.")
+        try capture("06-notes-panel")
+        // Navigating away must commit without Return.
         app.buttons["Library"].click()
-        try capture("05-inspector")
+        try capture("07-library")
         let saved = try run(URL(fileURLWithPath: "/usr/bin/sqlite3"), [data.appendingPathComponent("clipx.sqlite").path,
-            "SELECT name || '|' || (out_ms > in_ms AND in_ms >= 0) FROM clips;"])
-        XCTAssertTrue(saved.contains("Coast detail edited|1"), saved)
+            "SELECT name || '|' || notes || '|' || (out_ms > in_ms AND in_ms >= 0) FROM clips;"])
+        XCTAssertTrue(saved.contains("Coast detail edited|Hold this moment before the cut.|1"), saved)
         try saved.write(to: evidence.appendingPathComponent("persisted-clip.txt"), atomically: true, encoding: .utf8)
         print("CLIPX_UI_EVIDENCE=\(evidence.path)")
     }

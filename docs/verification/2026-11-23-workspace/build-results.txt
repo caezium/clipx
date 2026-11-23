@@ -1,0 +1,12 @@
+offscreen.log
+** TEST BUILD SUCCEEDED **
+CLIPX_WORKSPACE_INTERACTION=PASS: editor tab flush, notes round trip, player identity across resize
+CLIPX_OFFSCREEN_RESULT tests=20 failures=0 skips=0
+
+offscreen-mas.log
+** TEST BUILD SUCCEEDED **
+CLIPX_WORKSPACE_INTERACTION=PASS: editor tab flush, notes round trip, player identity across resize
+CLIPX_OFFSCREEN_RESULT tests=20 failures=0 skips=0
+
+ui-test-build.log
+** TEST BUILD SUCCEEDED **
