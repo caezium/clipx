@@ -7,9 +7,9 @@
       "pixelHeight": 772,
       "pixelWidth": 1140,
       "windowHeight": 772,
-      "windowID": 6095,
+      "windowID": 6199,
       "windowWidth": 1140,
-      "sha256": "c3cc818b8068f79c596ee6c326e7bf871cfee7731b6919845538086657fadcfa"
+      "sha256": "ede0138f4fef1116ee858b6b2960b329803be24450d689df03a96a5c2cb8cebc"
     },
     {
       "file": "workspace.png",
@@ -19,9 +19,9 @@
       "playerTimeSeconds": 6,
       "videoReadyForDisplay": true,
       "windowHeight": 772,
-      "windowID": 6095,
+      "windowID": 6199,
       "windowWidth": 1140,
-      "sha256": "aa9cd2added548d86eacaf8b1056cda606e704fc9ab48345bcf4300ca788acea"
+      "sha256": "02c16fa166a4a88e68d0130fb922b8073dca8d2f9aab3605da3775f2736bd7b0"
     }
   ],
   "isolated": true,
@@ -76,5 +76,5 @@
     }
   ],
   "capturedOn": "2026-11-23",
-  "productionSourceCommit": "410788c"
+  "productionSourceCommit": "4adc559a353455e75ed42aa60ef0f4e2efb53a99"
 }
