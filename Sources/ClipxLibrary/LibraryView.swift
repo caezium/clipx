@@ -35,7 +35,7 @@ struct LibraryView: View {
             if let loadError, !sources.isEmpty || !clips.isEmpty {
                 HStack(spacing: 8) {
                     Label("Refresh failed. Showing previous results.", systemImage: "exclamationmark.triangle")
-                        .font(.caption).foregroundStyle(.orange)
+                        .font(.caption).foregroundStyle(Theme.warning)
                         .help(loadError)
                     Spacer()
                     Button("Try again") { reload() }.controlSize(.small)

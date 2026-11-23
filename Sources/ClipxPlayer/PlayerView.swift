@@ -98,7 +98,9 @@ struct PlayerView: View {
                     controller.seek(toMs: clip.inMs)
                 }
             )
-            .frame(height: 68)
+            .frame(height: 56)
+            .clipxMediaEdge(radius: Theme.r1)
+            .padding(.top, 8)
             controlBar
             if !savedClips.isEmpty {
                 savedClipsStrip
@@ -305,7 +307,7 @@ struct PlayerView: View {
     private var rangeSummary: some View {
         if let start = appState.playerInMs {
             HStack(spacing: 4) {
-                Image(systemName: "scissors").font(.caption2)
+                Image(systemName: "scissors").font(.caption2).foregroundStyle(Theme.timeline)
                 Text(PlayerController.formatMs(start))
                 if let end = appState.playerOutMs {
                     Text("→ " + PlayerController.formatMs(end))
@@ -315,8 +317,8 @@ struct PlayerView: View {
             }
             .font(.caption.monospacedDigit())
             .padding(.horizontal, 9).padding(.vertical, 5)
-            .background(Theme.success.opacity(0.14), in: Capsule())
-            .foregroundStyle(Theme.success).fixedSize()
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r1))
+            .foregroundStyle(Theme.textSecondary).fixedSize()
             .accessibilityElement(children: .combine)
         }
     }
@@ -732,7 +734,7 @@ struct PlayerView: View {
             HStack(spacing: 6) {
                 Image(systemName: "scissors")
                     .font(.caption2)
-                    .foregroundStyle(Theme.success)
+                    .foregroundStyle(isSelected ? Theme.timeline : Theme.textTertiary)
                 Text(clip.name ?? "Clip \(clip.id ?? 0)")
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textPrimary)
@@ -748,7 +750,7 @@ struct PlayerView: View {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.r1)
-                    .strokeBorder(isSelected ? Theme.accent : Theme.border, lineWidth: 1)
+                    .strokeBorder(isSelected ? Theme.borderStrong : Theme.border, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -839,7 +841,7 @@ struct ClipCaptureCard: View {
         VStack(alignment: .leading, spacing: 11) {
             // Title
             HStack(spacing: 7) {
-                Image(systemName: "scissors").font(.system(size: 12)).foregroundStyle(Theme.success)
+                Image(systemName: "scissors").font(.system(size: 12)).foregroundStyle(Theme.timeline)
                 Text("New clip").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                 Text(PlayerController.formatMs(max(0, durationMs)))
                     .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textSecondary)
@@ -853,13 +855,9 @@ struct ClipCaptureCard: View {
             TextField("Name this clip…", text: $name)
                 .accessibilityIdentifier("capture.name")
                 .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textPrimary)
                 .focused($nameFocused)
                 .onSubmit(commit)
-                .padding(.horizontal, 11).padding(.vertical, 9)
-                .background(Theme.bg, in: RoundedRectangle(cornerRadius: Theme.r1))
-                .overlay(RoundedRectangle(cornerRadius: Theme.r1).strokeBorder(Theme.borderStrong, lineWidth: 1))
+                .clipxInputField()
 
             // Rating — the quality / keeper signal.
             HStack(spacing: 4) {

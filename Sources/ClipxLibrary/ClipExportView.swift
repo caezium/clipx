@@ -10,14 +10,28 @@ struct ClipExportView: View {
         VStack(alignment: .leading, spacing: 24) {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Video format").clipxSectionLabel()
-                Picker("Video format", selection: $appState.inspectorExportPreset) {
-                    ForEach(ExportPreset.allBuiltIn) { option in
-                        Text(option.displayName).tag(option)
+                Menu {
+                    Picker("Video format", selection: $appState.inspectorExportPreset) {
+                        ForEach(ExportPreset.allBuiltIn) { option in
+                            Text(option.displayName).tag(option)
+                        }
                     }
+                } label: {
+                    HStack {
+                        Text(preset.displayName)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    .clipxInputField()
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
+                .menuStyle(.button)
+                .menuIndicator(.hidden)
+                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityLabel("Video format")
+                .accessibilityValue(preset.displayName)
                 .accessibilityIdentifier("inspector.exportPreset")
 
                 HStack(spacing: 12) {

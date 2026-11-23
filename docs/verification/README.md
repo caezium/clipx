@@ -1,5 +1,7 @@
 # Repair verification evidence
 
+The [November 23 visual consistency pass](2026-11-23-visual-harmony/README.md) unifies the native palette, controls, typography, and spacing. Both variants pass 20 focused tests; six real window captures cover the main panels and narrow layouts, with two refreshed views in the README.
+
 The [November 23 workspace pass](2026-11-23-workspace/README.md) adapts Stint's layout and styling in native SwiftUI. Both app variants and the click-test workflow compile. A new offscreen route passes 20 focused tests in each variant, renders 33 native states, and verifies notes persistence and player identity through resizing while the Mac stays locked. Normal app launch and system click automation remain unverified.
 
 The [November 12–13 follow-up](2026-11-13/README.md) adds passing full-DTD and real local Stint checks, refreshed browser/HTTP evidence, and the current native-runner and release blockers. The original results below remain historical; the follow-up did not reproduce the complete 186/180-test suites.

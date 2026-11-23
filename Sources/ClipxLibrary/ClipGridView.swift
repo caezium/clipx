@@ -49,7 +49,7 @@ struct ClipGridView: View {
                     }
                 }
             }
-            .padding(14)
+            .padding(16)
         }
         .background(Theme.bg)
     }
@@ -149,7 +149,7 @@ struct ClipCardView: View {
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             Color.clear
                 .aspectRatio(16/9, contentMode: .fit)
                 .overlay(
@@ -178,42 +178,34 @@ struct ClipCardView: View {
                         .help("Open in player")
                     }
                 }
-                .overlay(alignment: .bottom) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "scissors").font(.caption2)
-                        Text("\(formatDuration(clip.inMs)) → \(formatDuration(clip.outMs))")
-                            .font(.caption2.monospacedDigit())
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(Theme.success.opacity(0.9), in: Capsule())
-                    .padding(.bottom, 6)
-                }
-                .clipxMediaEdge()
+                .clipped()
                 .overlay(alignment: .topTrailing) {
                     Text(formatDuration(clip.durationMs))
                         .font(.caption2.monospacedDigit())
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.black.opacity(0.6), in: Capsule())
+                        .padding(.horizontal, 6).padding(.vertical, 4)
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 5))
                         .foregroundStyle(.white)
-                        .padding(6)
+                        .padding(8)
                 }
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
                     if let label = clip.colorLabel, label > 0 {
-                        Circle().fill(colorForLabel(label)).frame(width: 8, height: 8)
+                        Circle().fill(Theme.labelColor(label)).frame(width: 6, height: 6)
                             .accessibilityLabel("Color label: \(colorName(label))")   // not hue-only (#40)
                     }
                     Text(clip.name ?? defaultName)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     Spacer()
                     if clip.rating > 0 {
-                        Text(String(repeating: "★", count: clip.rating))
-                            .font(.caption2)
-                            .foregroundStyle(Theme.star)
+                        HStack(spacing: 3) {
+                            Image(systemName: "star.fill").font(.system(size: 9))
+                            Text("\(clip.rating)").font(.system(size: 11).monospacedDigit())
+                        }
+                        .foregroundStyle(Theme.textSecondary)
+                        .accessibilityLabel("Rated \(clip.rating) out of 5")
                     }
                 }
                 if !sourceName.isEmpty && clip.name != nil {
@@ -223,12 +215,17 @@ struct ClipCardView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                HStack(spacing: 5) {
+                    Image(systemName: "scissors").font(.system(size: 10))
+                    Text("\(formatDuration(clip.inMs)) – \(formatDuration(clip.outMs))")
+                        .font(.system(size: 11).monospacedDigit())
+                }
+                .foregroundStyle(Theme.textSecondary)
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .padding(12)
         }
-        .clipxCard(radius: Theme.r2, selected: isSelected)
-        .scaleEffect(hovering ? 1.012 : 1)
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .clipxCard(selected: isSelected)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.r3))
         .contentShape(Rectangle())
         // Consistent gesture model: double-click opens, ⌘-click extends the
         // selection, plain click selects. (#36, #29)
@@ -288,19 +285,6 @@ struct ClipCardView: View {
         return String(format: "%d:%02d", m, s)
     }
 
-    private func colorForLabel(_ label: Int) -> Color {
-        switch label {
-        case 1: return .red
-        case 2: return .orange
-        case 3: return .yellow
-        case 4: return .green
-        case 5: return .blue
-        case 6: return .purple
-        case 7: return .gray
-        default: return .clear
-        }
-    }
-
     private func colorName(_ label: Int) -> String {
         switch label {
         case 1: return "red"
@@ -323,7 +307,7 @@ struct SourceCardView: View {
     @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 0) {
             // Color.clear is the size anchor — it fills width and stamps the
             // 16:9 height. The image overlays it and scales-to-fill, so
             // unusual native aspects (square, vertical) don't leak through.
@@ -340,7 +324,7 @@ struct SourceCardView: View {
                         }
                     }
                 )
-                .clipxMediaEdge()
+                .clipped()
                 .overlay(alignment: .center) {
                     if hovering {
                         Image(systemName: "play.circle.fill")
@@ -353,33 +337,33 @@ struct SourceCardView: View {
                     if !source.online {
                         Text("Offline").font(.caption2)
                             .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(.orange.opacity(0.85), in: Capsule())
-                            .foregroundStyle(.white)
+                            .background(Theme.warning, in: RoundedRectangle(cornerRadius: 5))
+                            .foregroundStyle(Theme.bg)
                             .padding(6)
                     }
                 }
-                .overlay(alignment: .bottomLeading) {
+                .overlay(alignment: .topTrailing) {
                     if let durationMs = source.durationMs, durationMs > 0 {
                         Text(SourceCardView.formatDuration(durationMs))
                             .font(.caption2.monospacedDigit())
-                            .padding(.horizontal, 6).padding(.vertical, 2)
-                            .background(.black.opacity(0.7), in: Capsule())
+                            .padding(.horizontal, 6).padding(.vertical, 4)
+                            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 5))
                             .foregroundStyle(.white)
-                            .padding(6)
+                            .padding(8)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
                     Text(source.resolutionLabel)
                         .font(.caption2)
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(.black.opacity(0.7), in: Capsule())
+                        .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 5))
                         .foregroundStyle(.white)
                         .padding(6)
                 }
 
             HStack(spacing: 4) {
                 Text(source.displayName)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -390,11 +374,10 @@ struct SourceCardView: View {
                         .foregroundStyle(Theme.textTertiary)
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 7)
+            .padding(12)
         }
-        .clipxCard(radius: Theme.r2)
-        .scaleEffect(hovering ? 1.012 : 1)
-        .animation(.easeOut(duration: 0.12), value: hovering)
+        .clipxCard()
+        .clipShape(RoundedRectangle(cornerRadius: Theme.r3))
         .contentShape(Rectangle())
         .onTapGesture { onOpen?() }
         .onHover { hovering = $0 }

@@ -33,6 +33,8 @@ def main():
     parser.add_argument("--media-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--download", action="store_true")
+    parser.add_argument("--review", action="store_true",
+                        help="Also capture Notes, Export, and narrow workspace layouts")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     products = args.derived_data.resolve() / "Build/Products/Debug"
@@ -78,7 +80,10 @@ def main():
         environment = os.environ.copy()
         environment.pop("CLIPX_DATA_DIRECTORY", None)
         environment["CLIPX_ISOLATED_TESTS"] = "1"
-        subprocess.run([str(executable), str(manifest), str(args.output.resolve())],
+        capture = [str(executable), str(manifest), str(args.output.resolve())]
+        if args.review:
+            capture.append("--review")
+        subprocess.run(capture,
                        env=environment, check=True, timeout=120)
 
 

@@ -31,6 +31,9 @@ func descendant<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
 
 @MainActor
 func capture(_ window: NSWindow, name: String, output: URL) async throws -> [String: Any] {
+    // Match ClipxApp's .unified(showsTitle: false) after SwiftUI updates its
+    // toolbar. NSHostingController alone doesn't own the scene-level setting.
+    window.titleVisibility = .hidden
     window.contentView?.layoutSubtreeIfNeeded()
     let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: false)
     guard let owned = content.windows.first(where: {
@@ -68,7 +71,8 @@ func run() async throws {
     guard CGPreflightScreenCaptureAccess() else {
         throw CaptureError.failed("Existing Screen Recording permission is required; no prompt was requested")
     }
-    guard CommandLine.arguments.count == 3 else {
+    guard CommandLine.arguments.count == 3 ||
+          (CommandLine.arguments.count == 4 && CommandLine.arguments[3] == "--review") else {
         throw CaptureError.failed("Expected a footage manifest and output directory")
     }
     let manifest = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -187,6 +191,20 @@ func run() async throws {
     workspace["playerTimeSeconds"] = player.currentTime().seconds
     workspace["videoReadyForDisplay"] = layer.isReadyForDisplay
     captures.append(workspace)
+    if CommandLine.arguments.last == "--review" {
+        let states: [(String, InspectorTab, CGFloat)] = [
+            ("review-notes", .notes, 1140),
+            ("review-export", .export, 1140),
+            ("review-details-narrow", .details, 900),
+            ("review-export-narrow", .export, 900)
+        ]
+        for (name, tab, width) in states {
+            state.inspectorTab = tab
+            window.setContentSize(NSSize(width: width, height: 720))
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            captures.append(try await capture(window, name: name, output: output))
+        }
+    }
     let evidence: [String: Any] = ["captureMethod": "ScreenCaptureKit owned NSWindow, production RootView and AVPlayerLayer",
                                   "isolated": true, "sources": sources, "captures": captures]
     try JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys])

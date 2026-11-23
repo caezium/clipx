@@ -135,7 +135,7 @@ struct FilterSidebar: View {
                 Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
                     .font(.caption2)
                     .frame(width: 12)
-                    .foregroundStyle(isOn ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isOn ? Theme.textPrimary : Theme.textSecondary)
                 Text(label).font(.caption)
                 Spacer(minLength: 0)
             }

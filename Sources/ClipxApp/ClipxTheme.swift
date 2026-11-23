@@ -1,57 +1,71 @@
 import SwiftUI
 
-/// A quiet canvas for footage, with Stint-inspired elevated task panels and
-/// light primary actions. Blue marks selection; color is otherwise semantic.
+/// Stint's zinc surface ladder and off-white actions. Navigation and metadata
+/// stay neutral; blue belongs to the timeline, and status colors signal outcomes.
 enum Theme {
 
     // MARK: Surfaces (designed for a dark color scheme)
 
-    /// App background — near-black with a faint cool tint.
-    static let bg = Color(red: 0.035, green: 0.035, blue: 0.043)
-    /// Slightly raised background for the sidebar / bars.
-    static let bgRaised = Color(red: 0.072, green: 0.074, blue: 0.088)
-    /// Opaque so text and controls remain legible over any video frame.
-    static let panel = Color(red: 0.12, green: 0.12, blue: 0.135)
-    /// Translucent card fill — reads as frosted over `bg`.
-    static let surface = Color.white.opacity(0.045)
-    static let surfaceHover = Color.white.opacity(0.075)
-    static let surfaceActive = Color.white.opacity(0.10)
+    static let bg = color(0x09090B)
+    static let bgRaised = color(0x111113)
+    static let panel = color(0x212124)
+    static let surface = color(0x18181B)
+    static let field = color(0x19191C)
+    static let surfaceHover = color(0x27272A)
+    static let surfaceActive = color(0x323235)
 
     // MARK: Lines
-    static let border = Color.white.opacity(0.065)
-    static let borderStrong = Color.white.opacity(0.16)
+    static let border = Color.white.opacity(0.08)
+    static let borderStrong = Color.white.opacity(0.18)
 
     // MARK: Text
-    static let textPrimary = Color(white: 0.96)
-    static let textSecondary = Color(white: 0.67)
-    static let textTertiary = Color(white: 0.56)
+    static let textPrimary = color(0xFAFAFA)
+    static let textSecondary = color(0xA1A1AA)
+    static let textTertiary = color(0x85858F)
 
     // MARK: Accent + semantics
-    /// Single accent — a clean electric blue. Used for selection + the scrubber.
-    static let accent = Color(red: 0.40, green: 0.60, blue: 1.0)
-    static let accentSoft = Color(red: 0.40, green: 0.60, blue: 1.0).opacity(0.16)
-    /// In/out marks, "saved", "good" — the only other color that carries meaning.
-    static let success = Color(red: 0.22, green: 0.82, blue: 0.50)
-    static let danger = Color(red: 0.96, green: 0.38, blue: 0.40)
-    static let star = Color(red: 1.0, green: 0.78, blue: 0.28)
+    static let accent = textPrimary
+    static let accentSoft = Color.white.opacity(0.09)
+    static let timeline = color(0x8BA8D6)
+    static let success = color(0x8BBC9C)
+    static let warning = color(0xD6B47B)
+    static let danger = color(0xE28C8C)
+    static let star = textSecondary
 
     // MARK: Radii
     static let r1: CGFloat = 6
-    static let r2: CGFloat = 10
-    static let r3: CGFloat = 14
+    static let r2: CGFloat = 8
+    static let r3: CGFloat = 12
     static let r4: CGFloat = 24
 
     /// Blue→white scrubber gradient — the visual signature borrowed from stint.
     static let scrubber = LinearGradient(
-        colors: [Color(red: 0.40, green: 0.60, blue: 1.0),
-                 Color(red: 0.78, green: 0.85, blue: 1.0),
-                 Color.white],
+        colors: [timeline, Color.white],
         startPoint: .leading, endPoint: .trailing
     )
 
     /// Distinctive serif-italic wordmark, à la stint's EB Garamond.
     static func wordmark(size: CGFloat) -> Font {
         .system(size: size, weight: .medium, design: .serif).italic()
+    }
+
+    /// User-assigned labels keep their hue, with the same palette in every view.
+    static func labelColor(_ value: Int) -> Color {
+        switch value {
+        case 1: return color(0xD18D8D)
+        case 2: return color(0xD5AA82)
+        case 3: return color(0xD2C184)
+        case 4: return success
+        case 5: return timeline
+        case 6: return color(0xB29BCB)
+        default: return textTertiary
+        }
+    }
+
+    private static func color(_ hex: UInt32) -> Color {
+        Color(red: Double((hex >> 16) & 0xff) / 255,
+              green: Double((hex >> 8) & 0xff) / 255,
+              blue: Double(hex & 0xff) / 255)
     }
 }
 
@@ -69,15 +83,15 @@ struct PillButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: compact ? 12 : 13, weight: .medium))
+            .font(.system(size: 12, weight: .medium))
             .padding(.horizontal, compact ? 12 : 16)
-            .padding(.vertical, compact ? 5 : 7)
+            .frame(minHeight: compact ? 28 : 32)
             .foregroundStyle(fg)
             .background(bg(pressed: configuration.isPressed), in: Capsule())
             .overlay(Capsule().strokeBorder(stroke, lineWidth: 1))
             .contentShape(Capsule())
             .onHover { hovering = $0 }
-            .animation(.easeOut(duration: 0.12), value: hovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: hovering)
             .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1) : 0.4)
             // Subtle press-in so every button feels physical (feel-better).
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
@@ -88,7 +102,7 @@ struct PillButtonStyle: ButtonStyle {
         switch kind {
         case .primary: return Theme.bg
         case .ghost:   return hovering ? Theme.textPrimary : Theme.textSecondary
-        case .accent:  return .white
+        case .accent:  return Theme.bg
         case .danger:  return Theme.danger
         }
     }
@@ -144,26 +158,39 @@ extension View {
         modifier(IconButtonChrome(size: size, active: active))
     }
 
-    /// Card surface: translucent fill, hairline border, no shadow. Selected
-    /// cards get an accent ring.
-    func clipxCard(radius: CGFloat = Theme.r2, selected: Bool = false) -> some View {
+    /// Neutral card surface; selection changes its outline, not its hue.
+    func clipxCard(radius: CGFloat = Theme.r3, selected: Bool = false) -> some View {
         self
             .background(Theme.surface, in: RoundedRectangle(cornerRadius: radius))
             .overlay(
                 RoundedRectangle(cornerRadius: radius)
-                    .strokeBorder(selected ? Theme.accent : Theme.border,
+                    .strokeBorder(selected ? Theme.textSecondary : Theme.border,
                                   lineWidth: selected ? 1.5 : 1)
             )
     }
 
-    /// Borderless pill chip used for tags / attributes / quick toggles.
+    /// Compact metadata controls share a lozenge shape and neutral selection.
     func clipxChip(selected: Bool = false, accentColor: Color = Theme.accent) -> some View {
         self
             .font(.system(size: 12, weight: .medium))
-            .padding(.horizontal, 10).padding(.vertical, 4)
+            .padding(.horizontal, 9).padding(.vertical, 6)
             .foregroundStyle(selected ? accentColor : Theme.textSecondary)
-            .background(selected ? accentColor.opacity(0.16) : Theme.surface, in: Capsule())
-            .overlay(Capsule().strokeBorder(selected ? accentColor.opacity(0.45) : Theme.border, lineWidth: 1))
+            .background(selected ? accentColor.opacity(0.10) : Theme.surface,
+                        in: RoundedRectangle(cornerRadius: Theme.r1))
+            .overlay(RoundedRectangle(cornerRadius: Theme.r1)
+                .strokeBorder(selected ? accentColor.opacity(0.22) : Theme.border, lineWidth: 1))
+    }
+
+    /// Shared surface for text fields and menu pickers; callers own their focus.
+    func clipxInputField() -> some View {
+        self
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 11).padding(.vertical, 10)
+            .background(Theme.field, in: RoundedRectangle(cornerRadius: Theme.r2))
+            .overlay(RoundedRectangle(cornerRadius: Theme.r2)
+                .strokeBorder(Theme.border, lineWidth: 1))
     }
 
     /// Raycast-style keycap glyph for keyboard shortcuts (e.g. ⌘K, Esc):
@@ -189,13 +216,11 @@ extension View {
             )
     }
 
-    /// Section label: tiny, uppercase, tracked-out, muted.
+    /// Sentence-case labels use one readable size across navigation and forms.
     func clipxSectionLabel() -> some View {
         self
-            .font(.system(size: 11, weight: .semibold))
-            .textCase(.uppercase)
-            .tracking(0.6)
-            .foregroundStyle(Theme.textTertiary)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Theme.textSecondary)
     }
 }
 
@@ -212,5 +237,18 @@ struct ClipxToggleChip: View {
             Text(label).clipxChip(selected: selected, accentColor: accentColor)
         }
         .buttonStyle(.plain)
+    }
+}
+
+extension ToolbarContent {
+    /// Keep the breadcrumb and actions free of an extra capsule on macOS 26.
+    /// Earlier systems retain their standard, ungrouped toolbar presentation.
+    @ToolbarContentBuilder
+    func clipxToolbarChrome() -> some ToolbarContent {
+        if #available(macOS 26, *) {
+            self.sharedBackgroundVisibility(.hidden)
+        } else {
+            self
+        }
     }
 }

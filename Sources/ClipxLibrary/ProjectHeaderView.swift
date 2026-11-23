@@ -18,22 +18,22 @@ struct ProjectHeaderView: View {
     @State private var loadError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Image(systemName: "folder.fill")
-                    .font(.title2)
-                    .foregroundStyle(Color.accentColor)
+                Image(systemName: "folder")
+                    .font(.system(size: 18, weight: .regular))
+                    .foregroundStyle(Theme.textSecondary)
                 if renaming {
                     TextField("Project name", text: $editedName)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 17, weight: .semibold))
+                        .clipxInputField()
                         .frame(maxWidth: 320)
                         .onSubmit(commitRename)
                         .onExitCommand { renaming = false }
                 } else {
                     HStack(spacing: 6) {
                         Text(project?.name ?? "Project")
-                            .font(.system(size: 17, weight: .semibold))
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
                             .lineLimit(2).fixedSize(horizontal: false, vertical: true)
                             .onTapGesture(count: 2) {
                                 editedName = project?.name ?? ""
@@ -47,7 +47,7 @@ struct ProjectHeaderView: View {
                         } label: {
                             Image(systemName: "pencil")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Theme.textTertiary)
                         }
                         .buttonStyle(.plain)
                         .help("Rename project").accessibilityLabel("Rename project")
@@ -55,40 +55,28 @@ struct ProjectHeaderView: View {
                 }
                 Spacer(minLength: 8)
                 statusPill
+                Button { appState.selectProject(nil) } label: {
+                    Image(systemName: "xmark").font(.system(size: 11))
+                }
+                .buttonStyle(.plain).clipxIconButton(size: 28)
+                .help("Clear project filter")
+                .accessibilityLabel("Clear project filter")
             }
             // Stats row
             HStack(spacing: 14) {
-                stat("clock", "\(clipCount) clip\(clipCount == 1 ? "" : "s")")
+                stat("scissors", "\(clipCount) clip\(clipCount == 1 ? "" : "s")")
                 stat("timer", formatDuration(totalDurationMs))
                 Spacer()
-                Button(action: {
-                    appState.selectProject(nil)
-                }) {
-                    Label("Clear filter", systemImage: "xmark.circle")
-                        .font(.caption)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(.secondary)
+                actionButtons
+                    .disabled(project == nil || clipCount == 0)
             }
-            .font(.caption)
-            actionButtons
-                .disabled(project == nil || clipCount == 0)
+            .font(.system(size: 12))
             if let loadError {
                 Text(loadError).font(.caption).foregroundStyle(Theme.danger)
                 Button("Try again", action: load).controlSize(.small)
             }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.accentColor.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.accentColor.opacity(0.3), lineWidth: 1)
-        )
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
+        .padding(16)
         .onAppear(perform: load)
         .onDisappear { loadTask?.cancel(); loadGeneration = UUID() }
         .onChange(of: projectID) { _, _ in load() }
@@ -101,7 +89,7 @@ struct ProjectHeaderView: View {
             Image(systemName: icon)
             Text(text)
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(Theme.textSecondary)
     }
 
     private var statusPill: some View {
@@ -121,27 +109,27 @@ struct ProjectHeaderView: View {
             HStack(spacing: 4) {
                 Circle()
                     .fill(statusColor)
-                    .frame(width: 8, height: 8)
+                    .frame(width: 6, height: 6)
                 Text((project?.status ?? "").capitalized)
-                    .font(.caption.weight(.medium))
+                    .font(.system(size: 12, weight: .medium))
                 Image(systemName: "chevron.down").font(.caption2)
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(statusColor.opacity(0.15), in: Capsule())
-            .foregroundStyle(statusColor)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r1))
+            .foregroundStyle(Theme.textSecondary)
         }
-        .menuStyle(.borderlessButton)
+        .menuStyle(.button)
+        .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .fixedSize()
     }
 
     private var statusColor: Color {
         switch project?.status {
-        case "planning":  return .orange
-        case "editing":   return .blue
-        case "published": return .green
-        case "archived":  return .gray
-        default:          return .secondary
+        case "planning":  return Theme.warning
+        case "editing":   return Theme.textSecondary
+        case "published": return Theme.success
+        default:          return Theme.textTertiary
         }
     }
 
@@ -152,6 +140,7 @@ struct ProjectHeaderView: View {
             } label: {
                 Label("Select all", systemImage: "checklist")
             }
+            .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
             Menu {
                 Section("Social") {
                     Button("Reels (9:16 1080p)") { exportAll(.reels) }
@@ -172,9 +161,14 @@ struct ProjectHeaderView: View {
                     }
                 }
             } label: {
-                Label("Export all…", systemImage: "square.and.arrow.up")
+                HStack(spacing: 6) {
+                    Label("Export all", systemImage: "square.and.arrow.up")
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
+                }
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(PillButtonStyle(kind: .primary, compact: true))
+            .menuIndicator(.hidden)
             .fixedSize()
         }
         .controlSize(.small)

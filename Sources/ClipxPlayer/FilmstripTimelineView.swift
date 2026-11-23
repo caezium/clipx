@@ -59,7 +59,7 @@ struct FilmstripTimelineView: View {
                 }
                 .frame(width: geo.size.width, height: h)
                 .clipped()
-                // Legibility wash so white/green overlays read over any frame.
+                // Legibility wash so white/blue overlays read over any frame.
                 .overlay(Rectangle().fill(.black.opacity(0.20)))
 
                 // Background scrub layer — drag/tap to seek. Sits behind the
@@ -92,11 +92,11 @@ struct FilmstripTimelineView: View {
                     let visW = max(3, w)
                     let hitWidth = max(10, w)
                     RoundedRectangle(cornerRadius: 2)
-                        .fill(Theme.accent.opacity(0.32))
+                        .fill(Theme.timeline.opacity(0.32))
                         .frame(width: visW, height: 9)
                         .overlay(
                             RoundedRectangle(cornerRadius: 2)
-                                .strokeBorder(Theme.accent.opacity(0.85), lineWidth: 1)
+                                .strokeBorder(Theme.timeline.opacity(0.85), lineWidth: 1)
                         )
                         .contentShape(Rectangle().inset(by: -((hitWidth - visW) / 2)))
                         .offset(x: xStart, y: h - 12)
@@ -171,15 +171,15 @@ private struct FilmstripPlayhead: View {
         let cur = clock.currentMs
         let h = size.height
         ZStack(alignment: .topLeading) {
-            // Active in/out range — a full-height green frame on the strip.
+            // Blue is reserved for source-time selection throughout the player.
             if let inMs {
                 let endMs = max(inMs, outMs ?? cur)
                 RoundedRectangle(cornerRadius: 3)
-                    .fill(Theme.success.opacity(0.22))
+                    .fill(Theme.timeline.opacity(0.16))
                     .frame(width: TimelineMath.width(forMs: endMs - inMs, total: totalMs, fullWidth: size.width), height: h)
                     .overlay(
                         RoundedRectangle(cornerRadius: 3)
-                            .strokeBorder(Theme.success, lineWidth: 1.5)
+                            .strokeBorder(Theme.timeline, lineWidth: 1.5)
                     )
                     .offset(x: TimelineMath.x(forMs: inMs, total: totalMs, width: size.width), y: 0)
                     .allowsHitTesting(false)

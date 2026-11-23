@@ -111,7 +111,7 @@ struct SidebarView: View {
     private var brandHeader: some View {
         HStack(spacing: 6) {
             Text("clipx")
-                .font(Theme.wordmark(size: 22))
+                .font(Theme.wordmark(size: 26))
                 .foregroundStyle(Theme.textPrimary)
             Spacer()
             Menu {
@@ -128,7 +128,7 @@ struct SidebarView: View {
             .accessibilityLabel("New project or collection")
         }
         .padding(.horizontal, 6)
-        .padding(.top, 2)
+        .padding(.top, 8).padding(.bottom, 8)
     }
 
     // MARK: - Sections
@@ -285,7 +285,7 @@ private struct SidebarRow: View {
                 Image(systemName: icon)
                     .font(.system(size: 12))
                     .frame(width: 16)
-                    .foregroundStyle(isActive ? Theme.accent : Theme.textSecondary)
+                    .foregroundStyle(isActive ? Theme.textPrimary : Theme.textSecondary)
                 Text(label)
                     .font(.system(size: 13, weight: isActive ? .semibold : .regular))
                     .lineLimit(1)
@@ -299,10 +299,10 @@ private struct SidebarRow: View {
                         .lineLimit(1)
                 }
             }
-            .padding(.horizontal, 8).padding(.vertical, 5)
+            .padding(.horizontal, 10).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: Theme.r2)
                     .fill(isActive ? Theme.accentSoft : (hovering ? Theme.surfaceHover : .clear))
             )
             .contentShape(Rectangle())

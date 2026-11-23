@@ -37,7 +37,7 @@ struct InspectorView: View {
         VStack(alignment: .leading, spacing: 0) {
             if let clip, let source {
                 header(clip: clip, source: source)
-                    .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 16)
+                    .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
                 Rectangle().fill(Theme.border).frame(height: 1).padding(.horizontal, 20)
 
                 Group {
@@ -59,7 +59,7 @@ struct InspectorView: View {
                 if let saveError {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Edits are waiting to be saved: \(saveError)")
-                            .font(.caption).foregroundStyle(.orange)
+                            .font(.caption).foregroundStyle(Theme.warning)
                             .lineLimit(3).help(saveError)
                         Button("Retry saving", action: commitDraft)
                             .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
@@ -95,7 +95,7 @@ struct InspectorView: View {
     }
 
     private func details(clip: Clip, source: Source) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 20) {
             nameAndRating(clip: clip)
             purposeSection(clip: clip)
             tagsSection
@@ -112,26 +112,25 @@ struct InspectorView: View {
                 technical(source: source).padding(.top, 12)
             }
         }
-        .font(.system(size: 12, weight: .medium))
+        .font(.system(size: 13, weight: .medium))
+        .foregroundStyle(Theme.textSecondary)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func header(clip: Clip, source: Source) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(clip.name ?? "Untitled clip")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(2)
                 .truncationMode(.middle)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(source.displayName)
-                .font(.system(size: 11)).foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
             HStack(spacing: 8) {
-                Text(PlayerController.formatMs(clip.durationMs)).monospacedDigit()
-                Text("·")
-                Text(source.resolutionLabel)
+                Text(source.displayName)
+                    .lineLimit(1).truncationMode(.middle)
+                Spacer(minLength: 0)
+                Text("\(PlayerController.formatMs(clip.durationMs)) · \(source.resolutionLabel)")
+                    .monospacedDigit().fixedSize()
             }
             .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
             .lineLimit(1)
@@ -146,15 +145,12 @@ struct InspectorView: View {
             TextField("Name", text: $draftName)
                 .accessibilityLabel("Clip name")
                 .accessibilityIdentifier("inspector.name")
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .padding(10)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r2))
+                .clipxInputField()
                 .onSubmit { commitDraft() }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 4) {
-                    Text("Rating").font(.caption).foregroundStyle(.secondary).fixedSize()
+                    Text("Rating").clipxSectionLabel().fixedSize()
                     Spacer()
                     ForEach(0..<5) { i in
                         Button {
@@ -162,15 +158,16 @@ struct InspectorView: View {
                             applyRating(newRating)
                         } label: {
                             Image(systemName: i < clip.rating ? "star.fill" : "star")
-                                .foregroundStyle(i < clip.rating ? Theme.star : Theme.textTertiary)
-                                .font(.callout)
+                                .foregroundStyle(i < clip.rating ? Theme.textPrimary : Theme.textTertiary)
+                                .font(.system(size: 13))
+                                .frame(width: 23, height: 28)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Rate \(i + 1) star\(i == 0 ? "" : "s")")
                     }
                 }
                 HStack(spacing: 4) {
-                    Text("Color").font(.caption).foregroundStyle(.secondary).fixedSize()
+                    Text("Color label").clipxSectionLabel().fixedSize()
                     Spacer()
                     colorPicker(currentLabel: clip.colorLabel)
                 }
@@ -211,24 +208,31 @@ struct InspectorView: View {
     }
 
     private func colorPicker(currentLabel: Int?) -> some View {
-        HStack(spacing: 4) {
+        let current = currentLabel.flatMap(ColorLabel.init(rawValue:)) ?? .none
+        return Menu {
             ForEach(ColorLabel.allCases, id: \.self) { label in
-                Button {
-                    applyColorLabel(label)
-                } label: {
-                    Circle()
-                        .fill(swiftColor(for: label))
-                        .frame(width: 14, height: 14)
-                        .overlay {
-                            if currentLabel == label.rawValue {
-                                Circle().stroke(.primary, lineWidth: 2)
-                            }
-                        }
+                Button { applyColorLabel(label) } label: {
+                    if current == label {
+                        Label(label.displayName, systemImage: "checkmark")
+                    } else {
+                        Text(label.displayName)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Color: \(label.displayName)")
             }
+        } label: {
+            HStack(spacing: 6) {
+                Circle().fill(Theme.labelColor(current.rawValue)).frame(width: 7, height: 7)
+                Text(current.displayName)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .medium))
+            }
+            .clipxChip()
         }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Color label")
+        .accessibilityValue(current.displayName)
     }
 
     private func applyColorLabel(_ label: ColorLabel) {
@@ -281,7 +285,8 @@ struct InspectorView: View {
                             appState.showToast("Couldn't save purpose: \(error.localizedDescription)", level: .error)
                         }
                     } label: {
-                        Label(Purposes.title(forKey: key), systemImage: Purposes.symbol(forKey: key))
+                        Label(Purposes.title(forKey: key),
+                              systemImage: selected ? "checkmark" : Purposes.symbol(forKey: key))
                             .clipxChip(selected: selected)
                     }
                     .buttonStyle(.plain)
@@ -327,7 +332,7 @@ struct InspectorView: View {
             Text("Tags").clipxSectionLabel()
             HStack {
                 TextField("Add tag…", text: $newTag)
-                    .textFieldStyle(.roundedBorder)
+                    .clipxInputField()
                     .onSubmit(addTag)
                 Button("Add", action: addTag)
                     .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
@@ -338,7 +343,8 @@ struct InspectorView: View {
                     HStack(spacing: 4) {
                         Text(tag)
                         Button { remove(tag: tag) } label: {
-                            Image(systemName: "xmark.circle.fill").font(.caption2)
+                            Image(systemName: "xmark").font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(Theme.textTertiary)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove tag \(tag)")
@@ -359,7 +365,8 @@ struct InspectorView: View {
                 .scrollContentBackground(.hidden)
                 .padding(10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.r2))
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: Theme.r2))
+                .overlay(RoundedRectangle(cornerRadius: Theme.r2).strokeBorder(Theme.border, lineWidth: 1))
                 .overlay(alignment: .topLeading) {
                     if draftNotes.isEmpty {
                         Text("What makes this moment worth keeping?")
@@ -478,10 +485,7 @@ struct InspectorView: View {
                                     .font(.caption2)
                                 Text(project.name).font(.caption)
                             }
-                            .padding(.horizontal, 8).padding(.vertical, 3)
-                            .background(isAssigned ? Color.accentColor.opacity(0.25) : Color.gray.opacity(0.15),
-                                        in: Capsule())
-                            .foregroundStyle(isAssigned ? Color.accentColor : Color.primary)
+                            .clipxChip(selected: isAssigned)
                         }
                         .buttonStyle(.plain)
                     }
@@ -581,18 +585,6 @@ struct InspectorView: View {
         } catch { AppState.shared.showToast("Couldn't remove tag: \(error.localizedDescription)", level: .error) }
     }
 
-    private func swiftColor(for label: ColorLabel) -> Color {
-        switch label {
-        case .none: return .clear
-        case .red: return .red
-        case .orange: return .orange
-        case .yellow: return .yellow
-        case .green: return .green
-        case .blue: return .blue
-        case .purple: return .purple
-        case .gray: return .gray
-        }
-    }
 }
 
 /// A toggleable-chip multi/single picker for short string sets.

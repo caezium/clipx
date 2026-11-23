@@ -22,16 +22,17 @@ struct RootView: View {
     /// saves belong to the clip, not to an individual tab.
     private var inspectorPanel: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 ForEach(InspectorTab.allCases, id: \.self) { tab in
                     Button { appState.inspectorTab = tab } label: {
                         Text(tab.title)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: 13, weight: .medium))
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                            .padding(.vertical, 9)
                             .foregroundStyle(appState.inspectorTab == tab ? Theme.textPrimary : Theme.textSecondary)
-                            .background(appState.inspectorTab == tab ? Theme.surfaceActive : .clear, in: Capsule())
-                            .contentShape(Capsule())
+                            .background(appState.inspectorTab == tab ? Theme.surfaceActive : .clear,
+                                        in: RoundedRectangle(cornerRadius: Theme.r2))
+                            .contentShape(RoundedRectangle(cornerRadius: Theme.r2))
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("inspector.tab.\(tab.rawValue)")
@@ -44,7 +45,7 @@ struct RootView: View {
                 .help("Close panel (⌥⌘I)")
                 .accessibilityLabel("Close clip panel")
             }
-            .padding(10)
+            .padding(12)
 
             if appState.selectedClipIDs.count == 1, let clipID = appState.selectedClipIDs.first {
                 InspectorView(clipID: clipID).id(clipID)
@@ -85,7 +86,7 @@ struct RootView: View {
                 // discard the focused editor when crossing the breakpoint.
                 let layout = stacked
                     ? AnyLayout(VStackLayout(spacing: 12))
-                    : AnyLayout(HStackLayout(alignment: .top, spacing: 14))
+                    : AnyLayout(HStackLayout(alignment: .top, spacing: 16))
                 layout {
                     Group {
                         if let sourceID = appState.playerSourceID {
@@ -109,7 +110,7 @@ struct RootView: View {
                             .transition(.opacity)
                     }
                 }
-                .padding(14)
+                .padding(16)
             }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: appState.inspectorVisible)
         }
@@ -143,6 +144,8 @@ struct RootView: View {
             loadPlayerSourceName()
         }
         .background(Theme.bg)
+        .toolbarBackground(Theme.bgRaised, for: .windowToolbar)
+        .toolbarBackground(.visible, for: .windowToolbar)
         .preferredColorScheme(.dark)
         .tint(Theme.accent)
         // Drop a folder (or video files) onto the window to add it. (#39)
@@ -232,6 +235,7 @@ struct RootView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.textTertiary)
             }
+            .clipxToolbarChrome()
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -260,6 +264,7 @@ struct RootView: View {
 
             inspectorToggle
         }
+        .clipxToolbarChrome()
     }
 
     @ToolbarContentBuilder
@@ -273,10 +278,12 @@ struct RootView: View {
                 Label("Library", systemImage: "chevron.left")
                     .labelStyle(.titleAndIcon)
             }
+            .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
             // Esc is handled in PlayerView (gated on !capturing) so it doesn't
             // fight the capture card's Cancel (.cancelAction) for the key.
             .help("Back to library (Esc)")
         }
+        .clipxToolbarChrome()
         ToolbarItem(placement: .principal) {
             HStack(spacing: 10) {
                 Text("Cut Room").foregroundStyle(Theme.textTertiary)
@@ -288,29 +295,34 @@ struct RootView: View {
             }
             .font(.system(size: 12, weight: .medium))
         }
+        .clipxToolbarChrome()
         ToolbarItemGroup(placement: .primaryAction) {
             if !appState.selectedClipIDs.isEmpty { exportPanelButton }
             inspectorToggle
         }
+        .clipxToolbarChrome()
     }
 
     private var exportPanelButton: some View {
         Button { appState.showInspector(.export) } label: {
             Label("Export", systemImage: "square.and.arrow.up")
+                .labelStyle(.titleAndIcon)
         }
+        .buttonStyle(PillButtonStyle(kind: .ghost, compact: true))
         .help("Export selected clips")
         .accessibilityIdentifier("workspace.export")
     }
 
-    /// Shared inspector toggle — tinted when active so its on/off state reads at
+    /// Shared inspector toggle — highlighted when active so its on/off state reads at
     /// a glance (two near-identical SF Symbols alone don't).
     private var inspectorToggle: some View {
         Button {
             appState.inspectorVisible.toggle()
         } label: {
             Image(systemName: appState.inspectorVisible ? "sidebar.trailing" : "sidebar.right")
-                .foregroundStyle(appState.inspectorVisible ? Theme.accent : Theme.textSecondary)
         }
+        .buttonStyle(.plain)
+        .clipxIconButton(active: appState.inspectorVisible)
         .help(appState.inspectorVisible ? "Hide Inspector (⌥⌘I)" : "Show Inspector (⌥⌘I)")
         .keyboardShortcut("i", modifiers: [.command, .option])
         .accessibilityLabel(appState.inspectorVisible ? "Hide Inspector" : "Show Inspector")

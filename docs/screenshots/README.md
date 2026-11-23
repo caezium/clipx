@@ -41,3 +41,5 @@ python3 Scripts/capture-screenshots.py \
 The runner requires existing Screen Recording permission and stops if it is absent; it does not request permission or change settings. Downloads are optional, resume through `.part` files, and must match the hashes in [footage.json](../../Scripts/Screenshots/footage.json). The runner rejects incomplete or changed inputs before opening its window.
 
 Inspect both candidate PNGs at full size before copying them here. Check that the video and full filmstrip are visible, all six library thumbnails loaded, the window is complete, and no personal data is present. Refresh `capture.json` with the capture date, built source revision, and final PNG hashes when publishing a new set. Keep diagnostic render states in `docs/verification/` rather than adding them to the README gallery.
+
+Add `--review` to also capture the Notes and Export panels, plus Details and Export at a 900-point window width. These extra states support visual review; the main README remains a two-image gallery. The shared styling rules are recorded in [Native UI conventions](../UI.md).
