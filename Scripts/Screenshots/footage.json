@@ -1,0 +1,109 @@
+[
+  {
+    "file": "cliff-coast.mp4",
+    "sourceName": "Headland pass.mp4",
+    "name": "Headland reveal",
+    "inMs": 3200,
+    "outMs": 11200,
+    "rating": 5,
+    "tags": [
+      "coast",
+      "opening",
+      "aerial"
+    ],
+    "creator": "Xabi Oregi",
+    "sourceURL": "https://www.pexels.com/video/drone-footage-of-a-mountain-cliff-coast-5619693/",
+    "downloadURL": "https://videos.pexels.com/video-files/5619693/5619693-hd_1920_1080_25fps.mp4",
+    "sha256": "315e6445fe126e840b0e06f9bd31975c73e840ddf6e55a3d3497673bfdef773c",
+    "licenseURL": "https://www.pexels.com/license/"
+  },
+  {
+    "file": "malibu-coast.mp4",
+    "sourceName": "Coastal ridge.mp4",
+    "name": "Ridge approach",
+    "inMs": 2000,
+    "outMs": 10500,
+    "rating": 4,
+    "tags": [
+      "coast",
+      "ridge",
+      "aerial"
+    ],
+    "creator": "Logan Voss",
+    "sourceURL": "https://www.pexels.com/video/aerial-view-of-malibu-cliffs-and-ocean-30670672/",
+    "downloadURL": "https://videos.pexels.com/video-files/30670672/13125528_1920_1080_30fps.mp4",
+    "sha256": "3dda00f0adf3e67a32179d71530d207d68c9409329cc318496663e6337d0b8da",
+    "licenseURL": "https://www.pexels.com/license/"
+  },
+  {
+    "file": "green-headland.mp4",
+    "sourceName": "Green coastline.mp4",
+    "name": "Coastline sweep",
+    "inMs": 4000,
+    "outMs": 13000,
+    "rating": 4,
+    "tags": [
+      "coast",
+      "wide",
+      "aerial"
+    ],
+    "creator": "NGUYỄN THÀNH NHƠN",
+    "sourceURL": "https://www.pexels.com/video/aerial-view-of-coastal-cliffs-and-ocean-waves-32120722/",
+    "downloadURL": "https://videos.pexels.com/video-files/32120722/13694051_1920_1080_30fps.mp4",
+    "sha256": "4a6e7089eb983c8916f4058199a05f670b020b6f318ed2b029af22e0a373cea3",
+    "licenseURL": "https://www.pexels.com/license/"
+  },
+  {
+    "file": "lighthouse.mp4",
+    "sourceName": "Lighthouse pass.mp4",
+    "name": "Lighthouse approach",
+    "inMs": 5000,
+    "outMs": 12000,
+    "rating": 5,
+    "tags": [
+      "coast",
+      "lighthouse",
+      "aerial"
+    ],
+    "creator": "Mario Spencer",
+    "sourceURL": "https://www.pexels.com/video/scenic-aerial-view-of-coastal-lighthouse-and-beach-39932380/",
+    "downloadURL": "https://videos.pexels.com/video-files/39932380/17038757_3840_2160_60fps.mp4",
+    "sha256": "818ab9f7d827898ded2e72ff6d9802134542bbe826045ad69528fc441dfdc18a",
+    "licenseURL": "https://www.pexels.com/license/"
+  },
+  {
+    "file": "ocean-at-dusk.mp4",
+    "sourceName": "Ocean at dusk.mp4",
+    "name": "Ocean at dusk",
+    "inMs": 6000,
+    "outMs": 14500,
+    "rating": 4,
+    "tags": [
+      "coast",
+      "sunset"
+    ],
+    "creator": "Dmitriy Strukov",
+    "sourceURL": "https://www.pexels.com/video/drone-footage-of-a-ocean-and-rocks-6234854/",
+    "downloadURL": "https://videos.pexels.com/video-files/6234854/6234854-uhd_2560_1440_30fps.mp4",
+    "sha256": "36ef73f6c457ad0732042d4b68f1139512fd360d71ea77747584eca74cc9b960",
+    "licenseURL": "https://www.pexels.com/license/"
+  },
+  {
+    "file": "rocky-shore.mp4",
+    "sourceName": "Shore break.mp4",
+    "name": "Surf detail",
+    "inMs": 3000,
+    "outMs": 9000,
+    "rating": 5,
+    "tags": [
+      "coast",
+      "detail",
+      "sunset"
+    ],
+    "creator": "Mario Krimer",
+    "sourceURL": "https://www.pexels.com/video/dynamic-ocean-waves-crashing-on-rocky-shore-32792492/",
+    "downloadURL": "https://videos.pexels.com/video-files/32792492/13978548_1920_1080_24fps.mp4",
+    "sha256": "d77715a815fbc9e925980d76b09ae273bae019233cd6ef993576ef4133fbd808",
+    "licenseURL": "https://www.pexels.com/license/"
+  }
+]

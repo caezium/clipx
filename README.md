@@ -6,32 +6,15 @@ A Mac-native clip workbench that sits between source footage and the NLE/social 
 
 ## Screenshots
 
-The current development UI keeps footage central, with switchable Details, Notes, and Export panels.
+**Cut room** — review footage, mark a range, and keep ratings and tags beside the video.
 
-These are native SwiftUI captures with generated footage. The black video area is an offscreen capture limitation; window chrome is also omitted. See the [verification notes](docs/verification/2026-11-23-workspace/README.md) for details.
+![Clipx cut room with coastal footage, a marked range, filmstrip, and clip details](docs/screenshots/workspace.png)
 
-![Clipx workspace with the notes panel beside the video and filmstrip](docs/verification/2026-11-23-workspace/30-player-notes.png)
+**Library** — organize saved clips into projects, with thumbnails, ranges, and ratings visible at a glance.
 
-<details>
-<summary>More screenshots: details, capture, and export</summary>
+![Clipx library showing six coastal clips organized in a project](docs/screenshots/library.png)
 
-**Clip details** — edit names, ratings, purposes, and tags beside the footage.
-
-![Clip details panel at a 900-point window width](docs/verification/2026-11-23-workspace/10-player-inspector-narrow.png)
-
-**Capture a moment** — name and tag a marked range without leaving the player.
-
-![Inline clip capture with naming, rating, purpose, and tag controls](docs/verification/2026-11-23-workspace/11-capture-narrow.png)
-
-**Export** — choose a platform format and see its output dimensions before exporting.
-
-![Export panel showing the YouTube 1080p preset and export action](docs/verification/2026-11-23-workspace/32-player-export-narrow.png)
-
-**Batch export** — export selected clips together, with the panel below the library when space is tight.
-
-![Batch export panel below the library in a narrow window](docs/verification/2026-11-23-workspace/33-batch-export-stacked.png)
-
-</details>
+Captured from the current development build with an isolated demo project. [Screenshot details and footage credits](docs/screenshots/README.md).
 
 ## Features (beta v0.1)
 

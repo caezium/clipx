@@ -1,0 +1,80 @@
+{
+  "captureMethod": "ScreenCaptureKit owned NSWindow, production RootView and AVPlayerLayer",
+  "captures": [
+    {
+      "file": "library.png",
+      "nativeToolbar": true,
+      "pixelHeight": 772,
+      "pixelWidth": 1140,
+      "windowHeight": 772,
+      "windowID": 6095,
+      "windowWidth": 1140,
+      "sha256": "c3cc818b8068f79c596ee6c326e7bf871cfee7731b6919845538086657fadcfa"
+    },
+    {
+      "file": "workspace.png",
+      "nativeToolbar": true,
+      "pixelHeight": 772,
+      "pixelWidth": 1140,
+      "playerTimeSeconds": 6,
+      "videoReadyForDisplay": true,
+      "windowHeight": 772,
+      "windowID": 6095,
+      "windowWidth": 1140,
+      "sha256": "aa9cd2added548d86eacaf8b1056cda606e704fc9ab48345bcf4300ca788acea"
+    }
+  ],
+  "isolated": true,
+  "sources": [
+    {
+      "durationMs": 19640,
+      "file": "Headland pass.mp4",
+      "fps": 25,
+      "height": 1080,
+      "sha256": "315e6445fe126e840b0e06f9bd31975c73e840ddf6e55a3d3497673bfdef773c",
+      "width": 1920
+    },
+    {
+      "durationMs": 19533,
+      "file": "Coastal ridge.mp4",
+      "fps": 30,
+      "height": 1080,
+      "sha256": "3dda00f0adf3e67a32179d71530d207d68c9409329cc318496663e6337d0b8da",
+      "width": 1920
+    },
+    {
+      "durationMs": 24190,
+      "file": "Green coastline.mp4",
+      "fps": 29.97003173828125,
+      "height": 1080,
+      "sha256": "4a6e7089eb983c8916f4058199a05f670b020b6f318ed2b029af22e0a373cea3",
+      "width": 1920
+    },
+    {
+      "durationMs": 24240,
+      "file": "Lighthouse pass.mp4",
+      "fps": 59.940059661865234,
+      "height": 2160,
+      "sha256": "818ab9f7d827898ded2e72ff6d9802134542bbe826045ad69528fc441dfdc18a",
+      "width": 3840
+    },
+    {
+      "durationMs": 20887,
+      "file": "Ocean at dusk.mp4",
+      "fps": 29.970029830932617,
+      "height": 1440,
+      "sha256": "36ef73f6c457ad0732042d4b68f1139512fd360d71ea77747584eca74cc9b960",
+      "width": 2560
+    },
+    {
+      "durationMs": 17000,
+      "file": "Shore break.mp4",
+      "fps": 24,
+      "height": 1080,
+      "sha256": "d77715a815fbc9e925980d76b09ae273bae019233cd6ef993576ef4133fbd808",
+      "width": 1920
+    }
+  ],
+  "capturedOn": "2026-11-23",
+  "productionSourceCommit": "410788c"
+}
